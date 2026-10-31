@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::Path};
 
-use thinkrail_core::{ChatBinding, EnvSource, Error, Launch, ProfileId, ProfileInput, Result};
+use thinkrail_core::{ChatBinding, ChatId, EnvSource, Error, Launch, ProfileId, ProfileInput, Result};
 use uuid::{Uuid, Variant};
 
 /// Largest revision a JSON consumer can represent exactly (`Number.MAX_SAFE_INTEGER`).
@@ -48,8 +48,12 @@ pub(crate) fn input(input: &ProfileInput) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn chat_id(chat: &ChatId) -> Result<()> {
+    identifier(chat.as_str(), "聊天 id")
+}
+
 pub(crate) fn binding(binding: &ChatBinding) -> Result<()> {
-    identifier(binding.chat_id.as_str(), "聊天 id")?;
+    chat_id(&binding.chat_id)?;
     identifier(binding.workspace_id.as_str(), "工作区 id")?;
     profile_id(&binding.profile_id)?;
     revision(binding.config_revision)?;

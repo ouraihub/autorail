@@ -109,4 +109,7 @@ pub trait ProfileService: Send + Sync {
     fn bind(&self, binding: ChatBinding) -> Result<()>;
     fn binding(&self, chat: &ChatId) -> Result<Option<ChatBinding>>;
     fn bindings(&self, workspace: &WorkspaceId) -> Result<Vec<ChatBinding>>;
+    /// Removes a closed chat's binding; the engine's native history is left untouched.
+    /// Removing an absent binding succeeds.
+    fn unbind(&self, chat: &ChatId) -> Result<()>;
 }

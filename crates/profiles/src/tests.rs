@@ -140,6 +140,21 @@ fn binding_identity_is_scoped_but_chat_identity_is_global() {
 }
 
 #[test]
+fn a_closed_chat_is_unbound_and_its_session_can_be_bound_again() {
+    let directory = TempDir::new().unwrap();
+    let store = JsonProfileStore::open(directory.path()).unwrap();
+    let profile = store.create(input(BackendKind::Pi)).unwrap();
+    store.bind(binding(&profile, "chat-1")).unwrap();
+    kind(store.bind(binding(&profile, "chat-2")), ErrorKind::Conflict);
+    store.unbind(&ChatId::from("chat-1")).unwrap();
+    store.unbind(&ChatId::from("chat-1")).unwrap();
+    let reopened = JsonProfileStore::open(directory.path()).unwrap();
+    assert_eq!(reopened.binding(&ChatId::from("chat-1")).unwrap(), None);
+    reopened.bind(binding(&profile, "chat-3")).unwrap();
+    kind(reopened.unbind(&ChatId::from("chat 4")), ErrorKind::Invalid);
+}
+
+#[test]
 fn validation_rejects_unsafe_fields_without_writing() {
     let directory = TempDir::new().unwrap();
     let store = JsonProfileStore::open(directory.path()).unwrap();

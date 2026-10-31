@@ -251,7 +251,12 @@ impl ChatPanel {
             cx,
             move || start_engine(&services, chat_id, workspace, cwd, binding, sink, prompt),
             move |this, result, cx| {
-                let Some(chat) = this.chats.get_mut(&id) else { return };
+                let Some(chat) = this.chats.get_mut(&id) else {
+                    if let Ok(started) = result {
+                        close_engine(&this.services(cx), id.clone(), Some(started.session), cx);
+                    }
+                    return;
+                };
                 chat.starting = false;
                 match result {
                     Ok(started) => {
@@ -317,6 +322,26 @@ impl ChatPanel {
                 this.report(&error, cx);
             }
         });
+    }
+
+    /// Closes a chat tab: disposes its engine and drops its binding, so it does not come back on
+    /// the next start. The engine's own transcript stays where the engine keeps it.
+    fn close_chat(&mut self, id: &ChatId, cx: &mut Context<Self>) {
+        let Some(chat) = self.chats.remove(id) else { return };
+        let index = self.order.iter().position(|c| c == id);
+        self.order.retain(|c| c != id);
+        if self.active.as_ref() == Some(id) {
+            self.active = index.and_then(|i| self.order.get(i.min(self.order.len().saturating_sub(1)))).cloned();
+            self.scroll.scroll_to_bottom();
+        }
+        if let Some(snapshot) = &chat.snapshot {
+            for interaction in &snapshot.interactions {
+                self.answers.retain(|key, _| !key.starts_with(&interaction.request_id));
+                self.picks.retain(|key, _| !key.starts_with(&interaction.request_id));
+            }
+        }
+        cx.notify();
+        close_engine(&self.services(cx), id.clone(), chat.session, cx);
     }
 
     fn respond(&mut self, request_id: String, answer: InteractionAnswer, cx: &mut Context<Self>) {
@@ -432,6 +457,29 @@ fn start_engine(
     Ok(Started { profile, session, binding, prompt_error })
 }
 
+/// Disposes a closed chat's engine (if any) off the UI thread, then drops its binding.
+fn close_engine(services: &Services, chat: ChatId, session: Option<Arc<dyn AgentSession>>, cx: &mut Context<ChatPanel>) {
+    let profiles = services.profiles.clone();
+    run(
+        cx,
+        move || {
+            if let Some(session) = session
+                && let Err(error) = session.dispose()
+            {
+                debug!(code = %error, "dispose of a closed chat failed");
+            }
+            profiles.unbind(&chat)?;
+            info!(chat = %chat, "chat closed");
+            Ok(())
+        },
+        |this, result, cx| {
+            if let Err(error) = result {
+                this.report(&error, cx);
+            }
+        },
+    );
+}
+
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
@@ -460,7 +508,7 @@ impl ChatPanel {
         let mut strip = TabStrip::new();
         for id in &self.order {
             let Some(chat) = self.chats.get(id) else { continue };
-            let select = id.clone();
+            let (select, close) = (id.clone(), id.clone());
             strip = strip.tab(
                 Tab::new(format!("chat-tab-{id}"), chat.title())
                     .icon(IconName::MessageSquare)
@@ -469,7 +517,8 @@ impl ChatPanel {
                         this.active = Some(select.clone());
                         this.scroll.scroll_to_bottom();
                         cx.notify();
-                    })),
+                    }))
+                    .on_close(cx.listener(move |this, _, _, cx| this.close_chat(&close, cx))),
             );
         }
         strip.action(

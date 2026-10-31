@@ -154,4 +154,17 @@ impl ProfileService for JsonProfileStore {
         let state = storage::read(&self.root)?;
         Ok(state.bindings.into_iter().filter(|binding| &binding.workspace_id == workspace).collect())
     }
+
+    fn unbind(&self, chat: &ChatId) -> Result<()> {
+        validate::chat_id(chat)?;
+        let removed = self.mutate(|state| {
+            let before = state.bindings.len();
+            state.bindings.retain(|binding| &binding.chat_id != chat);
+            Ok(state.bindings.len() != before)
+        })?;
+        if removed {
+            info!(chat = %chat, "chat binding removed");
+        }
+        Ok(())
+    }
 }
