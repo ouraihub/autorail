@@ -18,8 +18,10 @@ use gpui_kit::{
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
+        Disableable as _,
         button::{Button, ButtonVariants as _},
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
+        menu::{DropdownMenu as _, PopupMenuItem},
     },
     div,
     prelude::FluentBuilder as _,
@@ -28,8 +30,8 @@ use gpui_kit::{
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentSession, BackendKind, ChatBinding, ChatId, Error, ErrorKind, Interaction, InteractionAnswer, InteractionKind,
-    Plan, PlanScope, Profile, Result, SessionEvent, SessionPhase, SessionSink, SessionSnapshot, StartSession,
-    WorkspaceId,
+    ModelChoice, Plan, PlanScope, Profile, ProjectId, Result, RouteRequest, SessionEvent, SessionPhase, SessionSink, SessionSnapshot,
+    StartSession, ThinkingLevel, WorkspaceId,
 };
 use thinkrail_ui::{
     Roles, ThinkrailTheme,
@@ -50,6 +52,10 @@ struct Chat {
     profile: Option<Profile>,
     session: Option<Arc<dyn AgentSession>>,
     snapshot: Option<SessionSnapshot>,
+    routing_signature: Option<String>,
+    catalog: Vec<ModelChoice>,
+    restart_pending: bool,
+    closing: bool,
     starting: bool,
     /// Why this chat cannot send (profile revision missing or disabled).
     blocked: bool,
@@ -87,12 +93,22 @@ impl Chat {
         }
     }
 }
+type RoutingCheck = (ChatId, RouteRequest, Option<String>, Arc<dyn AgentSession>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutingAction { Unchanged, Pending, RestartNow }
+
+fn routing_action(old_signature: Option<&str>, new_signature: Option<&str>, phase: SessionPhase) -> RoutingAction {
+    if new_signature.is_some() && old_signature == new_signature { return RoutingAction::Unchanged; }
+    if phase == SessionPhase::Idle { RoutingAction::RestartNow } else { RoutingAction::Pending }
+}
 
 /// What a background start/resume produced.
 struct Started {
     profile: Profile,
     session: Arc<dyn AgentSession>,
     binding: ChatBinding,
+    routing_signature: String,
     /// A prompt sent right after starting that the engine refused.
     prompt_error: Option<Error>,
 }
@@ -121,8 +137,10 @@ impl ChatPanel {
         });
         let subscriptions = vec![
             cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
-                if *event == AppEvent::WorkspaceChanged || *event == AppEvent::ProjectsChanged {
+                if *event == AppEvent::Workspace || *event == AppEvent::Projects {
                     this.sync_workspace(cx);
+                } else if *event == AppEvent::Routing {
+                    this.on_routing_changed(cx);
                 }
             }),
             cx.subscribe_in(&composer, window, |this, _, event: &InputEvent, window, cx| {
@@ -191,6 +209,10 @@ impl ChatPanel {
                             profile: None,
                             session: None,
                             snapshot: None,
+                            routing_signature: None,
+                            catalog: Vec::new(),
+                            restart_pending: false,
+                            closing: false,
                             starting: false,
                             blocked: false,
                             ordinal,
@@ -223,6 +245,10 @@ impl ChatPanel {
             profile: None,
             session: None,
             snapshot: None,
+            routing_signature: None,
+            catalog: Vec::new(),
+            restart_pending: false,
+            closing: false,
             starting: false,
             blocked: false,
             ordinal,
@@ -236,24 +262,33 @@ impl ChatPanel {
     /// Starts (new chat) or resumes (bound chat) the engine, then sends `prompt` if given.
     fn start(&mut self, id: ChatId, prompt: Option<String>, cx: &mut Context<Self>) {
         let Some(chat) = self.chats.get_mut(&id) else { return };
-        if chat.starting {
+        if chat.starting || chat.closing {
             return;
         }
         let services = self.state.read(cx).services.clone();
-        let Some(cwd) = self.state.read(cx).workspaces.iter().find(|w| w.id == chat.workspace).map(|w| w.worktree_path.clone())
+        let Some((cwd, project)) = self.state.read(cx).workspaces.iter().find(|w| w.id == chat.workspace).map(|w| (w.worktree_path.clone(), w.project_id.clone()))
         else {
             return;
         };
         chat.starting = true;
         cx.notify();
-        let (binding, workspace, sink, chat_id) = (chat.binding.clone(), chat.workspace.clone(), self.sink.clone(), id.clone());
+        let input = StartInput {
+            services: services.clone(),
+            chat: id.clone(),
+            workspace: chat.workspace.clone(),
+            project,
+            cwd,
+            binding: chat.binding.clone(),
+            sink: self.sink.clone(),
+            prompt,
+        };
         run(
             cx,
-            move || start_engine(&services, chat_id, workspace, cwd, binding, sink, prompt),
+            move || start_engine(input),
             move |this, result, cx| {
                 let Some(chat) = this.chats.get_mut(&id) else {
                     if let Ok(started) = result {
-                        close_engine(&this.services(cx), id.clone(), Some(started.session), cx);
+                        dispose_engine(&this.services(cx), id.clone(), Some(started.session), true, cx);
                     }
                     return;
                 };
@@ -265,10 +300,13 @@ impl ChatPanel {
                         chat.session = Some(started.session);
                         chat.profile = Some(started.profile);
                         chat.binding = Some(started.binding);
-                        chat.blocked = false;
-                        if let Some(error) = started.prompt_error {
-                            this.report(&error, cx);
-                        }
+                        chat.routing_signature = Some(started.routing_signature);
+                        chat.catalog = Vec::new();
+                        chat.restart_pending = false;
+                        chat.closing = false;
+                        if let Some(error) = started.prompt_error { this.report(&error, cx); }
+                        this.refresh_catalog(&id, cx);
+                        this.on_routing_changed(cx);
                     }
                     Err(error) => {
                         if matches!(error.kind(), Some(ErrorKind::NotFound | ErrorKind::ProfileDisabled)) && chat.binding.is_some() {
@@ -299,7 +337,7 @@ impl ChatPanel {
         }
         let Some(id) = self.active.clone() else { return };
         let Some(chat) = self.chats.get(&id) else { return };
-        if chat.blocked || chat.starting {
+        if chat.blocked || chat.starting || chat.closing {
             return;
         }
         self.composer.update(cx, |input, cx| input.set_value("", window, cx));
@@ -341,7 +379,7 @@ impl ChatPanel {
             }
         }
         cx.notify();
-        close_engine(&self.services(cx), id.clone(), chat.session, cx);
+        dispose_engine(&self.services(cx), id.clone(), chat.session, true, cx);
     }
 
     fn respond(&mut self, request_id: String, answer: InteractionAnswer, cx: &mut Context<Self>) {
@@ -381,17 +419,172 @@ impl ChatPanel {
     }
 
     pub fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
+        let services = self.services(cx);
         let id = event.chat().clone();
         let Some(chat) = self.chats.get_mut(&id) else {
             debug!(chat = %id, "event for an unknown chat");
             return;
         };
-        if projection::apply(&mut chat.snapshot, event) && self.active.as_ref() == Some(&id) {
-            self.scroll.scroll_to_bottom();
-            cx.notify();
+        if projection::apply(&mut chat.snapshot, event) {
+            if chat.restart_pending && chat.phase() == SessionPhase::Idle {
+                chat.restart_pending = false;
+                chat.closing = true;
+                let session = chat.session.take();
+                dispose_engine(&services, id.clone(), session, false, cx);
+            }
+            if self.active.as_ref() == Some(&id) {
+                self.scroll.scroll_to_bottom();
+                cx.notify();
+            }
         }
     }
 
+    /// Rechecks live chats with `new_session: false`, so default-model preferences never alter
+    /// the signature of an existing native session.
+    fn on_routing_changed(&mut self, cx: &mut Context<Self>) {
+        let services = self.services(cx);
+        let project_ids: HashMap<WorkspaceId, ProjectId> = self.state.read(cx).workspaces.iter().map(|w| (w.id.clone(), w.project_id.clone())).collect();
+        let requests: Vec<RoutingCheck> = self
+            .chats
+            .iter()
+            .filter_map(|(id, chat)| {
+                let profile = chat.profile.as_ref()?;
+                let project = project_ids.get(&chat.workspace)?.clone();
+                let session = chat.live()?.clone();
+                Some((
+                    id.clone(),
+                    RouteRequest { chat: id.clone(), project, backend: profile.input.backend_id, new_session: false },
+                    chat.routing_signature.clone(),
+                    session,
+                ))
+            })
+            .collect();
+        for (id, request, old_signature, session) in requests {
+            self.refresh_catalog(&id, cx);
+            let router = services.router.clone();
+            run(cx, move || router.signature(&request), move |this, result, cx| {
+                let services = this.services(cx);
+                let Some(chat) = this.chats.get_mut(&id) else { return };
+                if !chat.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session)) { return; }
+                let signature = match result {
+                    Ok(signature) => signature,
+                    Err(error) => {
+                        chat.restart_pending = true;
+                        if chat.phase() == SessionPhase::Idle {
+                            chat.closing = true;
+                            let current = chat.session.take();
+                            dispose_engine(&services, id.clone(), current, false, cx);
+                        }
+                        this.report(&error, cx);
+                        return;
+                    }
+                };
+                match routing_action(old_signature.as_deref(), Some(signature.as_str()), chat.phase()) {
+                    RoutingAction::Unchanged => (),
+                    RoutingAction::Pending => {
+                        chat.restart_pending = true;
+                        cx.notify();
+                    }
+                    RoutingAction::RestartNow => {
+                        let current_matches = chat.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session));
+                        if !current_matches { return; }
+                        chat.restart_pending = false;
+                        chat.closing = true;
+                        let current = chat.session.take();
+                        dispose_engine(&services, id.clone(), current, false, cx);
+                    }
+                }
+            });
+        }
+    }
+
+    fn refresh_catalog(&mut self, id: &ChatId, cx: &mut Context<Self>) {
+        let Some(chat) = self.chats.get(id) else { return };
+        let Some(profile) = chat.profile.as_ref() else { return };
+        let router = self.services(cx).router;
+        let backend = profile.input.backend_id;
+        let id = id.clone();
+        run(cx, move || router.catalog(backend), move |this, result, cx| {
+            match result {
+                Ok(catalog) => {
+                    if let Some(chat) = this.chats.get_mut(&id) {
+                        chat.catalog = catalog;
+                        cx.notify();
+                    }
+                }
+                Err(error) => this.report(&error, cx),
+            }
+        });
+    }
+
+    fn set_model(&mut self, id: ChatId, choice: ModelChoice, effort: Option<ThinkingLevel>, cx: &mut Context<Self>) {
+        let Some(chat) = self.chats.get(&id) else { return };
+        let Some(session) = chat.live().cloned() else { return };
+        if !chat.snapshot.as_ref().is_some_and(|snapshot| snapshot.capabilities.model_switch)
+            || chat.closing || chat.phase() != SessionPhase::Idle { return; }
+        let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
+        run(cx, move || session.set_model(&choice.route, &choice.model.id, effort), |this, result, cx| {
+            if let Err(error) = result { this.report(&error, cx); }
+        });
+    }
+
+    fn set_effort(&mut self, id: ChatId, effort: ThinkingLevel, cx: &mut Context<Self>) {
+        let Some(chat) = self.chats.get(&id) else { return };
+        let Some(session) = chat.live().cloned() else { return };
+        let Some(model) = chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) else { return };
+        let provider = model.provider.clone().unwrap_or_default();
+        let model_id = model.id.clone();
+        let Some(choice) = chat.catalog.iter().find(|choice| choice.route == provider && choice.model.id == model_id) else { return };
+        if !chat.snapshot.as_ref().is_some_and(|snapshot| snapshot.capabilities.model_switch)
+            || chat.closing || chat.phase() != SessionPhase::Idle
+            || !choice.model.efforts.contains(&effort) { return; }
+        run(cx, move || session.set_model(&provider, &model_id, Some(effort)), |this, result, cx| {
+            if let Err(error) = result { this.report(&error, cx); }
+        });
+    }
+
+    fn header(&self, chat: &Chat, phase: SessionPhase, r: Roles, cx: &mut Context<Self>) -> AnyElement {
+        let backend = chat.profile.as_ref().map(|p| p.input.backend_id).or(chat.snapshot.as_ref().map(|s| s.backend));
+        let backend_label = backend.map(|b| match b { BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE), _ => b.label().to_owned() });
+        let profile = chat.profile.as_ref().map(|p| format!("{} · {} {}", p.input.label, s::REVISION, p.config_revision));
+        let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
+        let current_label = current.map_or_else(|| s::NO_MODEL.to_owned(), |m| m.provider.as_ref().map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id)));
+        let current_choice = current.and_then(|model| chat.catalog.iter().find(|choice| choice.route == model.provider.as_deref().unwrap_or_default() && choice.model.id == model.id));
+        let current_effort = current.and_then(|model| model.effort);
+        let selectable = chat.snapshot.as_ref().is_some_and(|s| s.capabilities.model_switch) && chat.live().is_some() && !chat.closing && phase == SessionPhase::Idle;
+        let Some(id) = chat.binding.as_ref().map(|b| b.chat_id.clone()) else { return empty(s::NO_MODEL, &r) };
+        let choices = chat.catalog.clone();
+        let efforts = current_choice.map(|choice| choice.model.efforts.clone()).unwrap_or_default();
+        let model_entity = cx.entity();
+        let effort_entity = cx.entity();
+        let model_id = id.clone();
+        let effort_id = id;
+        let model_menu = Button::new("chat-model").ghost().h(size::HEADER_CONTROL).label(current_label).icon(IconName::ChevronDown).disabled(!selectable).dropdown_menu(move |menu, _, _| {
+            choices.iter().cloned().fold(menu, |menu, choice| {
+                let id = model_id.clone();
+                let effort = choice.model.efforts.iter().copied().find(|effort| Some(*effort) == current_effort).or_else(|| choice.model.efforts.first().copied());
+                let model_entity = model_entity.clone();
+                menu.item(PopupMenuItem::new(format!("{} · {}", choice.provider_name, choice.model.name)).on_click(move |_, _, cx| {
+                    model_entity.update(cx, |this, cx| this.set_model(id.clone(), choice.clone(), effort, cx));
+                }))
+            })
+        });
+        let effort_menu = Button::new("chat-effort").ghost().h(size::HEADER_CONTROL).label(current_effort.map(s::effort_label).unwrap_or(s::EFFORT_DEFAULT)).icon(IconName::ChevronDown).disabled(!selectable || efforts.is_empty()).dropdown_menu(move |menu, _, _| {
+            efforts.iter().copied().fold(menu, |menu, effort| {
+                let id = effort_id.clone();
+                let effort_entity = effort_entity.clone();
+                menu.item(PopupMenuItem::new(s::effort_label(effort)).on_click(move |_, _, cx| {
+                    effort_entity.update(cx, |this, cx| this.set_effort(id.clone(), effort, cx));
+                }))
+            })
+        });
+        let (status, phase_label) = match phase { SessionPhase::Idle => (Status::Success, s::PHASE_IDLE), SessionPhase::Running => (Status::Info, s::PHASE_RUNNING), SessionPhase::Waiting => (Status::Warning, s::PHASE_WAITING), SessionPhase::Closed => (Status::Idle, s::PHASE_CLOSED) };
+        h_flex().h(size::PANEL_HEADER).flex_none().px(size::PANEL_PADDING).gap(space::S8).border_b_1().border_color(r.border_muted)
+            .children(backend_label.map(|b| label(text::LABEL_PILL, b).text_color(r.primary)))
+            .children(profile.map(|p| label(text::METADATA, p).text_color(r.text_muted).truncate()))
+            .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(model_menu))
+            .child(effort_menu).child(StatusDot::new(status).label(phase_label)).into_any_element()
+    }
     fn answer_input(&mut self, key: &str, placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
         if let Some(input) = self.answers.get(key) {
             return input.clone();
@@ -402,16 +595,19 @@ impl ChatPanel {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn start_engine(
-    services: &Services,
+struct StartInput {
+    services: Services,
     chat: ChatId,
     workspace: WorkspaceId,
+    project: ProjectId,
     cwd: std::path::PathBuf,
     binding: Option<ChatBinding>,
     sink: Arc<dyn SessionSink>,
     prompt: Option<String>,
-) -> Result<Started> {
+}
+
+fn start_engine(input: StartInput) -> Result<Started> {
+    let StartInput { services, chat, workspace, project, cwd, binding, sink, prompt } = input;
     let profile = match &binding {
         Some(b) => services.profiles.revision(&b.profile_id, b.config_revision)?,
         None => {
@@ -423,6 +619,29 @@ fn start_engine(
     if !profile.input.enabled {
         return Err(Error::new(ErrorKind::ProfileDisabled, &profile.input.label));
     }
+    let backend = profile.input.backend_id;
+    let route_request = RouteRequest { chat: chat.clone(), project, backend, new_session: binding.is_none() };
+    let routing = match services.router.prepare(&route_request) {
+        Ok(routing) => routing,
+        Err(error) => {
+            services.router.release(&chat);
+            return Err(error);
+        }
+    };
+    let routing_signature = match services.router.signature(&RouteRequest { new_session: false, ..route_request.clone() }) {
+        Ok(signature) => signature,
+        Err(error) => {
+            services.router.release(&chat);
+            return Err(error);
+        }
+    };
+    let support_dir = match services.support_dir(&chat) {
+        Ok(path) => path,
+        Err(error) => {
+            services.router.release(&chat);
+            return Err(error);
+        }
+    };
     let host_tools = services.host_tools(&workspace, &chat);
     let request = StartSession {
         chat: chat.clone(),
@@ -431,55 +650,82 @@ fn start_engine(
         cwd,
         resume: binding.as_ref().map(|b| b.native_session_key.clone()),
         host_tools,
+        routing,
+        support_dir,
     };
-    let session = services.runtime(profile.input.backend_id).start(request, sink)?;
+    let session = match services.runtime(backend).start(request, sink) {
+        Ok(session) => session,
+        Err(error) => {
+            services.router.release(&chat);
+            let _ = services.remove_support_dir(&chat);
+            return Err(error);
+        }
+    };
     let binding = match binding {
         Some(binding) => binding,
         None => {
-            let key = session.snapshot().native_session_key.ok_or_else(|| Error::protocol("Agent 没有返回会话 locator"))?;
+            let key = match session.snapshot().native_session_key {
+                Some(key) => key,
+                None => {
+                    let _ = session.dispose();
+                    services.router.release(&chat);
+                    let _ = services.remove_support_dir(&chat);
+                    return Err(Error::protocol("Agent 没有返回会话 locator"));
+                }
+            };
             let binding = ChatBinding {
-                chat_id: chat,
+                chat_id: chat.clone(),
                 workspace_id: workspace,
                 profile_id: profile.id.clone(),
                 config_revision: profile.config_revision,
                 native_session_key: key,
             };
             if let Err(error) = services.profiles.bind(binding.clone()) {
-                if let Err(dispose) = session.dispose() {
-                    debug!(code = %dispose, "dispose after failed bind");
-                }
+                let _ = session.dispose();
+                services.router.release(&chat);
+                let _ = services.remove_support_dir(&chat);
                 return Err(error);
             }
             binding
         }
     };
     let prompt_error = prompt.and_then(|text| session.prompt(&text).err());
-    Ok(Started { profile, session, binding, prompt_error })
+    Ok(Started { profile, session, binding, routing_signature, prompt_error })
 }
 
-/// Disposes a closed chat's engine (if any) off the UI thread, then drops its binding.
-fn close_engine(services: &Services, chat: ChatId, session: Option<Arc<dyn AgentSession>>, cx: &mut Context<ChatPanel>) {
+/// Disposes an engine, revokes routing and removes generated files. `unbind` only when closing.
+fn dispose_engine(
+    services: &Services,
+    chat: ChatId,
+    session: Option<Arc<dyn AgentSession>>,
+    unbind: bool,
+    cx: &mut Context<ChatPanel>,
+) {
     let profiles = services.profiles.clone();
-    run(
-        cx,
-        move || {
-            if let Some(session) = session
-                && let Err(error) = session.dispose()
-            {
-                debug!(code = %error, "dispose of a closed chat failed");
-            }
+    let router = services.router.clone();
+    let support = services.clone();
+    let callback_chat = chat.clone();
+    run(cx, move || {
+        if let Some(session) = session && let Err(error) = session.dispose() {
+            debug!(code = %error, "dispose of a closed chat failed");
+        }
+        router.release(&chat);
+        let cleanup = support.remove_support_dir(&chat);
+        if unbind {
             profiles.unbind(&chat)?;
-            info!(chat = %chat, "chat closed");
-            Ok(())
-        },
-        |this, result, cx| {
-            if let Err(error) = result {
-                this.report(&error, cx);
-            }
-        },
-    );
+        }
+        info!(chat = %chat, "chat engine disposed");
+        cleanup
+    }, move |this, result, cx| {
+        if let Some(chat) = this.chats.get_mut(&callback_chat) {
+            chat.closing = false;
+        }
+        if let Err(error) = result {
+            this.report(&error, cx);
+        }
+        cx.notify();
+    });
 }
-
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
@@ -532,9 +778,9 @@ impl ChatPanel {
     fn chat_body(&mut self, id: &ChatId, r: Roles, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(chat) = self.chats.get(id) else { return empty(s::NO_CHATS, &r) };
         let phase = chat.phase();
-        let header = header(chat, phase, &r).into_any_element();
+        let header = self.header(chat, phase, r, cx).into_any_element();
         let snapshot = chat.snapshot.clone();
-        let (starting, blocked, bound) = (chat.starting, chat.blocked, chat.binding.is_some());
+        let (starting, blocked, bound) = (chat.starting || chat.closing, chat.blocked, chat.binding.is_some());
         let entity = cx.entity().downgrade();
         let toggle: transcript::Toggle = Rc::new(move |key, _, cx| {
             if let Some(panel) = entity.upgrade() {
@@ -782,39 +1028,24 @@ impl ChatPanel {
     }
 }
 
-fn header(chat: &Chat, phase: SessionPhase, r: &Roles) -> impl IntoElement {
-    let backend = chat
-        .profile
-        .as_ref()
-        .map(|p| p.input.backend_id)
-        .or(chat.snapshot.as_ref().map(|s| s.backend));
-    let backend_label = backend.map(|b| match b {
-        BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE),
-        _ => b.label().to_owned(),
-    });
-    let profile = chat
-        .profile
-        .as_ref()
-        .map(|p| format!("{} · {} {}", p.input.label, s::REVISION, p.config_revision));
-    let model = chat.snapshot.as_ref().and_then(|s| s.model.as_ref()).map_or_else(
-        || s::NO_MODEL.to_owned(),
-        |m| m.provider.as_ref().map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id)),
-    );
-    let (status, phase_label) = match phase {
-        SessionPhase::Idle => (Status::Success, s::PHASE_IDLE),
-        SessionPhase::Running => (Status::Info, s::PHASE_RUNNING),
-        SessionPhase::Waiting => (Status::Warning, s::PHASE_WAITING),
-        SessionPhase::Closed => (Status::Idle, s::PHASE_CLOSED),
-    };
-    h_flex()
-        .h(size::PANEL_HEADER)
-        .flex_none()
-        .px(size::PANEL_PADDING)
-        .gap(space::S8)
-        .border_b_1()
-        .border_color(r.border_muted)
-        .children(backend_label.map(|b| label(text::LABEL_PILL, b).text_color(r.primary)))
-        .children(profile.map(|p| label(text::METADATA, p).text_color(r.text_muted).truncate()))
-        .child(label(text::METADATA, model).flex_1().text_color(r.text_subtle).truncate())
-        .child(StatusDot::new(status).label(phase_label))
+
+#[cfg(test)]
+mod routing_tests {
+    use super::{routing_action, RoutingAction};
+    use thinkrail_core::SessionPhase;
+
+    #[test]
+    fn unchanged_signature_keeps_running_session() {
+        assert_eq!(routing_action(Some("same"), Some("same"), SessionPhase::Running), RoutingAction::Unchanged);
+    }
+
+    #[test]
+    fn changed_idle_session_restarts_now() {
+        assert_eq!(routing_action(Some("old"), Some("new"), SessionPhase::Idle), RoutingAction::RestartNow);
+    }
+
+    #[test]
+    fn changed_running_session_waits_until_idle() {
+        assert_eq!(routing_action(Some("old"), Some("new"), SessionPhase::Running), RoutingAction::Pending);
+    }
 }

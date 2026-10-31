@@ -10,6 +10,7 @@ name = "thinkrail-native"
 path = "src/main.rs"
 
 [dependencies]
+gpui-kit.workspace = true
 thinkrail-core.workspace = true
 thinkrail-workspace.workspace = true
 thinkrail-profiles.workspace = true
@@ -18,7 +19,9 @@ thinkrail-terminal.workspace = true
 thinkrail-agents.workspace = true
 thinkrail-host-tools.workspace = true
 thinkrail-ui.workspace = true
-gpui-kit.workspace = true
+thinkrail-settings-store.workspace = true
+thinkrail-routing.workspace = true
+url.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 serde_json.workspace = true

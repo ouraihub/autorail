@@ -9,7 +9,6 @@ use gpui_kit::{
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
-        WindowExt as _,
         button::{Button, ButtonVariants as _},
         input::{Input, InputState},
     },
@@ -31,14 +30,6 @@ use crate::{
 
 const BACKENDS: [BackendKind; 3] = [BackendKind::Pi, BackendKind::Omp, BackendKind::Dsh];
 
-pub struct SettingsDialog;
-
-impl SettingsDialog {
-    pub fn open(state: Entity<AppState>, window: &mut Window, cx: &mut App) {
-        let view = cx.new(|cx| SettingsView::new(state, window, cx));
-        window.open_dialog(cx, move |dialog, _, _| dialog.title(s::TITLE).w(px(760.)).child(view.clone()));
-    }
-}
 
 /// The raw form fields, before validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +107,7 @@ struct Fields {
     env: Entity<InputState>,
 }
 
-struct SettingsView {
+pub(crate) struct SettingsView {
     state: Entity<AppState>,
     catalog: ProfileCatalog,
     editing: Option<Editing>,
@@ -128,7 +119,7 @@ struct SettingsView {
 }
 
 impl SettingsView {
-    fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };

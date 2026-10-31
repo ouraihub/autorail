@@ -10,13 +10,16 @@ use anyhow::Context as _;
 use thinkrail_agents::{DshRuntime, OmpRuntime, PiRuntime};
 use serde_json::Value;
 use thinkrail_core::{
-    AgentRuntime, BackendKind, ChatId, HostToolAccess, HostToolHandler, HostToolResult, HostToolSpec,
-    PlanReviewService, PlanScope, ProfileService, SessionEvent, SessionSink, TerminalEvent, TerminalService,
-    TerminalSink, WorkspaceId, WorkspaceRoots, WorkspaceService,
+    AgentRuntime, BackendKind, ChatId, Error, HostToolAccess, HostToolHandler, HostToolResult, HostToolSpec,
+    McpService, ModelPrefService, ModelRouter, PlanReviewService, PlanScope, ProfileService, ProviderProbe,
+    ProviderService, SessionEvent, SessionSink, TerminalEvent, TerminalService, TerminalSink, WorkspaceId,
+    WorkspaceRoots, WorkspaceService,
 };
 use thinkrail_host_tools::{HostTools, ToolBridge};
 use thinkrail_plan_review::JsonPlanReviewStore;
 use thinkrail_profiles::JsonProfileStore;
+use thinkrail_routing::{Gateway, Probe, Router};
+use thinkrail_settings_store::SqliteSettingsStore;
 use thinkrail_terminal::PtyTerminalService;
 use thinkrail_workspace::GitWorkspaceService;
 use tracing::{debug, warn};
@@ -29,7 +32,6 @@ struct HostToolsHub {
     bridge: ToolBridge,
     handler: Arc<dyn HostToolHandler>,
     executable: PathBuf,
-    support_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -38,9 +40,16 @@ pub struct Services {
     pub profiles: Arc<dyn ProfileService>,
     pub terminals: Arc<dyn TerminalService>,
     pub plans: Arc<dyn PlanReviewService>,
+    pub providers: Arc<dyn ProviderService>,
+    pub mcp: Arc<dyn McpService>,
+    pub prefs: Arc<dyn ModelPrefService>,
+    pub router: Arc<dyn ModelRouter>,
+    pub probe: Arc<dyn ProviderProbe>,
     runtimes: [Arc<dyn AgentRuntime>; 3],
     /// `None` when the bridge could not start: chats then run without host tools.
     host_tools: Option<Arc<HostToolsHub>>,
+    /// `<data>/engines`: generated engine glue, partitioned by chat.
+    engine_support_dir: PathBuf,
 }
 
 impl std::fmt::Debug for Services {
@@ -66,9 +75,31 @@ impl Services {
             executable: hub.executable.clone(),
             pipe: hub.bridge.pipe_name().to_owned(),
             token,
-            support_dir: hub.support_dir.clone(),
             handler: hub.handler.clone(),
         })
+    }
+
+    /// Creates this chat's isolated generated-engine directory.
+    pub fn support_dir(&self, chat: &ChatId) -> thinkrail_core::Result<PathBuf> {
+        let path = self.engine_support_dir.join(chat.as_str());
+        std::fs::create_dir_all(&path).map_err(|source| Error::Io {
+            context: format!("无法创建 Agent 辅助目录 {}", path.display()),
+            source,
+        })?;
+        Ok(path)
+    }
+
+    /// Removes generated files while leaving native engine history untouched.
+    pub fn remove_support_dir(&self, chat: &ChatId) -> thinkrail_core::Result<()> {
+        let path = self.engine_support_dir.join(chat.as_str());
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(Error::Io {
+                context: format!("无法删除 Agent 辅助目录 {}", path.display()),
+                source,
+            }),
+        }
     }
 }
 
@@ -121,34 +152,45 @@ impl TerminalSink for TerminalChannel {
     }
 }
 
-pub fn build(data_dir: &Path) -> anyhow::Result<(Services, Channels)> {
+pub fn build(data_dir: &Path, db_path: &Path) -> anyhow::Result<(Services, Channels)> {
     std::fs::create_dir_all(data_dir).with_context(|| format!("无法创建数据目录 {}", data_dir.display()))?;
     let workspace = Arc::new(GitWorkspaceService::open(data_dir).context("无法打开工作区数据")?);
     let roots: Arc<dyn WorkspaceRoots> = workspace.clone();
     let profiles = Arc::new(JsonProfileStore::open(data_dir).context("无法打开 Agent 档案")?);
     let plans: Arc<dyn PlanReviewService> =
         Arc::new(JsonPlanReviewStore::open(data_dir, roots.clone()).context("无法打开计划与审查数据")?);
+    let settings = Arc::new(SqliteSettingsStore::open(db_path).context("无法打开设置数据库；请检查数据库目录是否可写，或使用 --data-dir <目录> 指定可写目录")?);
+    let providers: Arc<dyn ProviderService> = settings.clone();
+    let mcp: Arc<dyn McpService> = settings.clone();
+    let prefs: Arc<dyn ModelPrefService> = settings.clone();
+    let gateway = Gateway::new(providers.clone());
+    let router: Arc<dyn ModelRouter> = Arc::new(Router::new(providers.clone(), mcp.clone(), prefs.clone(), gateway));
+    let probe: Arc<dyn ProviderProbe> = Arc::new(Probe::new(providers.clone()));
     let (session_tx, sessions) = async_channel::unbounded();
     let (terminal_tx, terminals) = async_channel::bounded(TERMINAL_QUEUE);
     let (plan_tx, plan_changes) = async_channel::unbounded();
     let terminals_service = Arc::new(PtyTerminalService::new(data_dir, roots, Arc::new(TerminalChannel(terminal_tx))));
-    let host_tools = start_host_tools(data_dir, plans.clone(), plan_tx);
+    let host_tools = start_host_tools(plans.clone(), plan_tx);
     let services = Services {
         workspace,
         profiles,
         terminals: terminals_service,
         plans,
+        providers,
+        mcp,
+        prefs,
+        router,
+        probe,
         runtimes: [Arc::new(PiRuntime::new()), Arc::new(OmpRuntime::new()), Arc::new(DshRuntime::new())],
         host_tools,
+        engine_support_dir: data_dir.join("engines"),
     };
-    let channels =
-        Channels { sessions, session_sink: Arc::new(SessionChannel(session_tx)), terminals, plans: plan_changes };
+    let channels = Channels { sessions, session_sink: Arc::new(SessionChannel(session_tx)), terminals, plans: plan_changes };
     Ok((services, channels))
 }
 
 /// Host tools are an enhancement: if the pipe cannot start, chats still run, without them.
 fn start_host_tools(
-    data_dir: &Path,
     plans: Arc<dyn PlanReviewService>,
     changed: async_channel::Sender<PlanScope>,
 ) -> Option<Arc<HostToolsHub>> {
@@ -161,7 +203,7 @@ fn start_host_tools(
     };
     let handler: Arc<dyn HostToolHandler> = Arc::new(NotifyingTools { inner: HostTools::new(plans), changed });
     match ToolBridge::start(handler.clone()) {
-        Ok(bridge) => Some(Arc::new(HostToolsHub { bridge, handler, executable, support_dir: data_dir.join("engines") })),
+        Ok(bridge) => Some(Arc::new(HostToolsHub { bridge, handler, executable })),
         Err(error) => {
             warn!(%error, "host tools disabled: bridge did not start");
             None

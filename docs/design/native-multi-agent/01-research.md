@@ -49,7 +49,7 @@
 ## 4. Windows 构建与运行事实（实测）
 
 - 工具链 Rust 1.99.1（最新稳定版），依赖全部来自 crates.io 正式版，没有 Git 依赖。
-- 本机没有 MSVC：PATH 上的 `link.exe` 实际来自 Git for Windows。构建改用 LLVM（`lld-link`、`clang-cl`、`llvm-lib`、`llvm-rc`）加 `xwin 0.10.0` 获取的 Windows SDK/CRT（10.0.28000），不修改系统配置。
+- 本机没有系统 MSVC：PATH 上的 `link.exe` 实际来自 Git for Windows。构建统一用便携 MSVC 14.44 + Windows SDK 26100（`scripts/msvc/cargo-msvc.bat`，取自 `@ouraihub/desktop-kit`，与 AutoNote 共用），2026-10-31 实测全量构建通过。此前用过 LLVM + xwin，但它没有 SDK 的 `rc.exe`，`turso_sdk_kit` 的构建脚本因此失败，已弃用。
 - GPUI Fast 0.1.12 的 debug 构建在运行时从编译期写入的绝对路径读取 HLSL，移动 target 目录后会报 `Creating DirectX render pipelines: 0x80070003`。对 `gpui-fast-windows` 和 `gpui-pre-windows` 执行 `cargo clean -p` 后恢复正常；release 构建会把 shader 编译进二进制。
 - portable-pty 0.9.0 的 `WinChildKiller::kill` 把 `TerminateProcess` 的返回值判反了：成功时报 `os error 0`。实现以等待线程观察到进程实际退出为准。
 - Git 不接受 `\\?\` verbatim 路径作为 worktree 路径：传给 Git 的路径要去掉这个前缀，持久化的仍是规范化路径。
@@ -65,4 +65,4 @@
 | Q03 | 引擎协议漂移 | 锁定版本；每个引擎有 ignored 的真实握手测试，升级时运行 |
 | Q04 | GPUI Fast / gpui-kit 尚在 0.x | 精确锁定版本；升级前先跑窗口冒烟测试 |
 | Q05 | 不同档案之间串用凭据 | 子进程启动时剔除继承环境中的凭据和引擎配置变量，只注入档案显式引用的变量 |
-| Q06 | 本机缺少 MSVC 环境 | 构建文档写明 LLVM + xwin 的方案；也支持安装 VS Build Tools 后用默认链接器 |
+| Q06 | 本机缺少 MSVC 环境 | 统一用便携 MSVC，`scripts/msvc/setup-msvc.bat` 安装、`cargo-msvc.bat` 执行（`docs/BUILD.md`） |

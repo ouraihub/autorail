@@ -62,7 +62,7 @@ pub struct FilePanel {
 impl FilePanel {
     pub fn new(state: Entity<AppState>, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
-            if *event == AppEvent::WorkspaceChanged {
+            if *event == AppEvent::Workspace {
                 this.workspace = state.read(cx).workspace.clone();
                 this.docs.clear();
                 this.active = 0;

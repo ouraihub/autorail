@@ -38,3 +38,6 @@ id!(
 id!(TerminalRuntimeId);
 id!(ReviewId);
 id!(PlanItemId);
+id!(ProviderId);
+id!(ProviderKeyId);
+id!(McpServerId);

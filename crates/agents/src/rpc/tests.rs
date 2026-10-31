@@ -1,5 +1,5 @@
 use serde_json::json;
-use thinkrail_core::{ContentBlock, ErrorKind, InteractionAnswer, InteractionKind, Role, SessionEvent, ToolStatus};
+use thinkrail_core::{ContentBlock, ErrorKind, InteractionAnswer, InteractionKind, Role, SessionEvent, ThinkingLevel, ToolStatus};
 
 use super::*;
 use crate::projection::tests::projection;
@@ -125,4 +125,54 @@ fn dialog_requests_map_to_interactions_and_answers_to_engine_replies() {
     assert!(matches!(ui_request(&json!({"method":"setWidget","id":"w"})).unwrap(), UiRequest::Ignore));
     assert!(matches!(ui_request(&json!({"method":"cancel","id":"x","targetId":"s"})).unwrap(), UiRequest::Withdraw(t) if t == "s"));
     assert!(ui_request(&json!({"method":"select","id":"s"})).is_err(), "select without options is a protocol error");
+}
+
+#[test]
+fn model_switch_sends_set_model_then_the_level() {
+    let frames: Vec<Value> = switch_commands("thinkrail-1a2b3c4d-am", "claude-x", Some(ThinkingLevel::Xhigh))
+        .into_iter()
+        .map(|(kind, mut fields)| {
+            fields["type"] = json!(kind);
+            fields
+        })
+        .collect();
+    assert_eq!(
+        frames,
+        [
+            json!({"type":"set_model","provider":"thinkrail-1a2b3c4d-am","modelId":"claude-x"}),
+            json!({"type":"set_thinking_level","level":"xhigh"}),
+        ]
+    );
+    let kinds: Vec<&str> = switch_commands("p", "m", None).into_iter().map(|(kind, _)| kind).collect();
+    assert_eq!(kinds, ["set_model"], "no level keeps the engine's own clamp");
+}
+
+#[test]
+fn state_effort_is_read_from_thinking_level() {
+    let state = json!({"model":{"provider":"p","id":"m"},"thinkingLevel":"high"});
+    let info = model(&state).unwrap();
+    assert_eq!((info.provider.as_deref(), info.id.as_str(), info.effort), (Some("p"), "m", Some(ThinkingLevel::High)));
+    for unknown in [json!({"model":{"id":"m"},"thinkingLevel":"inherit"}), json!({"model":{"id":"m"}})] {
+        assert_eq!(model(&unknown).unwrap().effort, None);
+    }
+    for level in crate::projection_engine::LEVELS {
+        assert_eq!(thinking_level(crate::projection_engine::level_name(level)), Some(level));
+    }
+    assert_eq!(thinking_level(""), None);
+}
+
+#[test]
+fn engine_level_and_config_changes_publish_once() {
+    let (mut p, events) = projection();
+    p.set_model(model(&json!({"model":{"provider":"p","id":"m"},"thinkingLevel":"low"})));
+    let published = || events.0.lock().iter().filter(|e| matches!(e, SessionEvent::Snapshot { .. })).count();
+    let before = published();
+    model_event(&mut p, &json!({"type":"thinking_level_changed","level":"high"}));
+    assert_eq!(p.model().unwrap().effort, Some(ThinkingLevel::High));
+    model_event(&mut p, &json!({"type":"thinking_level_changed","thinkingLevel":"high"}));
+    assert_eq!(published(), before + 1, "an unchanged level publishes nothing");
+    model_event(&mut p, &json!({"type":"config_update","model":{"provider":"q","id":"n"},"thinkingLevel":"off"}));
+    let info = p.model().unwrap();
+    assert_eq!((info.provider.as_deref(), info.id.as_str(), info.effort), (Some("q"), "n", Some(ThinkingLevel::Off)));
+    assert_eq!(published(), before + 2);
 }

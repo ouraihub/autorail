@@ -138,7 +138,7 @@
 
 ### 4.4 DSH（ACP）
 
-- **参数**：在用户 `args`（CLI 入口路径）之后插入 `--profile acp`；启用宿主工具时再插入 `--patch <数据目录>/engines/dsh-host.patch.yml`（内容 `- id: tool-todo` / `disabled: true`，由宿主的 TODO 工具替代）。这些参数必须插在 app 参数之前。用户参数中已经有 `--profile` 时拒绝启动。没有配置目录时使用 DSH 默认的 `~/.dsh`；目录不存在时拒绝启动。
+- **参数**：在用户 `args`（CLI 入口路径）之后插入 `--profile acp`；启用宿主工具时再插入 `--patch <数据目录>/engines/<chat>/dsh-thinkrail.patch.yml`（宿主工具关闭内置 `tool-todo`，提供方投影共用该文件，详见 Agent 设置设计包）。这些参数必须插在 app 参数之前。用户参数中已经有 `--profile` 时拒绝启动。没有配置目录时使用 DSH 默认的 `~/.dsh`；目录不存在时拒绝启动。
 - **进程 cwd**：设为 `DSH_HOME`，不设为工作区。DSH 会读取进程 cwd 下的 `.env`；工作区只通过 `session/new.cwd` 传入，并且宿主要先校验目录存在。
 - **握手**：`initialize { protocolVersion: 1, clientCapabilities: {} }`。检查 `agentCapabilities.sessionCapabilities` 中 `resume` / `close` 键是否存在。然后 `session/new { cwd, mcpServers: [宿主工具] }`，用返回的 `sessionId` 作为 locator。恢复时调用 `session/resume { sessionId, cwd, mcpServers }`；它的返回中没有 `sessionId`，locator 保持请求里的值。
 - **模型**：`configOptions` 中 `category: "model"` 项的 `currentValue` 是 JSON 编码的 `[provider, model]`，显示名从 `options` 按 value 查找。`category: "thought_level"` 是推理档位。
@@ -187,7 +187,7 @@
   - `notifications/initialized`、`ping`、`tools/list`（不分页）、`tools/call`（返回 `{ content: [{ type: "text", text }], isError?, structuredContent? }`）、`notifications/cancelled`。
   - 未知方法返回 `-32601`。
 - 子进程启动后，用 `THINKRAIL_HOST_PIPE` 连接主进程的命名管道，第一帧发送 `THINKRAIL_HOST_TOKEN`。主进程用令牌查到对应的聊天，令牌无效就立即断开。每次引擎启动都签发新令牌。
-- **pi 接入**：启动时把固定扩展写到 `<数据目录>/engines/pi-host-tools.js`（内容不变就不重写），用 `-e` 加载：`pi.registerMcpServer("thinkrail", { command: process.env.THINKRAIL_HOST_EXE, args: ["mcp-host"], exposure: "direct", timeout: 600 })`。`THINKRAIL_HOST_EXE` / `PIPE` / `TOKEN` 设在 pi 进程环境上，pi 的 stdio MCP 子进程继承它们。这是 pi 官方的按会话注册方式，不写入用户配置，也不影响用户单独运行 pi。必须使用 `exposure: "direct"`：默认的 codemode 不会把工具直接声明给模型。pi 在 `session_start` 就连接 MCP server。
+- **pi 接入**：启动时把扩展写到 `<数据目录>/engines/<chat>/pi-thinkrail.js`（内容不变就不重写，提供方/MCP 投影共用），用 `-e` 加载：`pi.registerMcpServer("thinkrail", { command: process.env.THINKRAIL_HOST_EXE, args: ["mcp-host"], exposure: "direct", timeout: 600 })`。`THINKRAIL_HOST_EXE` / `PIPE` / `TOKEN` 设在 pi 进程环境上，pi 的 stdio MCP 子进程继承它们。这是 pi 官方的按会话注册方式，不写入用户配置，也不影响用户单独运行 pi。必须使用 `exposure: "direct"`：默认的 codemode 不会把工具直接声明给模型。pi 在 `session_start` 就连接 MCP server。
 - **DSH 接入**：`session/new` 和 `session/resume` 的 `mcpServers` 都传 `{ name: "thinkrail", command: <exe 绝对路径>, args: ["mcp-host"], env: [{ name, value }] }`。DSH 会清洗父进程环境，管道名和令牌必须显式放进 `env`。
 - 宿主工具是增强能力：命名管道起不来时记 `warn`，聊天照常启动，只是没有宿主工具。
 
@@ -209,7 +209,7 @@
 
 ## 7. 持久化
 
-数据目录：`--data-dir`，默认 `%USERPROFILE%\.thinkrail-native`。不读取、也不导入 `~/.thinkrail`。
+数据目录：`--data-dir`，默认 `%USERPROFILE%\.autorail`。不读取、也不导入 `~/.thinkrail` 或 `~/.thinkrail-native`；已有目录保持不动。
 
 | 文件 | 内容 | 写入方式 |
 |---|---|---|
@@ -281,8 +281,7 @@
 
 - 依赖精确锁定（`=x.y.z`）并提交 `Cargo.lock`，`rust-toolchain.toml` 固定 1.99.1。版本见 02 §3。
 - **Windows 构建**：
-  - 有 MSVC Build Tools 时使用默认链接器。
-  - 没有 MSVC 时，用 LLVM（`lld-link`、`clang-cl`）加 `xwin splat` 得到的 SDK，需要设置环境变量 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER`、`CC`、`CXX`、`AR`、`RC`、`LIB`、`INCLUDE`。这些写在 `docs/BUILD.md`，由开发者自行设置，不提交到 `.cargo/config.toml`。
+  - 统一用便携 MSVC（MSVC 14.44 + Windows SDK 26100），所有 cargo 命令经 `scripts/msvc/cargo-msvc.bat` 执行；即使装了 VS Build Tools 也不用系统的。脚本取自 `@ouraihub/desktop-kit`（MIT），与 AutoNote 共用工具链，用法见 `docs/BUILD.md`。不写 `.cargo/config.toml`。
 - debug 构建在移动 target 目录后，必须重新编译 `gpui-fast-windows` 和 `gpui-pre-windows`（01 §4）。
 - **lint**：workspace 层统一配置。`unsafe_code` deny；clippy 的 `unwrap_used`、`expect_used`、`print_stderr` 为 warn，`dbg_macro`、`todo`、`unimplemented`、`print_stdout` 为 deny；`clippy.toml` 允许测试中使用 unwrap 和 print。
 

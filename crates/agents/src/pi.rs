@@ -8,7 +8,7 @@ use std::{
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, Error, InteractionAnswer, NativeSessionKey, Result,
-    SessionSink, SessionSnapshot, StartSession,
+    SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
 };
 use tracing::info;
 
@@ -17,6 +17,7 @@ use crate::{
     host,
     process::{self, LaunchSpec, Process},
     projection::Projection,
+    projection_engine,
     rpc::{self, Dialogs, Stream},
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
 };
@@ -24,7 +25,7 @@ use crate::{
 const RESERVED: [&str; 10] =
     ["--mode", "--session", "--session-id", "--no-session", "--continue", "-c", "--resume", "-r", "--fork", "--print"];
 const CAPABILITIES: Capabilities =
-    Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: false };
+    Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: false, model_switch: true };
 
 /// Launches pi `--mode rpc` per chat.
 #[derive(Debug, Default)]
@@ -48,24 +49,7 @@ impl AgentRuntime for PiRuntime {
     fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Pi)?;
         session::reject_args(&request.profile, &RESERVED)?;
-        let mut host_args = vec!["--mode".to_owned(), "rpc".to_owned()];
-        let mut host_env = Vec::new();
-        if let Some(access) = &request.host_tools {
-            let extension = host::pi_extension(access)?;
-            host_args.extend(["-e".to_owned(), extension.display().to_string()]);
-            host_env = host::env(access);
-        }
-        if let Some(key) = &request.resume {
-            host_args.extend(["--session".to_owned(), key.as_str().to_owned()]);
-        }
-        let spec = LaunchSpec {
-            profile: &request.profile,
-            host_args,
-            cwd: request.cwd.clone(),
-            config_var: "PI_CODING_AGENT_DIR",
-            host_env,
-        };
-        let command = process::command(&spec)?;
+        let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Pi);
@@ -78,6 +62,32 @@ impl AgentRuntime for PiRuntime {
         info!(chat = %request.chat, backend = "pi", "agent session started");
         Ok(pi)
     }
+}
+
+/// Host arguments and environment of one pi launch: the generated extension (host tools,
+/// providers, MCP servers) and, for a new session, the default model.
+fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
+    let mut host_args = vec!["--mode".to_owned(), "rpc".to_owned()];
+    let mut host_env = Vec::new();
+    if let Some(extension) = projection_engine::pi_extension(request.host_tools.is_some(), &request.routing) {
+        let path = host::write_support(&request.support_dir, projection_engine::PI_EXTENSION_FILE, &extension)?;
+        host_args.extend(["-e".to_owned(), path.display().to_string()]);
+    }
+    if let Some(access) = &request.host_tools {
+        host_env = host::env(access);
+    }
+    match &request.resume {
+        Some(key) => host_args.extend(["--session".to_owned(), key.as_str().to_owned()]),
+        None => host_args.extend(projection_engine::pi_model_args(&request.routing)),
+    }
+    host_env.extend(process::routing_env(&request.routing));
+    Ok(LaunchSpec {
+        profile: &request.profile,
+        host_args,
+        cwd: request.cwd.clone(),
+        config_var: "PI_CODING_AGENT_DIR",
+        host_env,
+    })
 }
 
 struct PiSession {
@@ -143,6 +153,7 @@ impl PiSession {
                         let error = engine_error(frame["finalError"].as_str().unwrap_or("自动重试失败"));
                         p.error(session_error(&error));
                     }
+                    "thinking_level_changed" => rpc::model_event(&mut p, &frame),
                     "compaction_end" if frame["errorMessage"].is_string() => {
                         let error = engine_error(frame["errorMessage"].as_str().unwrap_or_default());
                         p.error(session_error(&error));
@@ -216,4 +227,11 @@ impl AgentSession for PiSession {
         }
         Ok(())
     }
+
+    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()> {
+        rpc::switch_model(&self.live, |kind, fields| self.call(kind, fields, COMMAND), provider, model_id, effort)
+    }
 }
+
+#[cfg(test)]
+mod tests;

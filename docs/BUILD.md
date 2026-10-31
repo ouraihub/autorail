@@ -2,38 +2,62 @@
 
 工具链由 `rust-toolchain.toml` 固定为 Rust 1.99.1，依赖已精确锁定在 `Cargo.lock` 中。
 
+Windows 上统一用便携 MSVC（MSVC 14.44 + Windows SDK 26100，x64）构建，即使已经装了 Visual Studio Build Tools 也一样。脚本在 `scripts/msvc/`，取自 [`@ouraihub/desktop-kit`](https://github.com/ouraihub/desktop-kit)（MIT，许可见 `scripts/msvc/LICENSE`），与 AutoNote 共用同一套工具链。
+
+首次使用，在仓库根运行一次（下载约 455 MB 的微软构建组件，需要 `uv` 和 `curl`）：
+
 ```powershell
-cargo build                      # 开发构建
-cargo test --workspace           # 单元测试
-cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p thinkrail-native -- --data-dir D:\tmp\tr-data
+scripts\msvc\setup-msvc.bat
 ```
+
+默认安装到 `D:\Applications\msvc-portable\msvc`，整台机器只需一份。装到别处时设置 `PORTABLE_MSVC_ROOT` 指向含 `setup_x64.bat` 的目录。
+
+之后所有 cargo 命令都经 `cargo-msvc.bat` 执行，参数原样传给 cargo：
+
+```powershell
+scripts\msvc\cargo-msvc.bat build                      # 开发构建
+scripts\msvc\cargo-msvc.bat test --workspace           # 单元测试
+scripts\msvc\cargo-msvc.bat clippy --workspace --all-targets -- -D warnings
+scripts\msvc\cargo-msvc.bat run -p thinkrail-native -- --data-dir D:\tmp\tr-data
+```
+
+## 打包 EXE
+
+从仓库根目录运行：
+
+```powershell
+scripts\msvc\package-exe.bat
+```
+
+脚本会使用便携 MSVC 构建 `--workspace --release`，然后生成：
+
+```text
+dist\thinkrail-native\thinkrail-native.exe
+dist\thinkrail-native-x64.zip
+```
+
+也可以传版本号，让 ZIP 带版本名：
+
+```powershell
+scripts\msvc\package-exe.bat 0.1.0
+```
+
+发布包不内置用户数据；首次运行默认使用 `%USERPROFILE%\.autorail`，也可通过 `--data-dir <目录>` 隔离数据。
 
 需要真实进程的测试默认标为 ignored，按需运行：
 
 ```powershell
-cargo test -p thinkrail-terminal windows_pty_lifecycle_smoke -- --ignored --nocapture
-# 引擎握手：先设置 THINKRAIL_AGENT_EXE / THINKRAIL_AGENT_ARGS（JSON 数组）/ THINKRAIL_AGENT_BACKEND / THINKRAIL_AGENT_CWD
-cargo test -p thinkrail-agents real_official_engine_handshake -- --ignored --nocapture
+scripts\msvc\cargo-msvc.bat test -p thinkrail-terminal windows_pty_lifecycle_smoke -- --ignored --nocapture
+# 隔离配置、占位模型，无凭据、不发模型请求。按实际安装位置设置：
+$env:THINKRAIL_SMOKE_PI = 'C:/path/node.exe|C:/path/pi-coding-agent/dist/bundle/cli.js'
+$env:THINKRAIL_SMOKE_OMP = 'C:/path/omp.exe'
+$env:THINKRAIL_SMOKE_DSH = 'C:/path/node.exe|C:/path/dsh/lib/bin.js'
+scripts\msvc\cargo-msvc.bat test -p thinkrail-agents smoke:: -- --ignored --nocapture --test-threads=1
 ```
 
-## Windows：没有安装 MSVC 时
+它先注入便携 MSVC 的 `PATH`、`LIB`、`INCLUDE`，并检查 `cl.exe`、`link.exe` 确实来自便携目录，再调用 cargo。直接运行 `cargo` 会用到 Git for Windows `usr\bin` 里的 `link.exe`（GNU coreutils 的 link 命令，不是链接器），报 `extra operand … Try 'link --help'`。Windows SDK 的 `rc.exe` 也来自这套工具链，`turso` 等依赖的构建脚本需要它。
 
-如果已安装 Visual Studio Build Tools（含“使用 C++ 的桌面开发”），直接构建即可。
-
-如果没有安装，可以用 LLVM 加 [xwin](https://github.com/Jake-Shadle/xwin) 获取的 Windows SDK 构建。这种方式不修改系统配置，也不需要写入 `.cargo/config.toml`。
-
-```powershell
-xwin --accept-license --manifest-version 18 splat --disable-symlinks --output C:\sdk\xwin
-$llvm = "C:\path\to\llvm\bin"
-$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "$llvm\lld-link.exe"
-$env:CC = "$llvm\clang-cl.exe"; $env:CXX = $env:CC
-$env:AR = "$llvm\llvm-lib.exe"; $env:RC = "$llvm\llvm-rc.exe"
-$env:LIB = "C:\sdk\xwin\crt\lib\x86_64;C:\sdk\xwin\sdk\lib\um\x86_64;C:\sdk\xwin\sdk\lib\ucrt\x86_64"
-$env:INCLUDE = "C:\sdk\xwin\crt\include;C:\sdk\xwin\sdk\include\ucrt;C:\sdk\xwin\sdk\include\um;C:\sdk\xwin\sdk\include\shared;C:\sdk\xwin\sdk\include\winrt"
-```
-
-注意：PATH 中如果有 Git for Windows 的 `usr\bin`，其中的 `link.exe` 是 GNU coreutils 的 link 命令，不是链接器。必须像上面那样显式指定链接器。
+`.bat` 文件必须保持 CRLF 和纯 ASCII（`.gitattributes` 已固定），否则 cmd.exe 会解析错。
 
 ## 已知问题
 
@@ -41,10 +65,12 @@ $env:INCLUDE = "C:\sdk\xwin\crt\include;C:\sdk\xwin\sdk\include\ucrt;C:\sdk\xwin
 
 ## 运行时要求
 
-应用不内置任何 Agent 引擎。在“设置 → Agents”中，为每个档案填写可执行文件的绝对路径和启动参数：
+应用不内置任何 Agent 引擎。在“设置 → Agent 档案”中，为每个档案填写可执行文件的绝对路径和启动参数；在“提供方”中配置中转地址、模型及 API 密钥，或继续使用引擎原有模型配置。
 
 | 后端 | 可执行文件 | 参数示例 |
 |---|---|---|
 | pi | `node.exe`（Node ≥ 22.19） | `["C:/…/@earendil-works/pi-coding-agent/dist/bundle/cli.js"]` |
-| OMP | `bun.exe`（Bun ≥ 1.4.4） | `["C:/…/@oh-my-pi/pi-coding-agent/src/cli.ts"]`，并且配置目录中要有可用模型 |
+| OMP | `omp.exe` 或 `bun.exe`（Bun ≥ 1.4.4） | 可执行发行版参数 `[]`；源码入口 `["C:/…/@oh-my-pi/pi-coding-agent/src/cli.ts"]`。使用宿主 MCP 时填写独立配置目录 |
 | DSH | `node.exe`（Node ≥ 24.9） | `["C:/…/@deepseek-ai/dsh/lib/bin.js"]`（预发布版） |
+
+模型、提供方、密钥和 MCP 存在 `<exe>/data/thinkrail.db`；显式 `--data-dir <目录>` 时数据库在该目录。项目、Agent 档案与日志默认位于 `%USERPROFILE%/.autorail`，不读取或自动迁移 `.thinkrail`、`.thinkrail-native` 的数据。API 密钥按用户选择明文存储，复制/显示才取出；请保护数据库文件。不同项目共用同一个 OMP 配置目录时，MCP 集合以最后启动的项目为准，建议使用独立档案目录。

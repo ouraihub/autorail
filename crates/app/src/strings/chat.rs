@@ -35,4 +35,17 @@ pub const SUBMIT: &str = "提交";
 pub const CANCEL: &str = "取消";
 pub const PERMISSION: &str = "请求运行工具";
 pub const QUESTION: &str = "Agent 提问";
-pub const OTHER: &str = "其他回答（可留空）";
+pub const OTHER: &str = "其他（自行填写）";
+pub const EFFORT_DEFAULT: &str = "力度";
+
+pub fn effort_label(level: thinkrail_core::ThinkingLevel) -> &'static str {
+    match level {
+        thinkrail_core::ThinkingLevel::Off => "关闭",
+        thinkrail_core::ThinkingLevel::Minimal => "最小",
+        thinkrail_core::ThinkingLevel::Low => "低",
+        thinkrail_core::ThinkingLevel::Medium => "中",
+        thinkrail_core::ThinkingLevel::High => "高",
+        thinkrail_core::ThinkingLevel::Xhigh => "极高",
+        thinkrail_core::ThinkingLevel::Max => "最大",
+    }
+}

@@ -95,7 +95,7 @@ impl TerminalPanel {
     pub fn new(state: Entity<AppState>, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
             let workspace = state.read(cx).workspace.clone();
-            if *event == AppEvent::WorkspaceChanged || workspace != this.workspace {
+            if *event == AppEvent::Workspace || workspace != this.workspace {
                 this.set_workspace(workspace, cx);
             }
         })];

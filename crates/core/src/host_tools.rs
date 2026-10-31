@@ -40,8 +40,6 @@ pub struct HostToolAccess {
     pub executable: std::path::PathBuf,
     pub pipe: String,
     pub token: String,
-    /// Directory for the generated engine glue (pi extension, DSH patch).
-    pub support_dir: std::path::PathBuf,
     pub handler: std::sync::Arc<dyn HostToolHandler>,
 }
 

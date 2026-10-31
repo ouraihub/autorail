@@ -85,6 +85,10 @@ impl Projection {
         self.snapshot.native_session_key = Some(key);
     }
 
+    pub(crate) fn model(&self) -> Option<&ModelInfo> {
+        self.snapshot.model.as_ref()
+    }
+
     pub(crate) fn set_model(&mut self, model: Option<ModelInfo>) {
         if self.snapshot.model != model {
             self.snapshot.model = model;

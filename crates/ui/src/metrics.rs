@@ -37,6 +37,8 @@ pub mod size {
     pub const STATUS_DOT: Pixels = px(8.);
     /// The selected activity item's left accent bar.
     pub const ACCENT_BAR: Pixels = px(2.);
+    pub const SETTINGS_ROW: Pixels = px(32.);
+    pub const PROVIDER_LIST: Pixels = px(208.);
     pub const BORDER: Pixels = px(1.);
 }
 

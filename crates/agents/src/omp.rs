@@ -15,15 +15,17 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, Error, ErrorCode as _, HostToolHandler, InteractionAnswer,
-    NativeSessionKey, PlanScope, Result, SessionSink, SessionSnapshot, StartSession,
+    NativeSessionKey, PlanScope, Result, SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
 };
 use tracing::{debug, info, warn};
 
 use crate::{
     framing::Chunks,
     host,
+    omp_mcp,
     process::{self, LaunchSpec, Process},
     projection::Projection,
+    projection_engine,
     rpc::{self, Dialogs, Stream},
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
 };
@@ -48,7 +50,7 @@ const RESERVED: [&str; 10] = [
 const NO_MODEL: (&str, &str) =
     ("No default model selected", "OMP 没有可用的默认模型：请在该档案的 OMP 配置目录中配置模型（例如 models.yml）后重试");
 const CAPABILITIES: Capabilities =
-    Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: true };
+    Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: true, model_switch: true };
 
 /// Launches OMP `--mode rpc-ui --approval-mode always-ask` per chat.
 #[derive(Debug, Default)]
@@ -72,19 +74,7 @@ impl AgentRuntime for OmpRuntime {
     fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Omp)?;
         session::reject_args(&request.profile, &RESERVED)?;
-        let mut host_args: Vec<String> =
-            ["--mode", "rpc-ui", "--approval-mode", "always-ask"].into_iter().map(Into::into).collect();
-        if let Some(key) = &request.resume {
-            host_args.extend(["--session".to_owned(), key.as_str().to_owned()]);
-        }
-        let spec = LaunchSpec {
-            profile: &request.profile,
-            host_args,
-            cwd: request.cwd.clone(),
-            config_var: "PI_CODING_AGENT_DIR",
-            host_env: Vec::new(),
-        };
-        let command = process::command(&spec)?;
+        let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, LINE_LIMIT)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Omp);
@@ -114,6 +104,33 @@ impl AgentRuntime for OmpRuntime {
         info!(chat = %request.chat, backend = "omp", "agent session started");
         Ok(omp)
     }
+}
+
+/// Host arguments and environment of one OMP launch: the provider extension (`-e`), the overlay
+/// (`--config`) and the `thinkrail-` entries of the config root's `mcp.json`. Host tools travel
+/// over RPC (`set_host_tools`), so they add neither arguments nor variables.
+fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
+    let mut host_args: Vec<String> =
+        ["--mode", "rpc-ui", "--approval-mode", "always-ask"].into_iter().map(Into::into).collect();
+    omp_mcp::sync(request.profile.input.config_root.as_deref(), &request.routing.mcp)?;
+    if let Some(extension) = projection_engine::omp_extension(&request.routing) {
+        let path = host::write_support(&request.support_dir, projection_engine::OMP_EXTENSION_FILE, &extension)?;
+        host_args.extend(["-e".to_owned(), path.display().to_string()]);
+    }
+    if let Some(overlay) = projection_engine::omp_overlay(&request.routing) {
+        let path = host::write_support(&request.support_dir, projection_engine::OMP_OVERLAY_FILE, &overlay)?;
+        host_args.extend(["--config".to_owned(), path.display().to_string()]);
+    }
+    if let Some(key) = &request.resume {
+        host_args.extend(["--session".to_owned(), key.as_str().to_owned()]);
+    }
+    Ok(LaunchSpec {
+        profile: &request.profile,
+        host_args,
+        cwd: request.cwd.clone(),
+        config_var: "PI_CODING_AGENT_DIR",
+        host_env: process::routing_env(&request.routing).collect(),
+    })
 }
 
 /// The host tools of one OMP chat: called in-process from `host_tool_call` frames.
@@ -254,6 +271,7 @@ impl OmpSession {
                 let mut p = self.live.state.lock();
                 match kind {
                     "agent_start" => p.set_running(true),
+                    "thinking_level_changed" | "config_update" => rpc::model_event(&mut p, &frame),
                     "session_settled" => {
                         p.fail_unfinished_tools();
                         p.set_running(false);
@@ -354,6 +372,10 @@ impl AgentSession for OmpSession {
             self.live.shutdown();
         }
         Ok(())
+    }
+
+    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()> {
+        rpc::switch_model(&self.live, |kind, fields| self.call(kind, fields, COMMAND), provider, model_id, effort)
     }
 }
 

@@ -6,5 +6,8 @@ pub mod chat;
 pub mod files;
 pub mod projects;
 pub mod settings;
+pub mod settings_models;
+pub mod settings_providers;
+pub mod settings_mcp;
 pub mod shell;
 pub mod terminal;

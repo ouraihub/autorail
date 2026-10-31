@@ -39,9 +39,11 @@ impl Notice {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppEvent {
-    ProjectsChanged,
+    Projects,
     /// The selected workspace changed (or was cleared).
-    WorkspaceChanged,
+    Workspace,
+    /// Provider, MCP or model preferences changed; active chats re-check signatures.
+    Routing,
 }
 
 pub struct AppState {
@@ -129,7 +131,7 @@ impl AppState {
                         let first = this.project.as_ref().and_then(|p| this.workspaces_of(p).next()).map(|w| w.id.clone());
                         this.set_workspace(first, cx);
                     }
-                    cx.emit(AppEvent::ProjectsChanged);
+                    cx.emit(AppEvent::Projects);
                     cx.notify();
                 }
                 Err(error) => this.report(&error, cx),
@@ -148,7 +150,7 @@ impl AppState {
     fn set_workspace(&mut self, id: Option<WorkspaceId>, cx: &mut Context<Self>) {
         if self.workspace != id {
             self.workspace = id;
-            cx.emit(AppEvent::WorkspaceChanged);
+            cx.emit(AppEvent::Workspace);
         }
     }
 

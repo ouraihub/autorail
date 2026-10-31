@@ -2,6 +2,7 @@
 //! PID-tree termination.
 
 use std::{
+    ffi::OsString,
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
@@ -12,7 +13,7 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
-use thinkrail_core::{EnvSource, Error, ErrorKind, Launch, Profile, Result};
+use thinkrail_core::{EngineRouting, EnvSource, Error, ErrorKind, Launch, Profile, Result};
 use tracing::{debug, info, warn};
 
 const STDERR_TAIL: usize = 64 * 1024;
@@ -49,8 +50,14 @@ pub(crate) struct LaunchSpec<'a> {
     pub cwd: PathBuf,
     /// Variable that carries the profile's config root (`PI_CODING_AGENT_DIR` / `DSH_HOME`).
     pub config_var: &'static str,
-    /// Extra variables set last (the host tool pipe and token); never logged.
-    pub host_env: Vec<(&'static str, std::ffi::OsString)>,
+    /// Extra variables set last (host tool pipe and token, then `EngineRouting.env`); never logged.
+    pub host_env: Vec<(String, OsString)>,
+}
+
+/// `EngineRouting.env` as launch variables, appended after the host tool variables. `command`
+/// clears inherited `THINKRAIL_*` first, so these values always win.
+pub(crate) fn routing_env(routing: &EngineRouting) -> impl Iterator<Item = (String, OsString)> + '_ {
+    routing.env.iter().map(|(name, value)| (name.clone(), OsString::from(value.expose())))
 }
 
 pub(crate) fn command(spec: &LaunchSpec<'_>) -> Result<Command> {
@@ -356,5 +363,25 @@ mod tests {
         assert_eq!(plain_path(Path::new(r"\\?\C:\work\a")), PathBuf::from(r"C:\work\a"));
         assert_eq!(plain_path(Path::new(r"\\?\UNC\srv\share")), PathBuf::from(r"\\srv\share"));
         assert_eq!(plain_path(Path::new(r"C:\work")), PathBuf::from(r"C:\work"));
+    }
+
+    #[test]
+    fn routing_env_is_applied_last_and_wins_over_profile_variables() {
+        let f = crate::testing::Fixture::new();
+        let mut request = f.request(thinkrail_core::BackendKind::Pi, None, false, crate::testing::secret_routing());
+        let Launch::External { executable, .. } = &request.profile.input.launch;
+        std::fs::write(executable, b"").unwrap();
+        request.profile.input.env_refs = vec![thinkrail_core::EnvRef {
+            name: "THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(),
+            source: EnvSource::Launch,
+            reference: "PATH".into(),
+        }];
+        let host_env = routing_env(&request.routing).collect();
+        let spec = LaunchSpec { profile: &request.profile, host_args: Vec::new(), cwd: f.cwd(), config_var: "PI_CODING_AGENT_DIR", host_env };
+        let command = command(&spec).unwrap();
+        let envs: Vec<_> = command.get_envs().map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned))).collect();
+        for (name, value) in crate::testing::routing_vars(&request.routing) {
+            assert!(envs.contains(&(name.clone().into(), Some(value))), "{name}");
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BackendKind, ChatId, HostToolAccess, NativeSessionKey, Profile, ProfileId, Result, WorkspaceId};
+use crate::{BackendKind, ChatId, EngineRouting, HostToolAccess, NativeSessionKey, Profile, ProfileId, Result, ThinkingLevel, WorkspaceId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +99,8 @@ pub struct Capabilities {
     pub questions: bool,
     /// The engine asks before every tool call (not just some).
     pub tool_permissions: bool,
+    /// The model can be switched inside a running session.
+    pub model_switch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,6 +108,7 @@ pub struct Capabilities {
 pub struct ModelInfo {
     pub provider: Option<String>,
     pub id: String,
+    pub effort: Option<ThinkingLevel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -173,6 +176,10 @@ pub struct StartSession {
     pub resume: Option<NativeSessionKey>,
     /// `None` starts the engine without the host's TODO / review tools.
     pub host_tools: Option<HostToolAccess>,
+    /// Providers, default model and MCP servers to project; empty keeps the engine's own config.
+    pub routing: EngineRouting,
+    /// This launch's engine support directory for generated files (pi extension, DSH patch, …).
+    pub support_dir: PathBuf,
 }
 
 /// One live engine conversation. All methods return once the engine has *accepted* the command;
@@ -184,6 +191,9 @@ pub trait AgentSession: Send + Sync {
     fn respond(&self, request_id: &str, answer: InteractionAnswer) -> Result<()>;
     /// Graceful shutdown; the native transcript is kept.
     fn dispose(&self) -> Result<()>;
+    /// Applies to this session only; never written back to engine config. `provider` is
+    /// `ProjectedProvider.route`.
+    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()>;
 }
 
 /// An engine family's process protocol (pi RPC, OMP RPC, DSH ACP).

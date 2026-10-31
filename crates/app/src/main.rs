@@ -18,7 +18,18 @@ use tracing::{error, info};
 
 struct Args {
     data_dir: PathBuf,
+    db_path: PathBuf,
     appearance: Appearance,
+}
+
+fn derive_paths(data_dir: Option<PathBuf>, exe_dir: &std::path::Path, user_profile: Option<PathBuf>) -> anyhow::Result<(PathBuf, PathBuf)> {
+    match data_dir {
+        Some(dir) => Ok((dir.clone(), dir.join("thinkrail.db"))),
+        None => {
+            let data_dir = user_profile.ok_or_else(|| anyhow::anyhow!("找不到用户目录，请用 --data-dir 指定数据目录"))?.join(".autorail");
+            Ok((data_dir, exe_dir.join("data").join("thinkrail.db")))
+        }
+    }
 }
 
 fn args() -> anyhow::Result<Args> {
@@ -32,12 +43,10 @@ fn args() -> anyhow::Result<Args> {
             _ => bail!("未知参数：{}（可用：--data-dir <目录>、--light）", arg.to_string_lossy()),
         }
     }
-    let data_dir = match data_dir {
-        Some(dir) => dir,
-        None => PathBuf::from(std::env::var_os("USERPROFILE").context("找不到用户目录，请用 --data-dir 指定数据目录")?)
-            .join(".thinkrail-native"),
-    };
-    Ok(Args { data_dir, appearance })
+    let exe_dir = std::env::current_exe()?.parent().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("找不到程序目录，请用 --data-dir 指定数据目录"))?;
+    let user_profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let (data_dir, db_path) = derive_paths(data_dir, &exe_dir, user_profile)?;
+    Ok(Args { data_dir, db_path, appearance })
 }
 
 fn main() {
@@ -59,7 +68,7 @@ fn main() {
         Err(error) => fail(&format!("{error:#}")),
     };
     info!(version = env!("CARGO_PKG_VERSION"), "app starting");
-    let (services, channels) = match services::build(&args.data_dir) {
+    let (services, channels) = match services::build(&args.data_dir, &args.db_path) {
         Ok(built) => built,
         Err(error) => {
             error!(error = %format!("{error:#}"), "startup failed");
@@ -99,4 +108,23 @@ fn fail(message: &str) -> ! {
         std::process::exit(3);
     }
     std::process::exit(2)
+}
+#[cfg(test)]
+mod tests {
+    use super::derive_paths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn explicit_data_dir_places_database_inside_it() {
+        let (data, db) = derive_paths(Some(PathBuf::from("C:/data")), PathBuf::from("C:/exe").as_path(), None).expect("path derivation");
+        assert_eq!(data, PathBuf::from("C:/data"));
+        assert_eq!(db, PathBuf::from("C:/data/thinkrail.db"));
+    }
+
+    #[test]
+    fn default_uses_autorail_and_keeps_database_portable() {
+        let (data, db) = derive_paths(None, PathBuf::from("C:/exe").as_path(), Some(PathBuf::from("C:/user"))).expect("path derivation");
+        assert_eq!(data, PathBuf::from("C:/user/.autorail"));
+        assert_eq!(db, PathBuf::from("C:/exe/data/thinkrail.db"));
+    }
 }
