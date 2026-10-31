@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use thinkrail_core::{
     Access, BackendKind, ChatId, Endpoint, EngineRouting, EnvValue, ErrorKind, Header, McpScope, McpServerInput,
     McpService, McpTransport, ModelPrefService, ModelRef, ModelRouter, ProbeTarget, ProjectId, ProjectedMcpTransport,
-    Protocol, Provider, ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe,
+    Protocol, Provider, ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe, ModelType,
     ProviderService, Result, RouteRequest, Secret, ThinkingLevel,
 };
 use thinkrail_settings_store::SqliteSettingsStore;
@@ -40,6 +40,7 @@ fn fixture() -> Fixture {
 fn model(id: &str, protocols: &[Protocol]) -> ProviderModel {
     ProviderModel {
         model_id: id.into(),
+        model_type: ModelType::Chat,
         name: id.to_uppercase(),
         protocols: protocols.to_vec(),
         context_window: None,
@@ -455,6 +456,7 @@ fn catalog_hides_hidden_models_and_lists_each_model_once() {
     let mut relay = input("Relay", Access::Direct);
     relay.models.push(model("both", &[Protocol::AnthropicMessages, Protocol::OpenaiChat]));
     relay.models.push(ProviderModel { enabled: false, ..model("off", &[Protocol::OpenaiChat]) });
+    relay.models.push(ProviderModel { model_type: ModelType::Image, ..model("painter", &[Protocol::OpenaiChat]) });
     let provider = create(&fx, relay, &[]);
     let mut disabled = input("Disabled", Access::Direct);
     disabled.enabled = false;
@@ -464,7 +466,7 @@ fn catalog_hides_hidden_models_and_lists_each_model_once() {
     let catalog = router(&fx, Arc::new(FakeGateway::default())).catalog(BackendKind::Dsh).unwrap();
     let short = short(&provider);
     let listed: Vec<_> = catalog.iter().map(|c| (c.model.id.as_str(), c.route.clone())).collect();
-    assert_eq!(listed, [("claude-test", format!("thinkrail-{short}-am")), ("both", format!("thinkrail-{short}-am"))]);
+    assert_eq!(listed, [("claude-test", format!("thinkrail-{short}-am")), ("both", format!("thinkrail-{short}-am"))], "disabled and non-chat models stay out");
     assert!(catalog.iter().all(|c| c.provider == provider.id && c.provider_name == "Relay"));
 }
 

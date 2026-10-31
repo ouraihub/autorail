@@ -1,7 +1,7 @@
 //! Line edits keep models and the default protocol consistent.
 
 use thinkrail_core::{
-    Access, Endpoint, Protocol, ProviderInput, ProviderModel, free_protocols, line_models, remove_line, retarget_line,
+    Access, Endpoint, ModelType, Protocol, ProviderInput, ProviderModel, free_protocols, line_models, remove_line, retarget_line,
     set_line,
 };
 
@@ -12,6 +12,7 @@ const RESPONSES: Protocol = Protocol::OpenaiResponses;
 fn model(id: &str, protocols: &[Protocol]) -> ProviderModel {
     ProviderModel {
         model_id: id.into(),
+        model_type: ModelType::Chat,
         name: id.into(),
         protocols: protocols.to_vec(),
         context_window: None,

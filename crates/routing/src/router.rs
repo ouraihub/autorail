@@ -98,7 +98,7 @@ fn plan(providers: &[Provider], backend: BackendKind) -> Vec<PlannedRoute<'_>> {
                 .input
                 .models
                 .iter()
-                .filter(|m| m.enabled && m.protocols.contains(&endpoint.protocol))
+                .filter(|m| usable(m) && m.protocols.contains(&endpoint.protocol))
                 .map(project_model)
                 .collect();
             if models.is_empty() {
@@ -130,7 +130,7 @@ fn route_for<'a>(routes: &'a [PlannedRoute<'_>], provider: &Provider, model: &Pr
 fn default_model(routes: &[PlannedRoute<'_>], providers: &[Provider], prefs: &ModelPrefs) -> Option<DefaultModel> {
     let wanted = prefs.default_model.as_ref()?;
     let found = providers.iter().filter(|p| p.input.enabled && p.id == wanted.provider).find_map(|provider| {
-        let model = provider.input.models.iter().find(|m| m.enabled && m.model_id == wanted.model_id)?;
+        let model = provider.input.models.iter().find(|m| usable(m) && m.model_id == wanted.model_id)?;
         let route = route_for(routes, provider, model)?;
         let effort = if model.reasoning {
             prefs.default_effort.and_then(|effort| model.efforts.iter().copied().filter(|e| *e <= effort).max())
@@ -385,7 +385,7 @@ impl ModelRouter for Router {
         let routes = plan(&providers, backend);
         let mut out = Vec::new();
         for provider in providers.iter().filter(|p| p.input.enabled) {
-            for model in provider.input.models.iter().filter(|m| m.enabled) {
+            for model in provider.input.models.iter().filter(|m| usable(m)) {
                 let hidden = prefs.hidden.iter().any(|h| h.provider == provider.id && h.model_id == model.model_id);
                 if hidden {
                     continue;
@@ -402,4 +402,9 @@ impl ModelRouter for Router {
         }
         Ok(out)
     }
+}
+
+/// Engines get enabled chat models only; image, embedding and other types stay in settings.
+fn usable(model: &thinkrail_core::ProviderModel) -> bool {
+    model.enabled && model.model_type == thinkrail_core::ModelType::Chat
 }

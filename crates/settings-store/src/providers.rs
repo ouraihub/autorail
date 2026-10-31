@@ -71,7 +71,8 @@ fn write_children(conn: &Conn, id: &ProviderId, input: &ProviderInput) -> Result
     for (sort, model) in input.models.iter().enumerate() {
         conn.execute(
             "INSERT INTO provider_models (provider_id, model_id, name, protocols, context_window, max_tokens, \
-             vision, reasoning, tools, efforts, enabled, sort) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             vision, reasoning, tools, efforts, enabled, sort, model_type) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             (
                 id.as_str(),
                 model.model_id.as_str(),
@@ -85,6 +86,7 @@ fn write_children(conn: &Conn, id: &ProviderId, input: &ProviderInput) -> Result
                 db::to_json(&model.efforts)?,
                 model.enabled,
                 i64::try_from(sort).unwrap_or(i64::MAX),
+                db::to_word(&model.model_type)?,
             ),
         )?;
     }
@@ -127,14 +129,15 @@ fn decode(conn: &Conn, row: &Row) -> Result<Provider> {
     endpoints.sort_by_key(|endpoint| validate::protocol_rank(endpoint.protocol));
     let models = conn
         .rows(
-            "SELECT model_id, name, protocols, context_window, max_tokens, vision, reasoning, tools, efforts, enabled \
-             FROM provider_models WHERE provider_id = ?1 ORDER BY sort",
+            "SELECT model_id, name, protocols, context_window, max_tokens, vision, reasoning, tools, efforts, enabled, \
+             model_type FROM provider_models WHERE provider_id = ?1 ORDER BY sort",
             (id.as_str(),),
         )?
         .iter()
         .map(|row| {
             Ok(ProviderModel {
                 model_id: db::text(row, 0)?,
+                model_type: db::word(row, 10)?,
                 name: db::text(row, 1)?,
                 protocols: db::json(row, 2)?,
                 context_window: db::optional_u32(row, 3)?,

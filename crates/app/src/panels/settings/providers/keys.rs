@@ -13,7 +13,7 @@ use gpui_kit::{
     },
     px,
 };
-use thinkrail_core::{ProviderId, ProviderKeyId, ProviderKeyInput, ProviderKeyUpdate, Secret};
+use thinkrail_core::{ProviderId, ProviderKeyId, ProviderKeyInput, ProviderKeySummary, ProviderKeyUpdate, Secret};
 use thinkrail_ui::{ThinkrailTheme, components::{IconButton, label}, metrics::{radius, space, text}};
 
 use super::{ProvidersPage, error_text, write};
@@ -30,19 +30,30 @@ struct KeysDialog {
 }
 
 impl ProvidersPage {
-    pub(super) fn open_keys_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens key management; `edit` preloads that key in the form (the pane's ✎ button).
+    pub(super) fn open_keys_dialog(&mut self, edit: Option<ProviderKeySummary>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(provider) = self.selected.clone() else { return };
         let page = cx.entity();
+        let label = edit.as_ref().and_then(|k| k.label.clone()).unwrap_or_default();
         let dialog = cx.new(|cx| KeysDialog {
             _subscription: cx.observe(&page, |_, _, cx| cx.notify()),
             page, provider,
-            label: cx.new(|cx| InputState::new(window, cx).placeholder(s::KEYS_LABEL)),
+            label: cx.new(|cx| InputState::new(window, cx).placeholder(s::KEYS_LABEL).default_value(label)),
             value: cx.new(|cx| InputState::new(window, cx).placeholder(s::KEY_PLACEHOLDER).masked(true)),
-            editing: None, error: None,
+            editing: edit.map(|k| k.id), error: None,
         });
         window.open_dialog(cx, move |d, _, _| {
             d.title(s::KEYS_MANAGE).w(px(520.)).child(dialog.clone()).on_ok(|_, _, _| false)
                 .footer(DialogFooter::new().child(Button::new("keys-close").outline().label(s::CLOSE).on_click(|_, window, cx| window.close_dialog(cx))))
+        });
+    }
+
+    /// Copies one key's plaintext; it goes only to the clipboard.
+    pub(super) fn copy_key(&mut self, key: ProviderKeyId, cx: &mut Context<Self>) {
+        let service = self.service(cx);
+        run(cx, move || service.reveal_key(&key), |this, result, cx| match result {
+            Ok(secret) => cx.write_to_clipboard(ClipboardItem::new_string(secret.expose().to_owned())),
+            Err(error) => this.report(&error, cx),
         });
     }
 }
@@ -88,13 +99,7 @@ impl Render for KeysDialog {
                 .child(label(text::UI, key.label.clone().unwrap_or_else(|| s::KEY_DEFAULT_LABEL.into())).w(px(120.)).truncate())
                 .child(label(text::CODE_TEXT, key.masked.clone()).flex_1().text_color(r.text_muted))
                 .child(IconButton::new(format!("key-copy-{}", key.id), gpui_kit::assets::IconName::Copy).tooltip(s::KEY_COPY)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let (service, key) = (this.page.read(cx).service(cx), copy.clone());
-                        run(cx, move || service.reveal_key(&key), |_, result, cx| match result {
-                            Ok(secret) => cx.write_to_clipboard(ClipboardItem::new_string(secret.expose().to_owned())),
-                            Err(error) => tracing::warn!(code = thinkrail_core::ErrorCode::code(&error), "cannot copy key"),
-                        });
-                    })))
+                    .on_click(cx.listener(move |this, _, _, cx| { let key = copy.clone(); this.page.update(cx, |page, cx| page.copy_key(key, cx)) })))
                 .child(IconButton::new(format!("key-edit-{}", key.id), gpui_kit::assets::IconName::Pencil).tooltip(s::KEY_EDIT)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.editing = Some(edit.id.clone());

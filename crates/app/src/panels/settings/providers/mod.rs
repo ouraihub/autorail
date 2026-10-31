@@ -53,6 +53,8 @@ pub struct ProvidersPage {
     checks: Option<std::result::Result<Vec<KeyCheck>, String>>,
     /// Plaintext of the shown key; cleared on every selection change and when settings close.
     revealed: Option<String>,
+    /// Pointer is on the key row's eye cluster: copy / edit are shown.
+    key_hover: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -84,7 +86,7 @@ impl ProvidersPage {
         let mut page = Self {
             state, providers: Vec::new(), loaded: false, selected: None, draft: None, line: Protocol::OpenaiChat,
             search, filter: Filter::All, url, sync_inputs: true, url_error: false, key_input, models,
-            saving: false, dirty: false, failed: None, checking: false, checks: None, revealed: None,
+            saving: false, dirty: false, failed: None, checking: false, checks: None, revealed: None, key_hover: false,
             _subscriptions: subscriptions,
         };
         page.reload(cx);

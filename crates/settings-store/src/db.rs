@@ -161,6 +161,21 @@ fn migrate(conn: &Conn) -> Result<()> {
     };
     match int(row, 0)? {
         SCHEMA_VERSION => Ok(()),
+        // v2 → v3: models gain a type, inferred from the id so nothing is lost.
+        2 => conn.transaction("BEGIN IMMEDIATE", |conn| {
+            conn.execute("ALTER TABLE provider_models ADD COLUMN model_type TEXT NOT NULL DEFAULT 'chat'", ())?;
+            for row in conn.rows("SELECT provider_id, model_id FROM provider_models", ())? {
+                let (provider, model) = (text(&row, 0)?, text(&row, 1)?);
+                let kind = to_word(&thinkrail_core::model_type(&model))?;
+                conn.execute(
+                    "UPDATE provider_models SET model_type = ?3 WHERE provider_id = ?1 AND model_id = ?2",
+                    (provider.as_str(), model.as_str(), kind.as_str()),
+                )?;
+            }
+            conn.execute("UPDATE schema_meta SET version = ?1", (SCHEMA_VERSION,))?;
+            info!(from = 2, to = SCHEMA_VERSION, "settings database upgraded");
+            Ok(())
+        }),
         version if version > SCHEMA_VERSION => Err(Error::corrupt("数据库由更新版本的 ThinkRail 创建，请升级后再打开。")),
         version if version >= 1 => {
             Err(Error::corrupt("设置数据库来自早期开发版本，表结构已变更；请删除 thinkrail.db 后重新打开。"))

@@ -99,10 +99,13 @@ pub const NO_GROUP: &str = "其他";
 
 // 挑选模型
 pub const PICKER_TITLE: &str = "挑选模型";
-pub const PICKER_HINT: &str = "勾选要使用的模型，确定后保存；取消不做任何修改。";
+pub const PICKER_HINT: &str = "点 + 添加模型，点 − 移除。";
 pub const SEARCH_MODELS: &str = "搜索模型 id";
 pub const ADD_ALL: &str = "全部添加";
 pub const REMOVE_ALL: &str = "全部移除";
+pub const PICKED: &str = "已选";
+pub const CAN_VISION: &str = "可看图";
+pub const MODEL_TYPE: &str = "类型";
 
 // 模型设置
 pub const EDIT_MODEL: &str = "编辑模型";
@@ -122,6 +125,29 @@ pub fn protocol_short(protocol: Protocol) -> &'static str {
         Protocol::OpenaiChat => "OpenAI",
         Protocol::OpenaiResponses => "Responses",
         Protocol::AnthropicMessages => "Anthropic",
+    }
+}
+
+/// Full protocol name for the protocol dropdown (Aether `RequestConfigDialog`).
+pub fn protocol(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::OpenaiChat => "OpenAI 兼容（Chat Completions）",
+        Protocol::OpenaiResponses => "OpenAI Responses",
+        Protocol::AnthropicMessages => "Anthropic 兼容（Messages）",
+    }
+}
+
+pub fn model_type(kind: thinkrail_core::ModelType) -> &'static str {
+    use thinkrail_core::ModelType as T;
+    match kind {
+        T::Chat => "对话",
+        T::Image => "图像",
+        T::Video => "视频",
+        T::Tts => "语音合成",
+        T::Stt => "语音识别",
+        T::Embedding => "向量",
+        T::Rerank => "重排",
+        T::Unknown => "未知",
     }
 }
 

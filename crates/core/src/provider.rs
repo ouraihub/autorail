@@ -20,6 +20,16 @@ pub enum Access { Direct, Gateway }
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel { Off, Minimal, Low, Medium, High, Xhigh, Max }
 
+/// What a model does (Aether `ModelType`). Only `Chat` models are offered to engines.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelType { #[default] Chat, Image, Video, Tts, Stt, Embedding, Rerank, Unknown }
+
+impl ModelType {
+    pub const ALL: [ModelType; 8] =
+        [Self::Chat, Self::Image, Self::Video, Self::Tts, Self::Stt, Self::Embedding, Self::Rerank, Self::Unknown];
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Endpoint {
@@ -38,6 +48,8 @@ pub struct Header {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderModel {
     pub model_id: String,
+    /// Inferred from the id when added; the user can change it.
+    pub model_type: ModelType,
     pub name: String,
     /// Ordered, non-empty; the first is the default.
     pub protocols: Vec<Protocol>,

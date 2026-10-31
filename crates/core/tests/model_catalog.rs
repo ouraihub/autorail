@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use thinkrail_core::{DiscoveredModel, Protocol, ProviderModel, ThinkingLevel, merge_picked, model_group, model_hints};
+use thinkrail_core::{
+    DiscoveredModel, ModelType, Protocol, ProviderModel, ThinkingLevel, merge_picked, model_group, model_hints, model_type,
+};
 
 const CHAT: Protocol = Protocol::OpenaiChat;
 const CLAUDE: Protocol = Protocol::AnthropicMessages;
@@ -14,6 +16,7 @@ fn found(id: &str, context: Option<u32>) -> DiscoveredModel {
 fn edited(id: &str, protocols: &[Protocol]) -> ProviderModel {
     ProviderModel {
         model_id: id.into(),
+        model_type: ModelType::Chat,
         name: "手工名称".into(),
         protocols: protocols.to_vec(),
         context_window: None,
@@ -55,6 +58,18 @@ fn hints_come_from_known_families_and_markers_only() {
     assert_eq!((image.tools, image.vision, image.context_window), (false, false, None), "non-chat models get no chat limits");
     let unknown = model_hints("my-relay-model");
     assert_eq!((unknown.context_window, unknown.vision, unknown.tools), (None, false, true), "unknown chat ids get no limits but keep tools");
+}
+
+#[test]
+fn types_come_from_id_keywords_in_order() {
+    let cases = [
+        ("gpt-6-sol", ModelType::Chat), ("grok-2-image", ModelType::Image), ("text-embedding-3-small", ModelType::Embedding),
+        ("bge-reranker", ModelType::Rerank), ("tts-1", ModelType::Tts), ("whisper-1", ModelType::Stt),
+        ("sora-2", ModelType::Video), ("Flux.1-dev", ModelType::Image),
+    ];
+    for (id, expected) in cases {
+        assert_eq!(model_type(id), expected, "{id}");
+    }
 }
 
 #[test]

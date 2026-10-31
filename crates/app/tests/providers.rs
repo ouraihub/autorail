@@ -19,6 +19,7 @@ fn input(url: &str) -> ProviderInput {
         enabled: true,
         models: vec![ProviderModel {
             model_id: "model".into(),
+            model_type: thinkrail_core::ModelType::Chat,
             name: "Model".into(),
             protocols: vec![Protocol::OpenaiChat],
             context_window: None,

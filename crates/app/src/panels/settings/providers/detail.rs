@@ -1,7 +1,7 @@
 //! 选中服务商的详情：标题行、API 密钥与检测、密钥使用方式、API 地址与线路、模型。
 
 use gpui_kit::{
-    AnyElement, Context, IntoElement, ParentElement as _, Styled as _,
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, StatefulInteractiveElement as _, Styled as _,
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
@@ -63,16 +63,26 @@ impl ProvidersPage {
         let value = match shown {
             None => Input::new(&self.key_input).flex_1().into_any_element(),
             Some(key) => {
-                let id = key.id.clone();
+                let (id, copy, edit) = (key.id.clone(), key.id.clone(), key.clone());
                 let text_value = self.revealed.clone().unwrap_or_else(|| key.masked.clone());
-                h_flex().flex_1().min_w(px(0.)).h(px(32.)).px(space::S8).gap(space::S8).rounded(radius::MD).border_1().border_color(r.border_default)
+                h_flex().flex_1().min_w(px(0.)).h(px(32.)).px(space::S8).gap(space::S8).rounded(radius::MD).border_1()
+                    .border_color(if self.key_hover { r.control_border_active } else { r.border_default })
                     .children(key.label.clone().map(|l| label(text::UI, l).text_color(r.text_muted)))
                     .child(label(text::CODE_TEXT, text_value).truncate())
                     .when(enabled.len() > 1, |d| d.child(label(text::METADATA, s::more_keys(enabled.len() - 1)).text_color(r.text_subtle)))
                     .child(gpui_kit::div().flex_1())
-                    .child(IconButton::new("provider-key-reveal", if self.revealed.is_some() { IconName::EyeOff } else { IconName::Eye })
-                        .tooltip(if self.revealed.is_some() { s::KEY_HIDE } else { s::KEY_SHOW })
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_reveal(id.clone(), cx))))
+                    // Copy / edit appear while the pointer is on the eye; the cluster keeps them
+                    // open as the pointer moves left onto them.
+                    .child(h_flex().id("provider-key-actions").gap(space::S2)
+                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| { this.key_hover = *hovered; cx.notify(); }))
+                        .when(self.key_hover, |d| d
+                            .child(IconButton::new("provider-key-copy", IconName::Copy).tooltip(s::KEY_COPY)
+                                .on_click(cx.listener(move |this, _, _, cx| this.copy_key(copy.clone(), cx))))
+                            .child(IconButton::new("provider-key-edit", IconName::Pencil).tooltip(s::KEY_EDIT)
+                                .on_click(cx.listener(move |this, _, window, cx| this.open_keys_dialog(Some(edit.clone()), window, cx)))))
+                        .child(IconButton::new("provider-key-reveal", if self.revealed.is_some() { IconName::EyeOff } else { IconName::Eye })
+                            .tooltip(if self.revealed.is_some() { s::KEY_HIDE } else { s::KEY_SHOW })
+                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_reveal(id.clone(), cx)))))
                     .into_any_element()
             }
         };
@@ -83,7 +93,7 @@ impl ProvidersPage {
                     .on_click(move |_, _, cx| cx.open_url(url)))))
             .child(h_flex().gap(space::S8).child(value)
                 .child(Button::new("provider-keys").outline().icon(IconName::KeyRound).tooltip(s::KEYS_MANAGE)
-                    .on_click(cx.listener(|this, _, window, cx| this.open_keys_dialog(window, cx))))
+                    .on_click(cx.listener(|this, _, window, cx| this.open_keys_dialog(None, window, cx))))
                 .child(Button::new("provider-check").outline().label(if self.checking { s::CHECKING } else { s::CHECK })
                     .disabled(self.checking || !saved).on_click(cx.listener(|this, _, _, cx| this.check(cx)))))
             .children(self.render_checks(provider, cx))

@@ -2,11 +2,13 @@
 
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
+    assets::IconName,
     base::{h_flex, v_flex},
     component::{
-        Disableable as _, Sizable as _, WindowExt as _,
+        Disableable as _, Icon, Sizable as _, WindowExt as _,
         button::{Button, ButtonVariants as _},
         input::{Input, InputState},
+        menu::{DropdownMenu as _, PopupMenuItem},
     },
     prelude::FluentBuilder as _,
     px,
@@ -20,6 +22,25 @@ use thinkrail_ui::{ThinkrailTheme, components::{IconButton, Segment, label}, met
 
 use super::{ProvidersPage, error_text, field, open_form, valid_url};
 use crate::{state::run, strings::settings_providers as s};
+
+/// Full-width protocol dropdown with the current choice checked; `set` stores the pick in `form`.
+fn protocol_menu<V: 'static>(
+    id: &'static str,
+    current: Protocol,
+    options: Vec<Protocol>,
+    form: Entity<V>,
+    set: fn(&mut V, Protocol),
+) -> impl IntoElement {
+    // A select look: text left, chevron right (a Button centers label + icon).
+    let trigger = h_flex().w_full().child(label(text::UI, s::protocol(current))).child(gpui_kit::div().flex_1()).child(Icon::new(IconName::ChevronDown).small());
+    Button::new(id).outline().w_full().child(trigger).dropdown_menu(move |menu, _, _| {
+        options.iter().fold(menu, |menu, &protocol| {
+            let form = form.clone();
+            menu.item(PopupMenuItem::new(s::protocol(protocol)).checked(protocol == current)
+                .on_click(move |_, _, cx| form.update(cx, |view, cx| { set(view, protocol); cx.notify(); })))
+        })
+    })
+}
 
 /// 新建（`provider` 为 None，含第一条线路）或编辑服务商的名称与接入方式。
 struct NameForm {
@@ -35,13 +56,12 @@ impl Render for NameForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
         let creating = self.provider.is_none();
-        let protocol = LINE_PROTOCOLS.iter().position(|p| *p == self.protocol).unwrap_or(0);
+        let protocol = protocol_menu("new-protocol", self.protocol, LINE_PROTOCOLS.to_vec(), cx.entity(), |form: &mut NameForm, p| form.protocol = p);
         let access = usize::from(self.access == Access::Gateway);
         v_flex().gap(space::S12)
             .child(field(s::NAME, Input::new(&self.name), cx))
             .when(creating, |d| d
-                .child(field(s::PROTOCOL, Segment::new("new-protocol", LINE_PROTOCOLS.map(s::protocol_short), protocol)
-                    .on_select(cx.listener(|this, index: &usize, _, cx| { this.protocol = LINE_PROTOCOLS[*index]; cx.notify(); })), cx))
+                .child(field(s::PROTOCOL, protocol, cx))
                 .child(field(s::BASE_URL, Input::new(&self.url), cx)))
             .child(field(s::ACCESS, Segment::new("provider-access", [s::DIRECT, s::GATEWAY], access)
                 .on_select(cx.listener(|this, index: &usize, _, cx| {
@@ -164,13 +184,11 @@ impl LineForm {
 impl Render for LineForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
-        let active = self.options.iter().position(|p| *p == self.protocol).unwrap_or(0);
-        let options = self.options.clone();
+        let protocol = protocol_menu("line-protocol", self.protocol, self.options.clone(), cx.entity(), |form: &mut LineForm, p| form.protocol = p);
         let url = self.url.read(cx).value().trim().to_owned();
         let _ = window;
         v_flex().gap(space::S12)
-            .child(field(s::PROTOCOL, Segment::new("line-protocol", options.iter().map(|p| s::protocol_short(*p)), active)
-                .on_select(cx.listener(move |this, index: &usize, _, cx| { this.protocol = options[*index]; cx.notify(); })), cx))
+            .child(field(s::PROTOCOL, protocol, cx))
             .child(field(s::BASE_URL, Input::new(&self.url), cx))
             .when(valid_url(&url), |d| d.child(label(text::CODE_SMALL, s::request_post(&preview(&url, self.protocol))).text_color(r.text_subtle)))
             .child(label(text::METADATA, s::URL_HINT).text_color(r.text_subtle))

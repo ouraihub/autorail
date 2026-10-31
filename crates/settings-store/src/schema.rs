@@ -1,8 +1,8 @@
 //! Schema version and table definitions (agent-settings 04 §3.2).
 
-/// Version written to `schema_meta`. A higher version is refused as `Corrupt`; a lower one is an
-/// earlier development layout, refused with a hint to recreate the file (no migrations yet).
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+/// Version written to `schema_meta`. A higher version is refused as `Corrupt`; version 2 is
+/// upgraded in place (`db::migrate`); older development layouts are refused.
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 /// Every table of [`SCHEMA_VERSION`], created in order on an empty database.
 pub(crate) const TABLES: &[&str] = &[
@@ -21,6 +21,7 @@ pub(crate) const TABLES: &[&str] = &[
         model_id TEXT NOT NULL, name TEXT NOT NULL, protocols TEXT NOT NULL,
         context_window INTEGER, max_tokens INTEGER, vision INTEGER NOT NULL, reasoning INTEGER NOT NULL,
         tools INTEGER NOT NULL, efforts TEXT NOT NULL, enabled INTEGER NOT NULL, sort INTEGER NOT NULL,
+        model_type TEXT NOT NULL DEFAULT 'chat',
         PRIMARY KEY (provider_id, model_id))",
     "CREATE TABLE provider_keys (
         id TEXT PRIMARY KEY, provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,

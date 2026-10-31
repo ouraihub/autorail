@@ -69,7 +69,7 @@ impl VisibilityModel {
 fn visibility_models(providers: Vec<Provider>) -> Vec<VisibilityModel> {
     let mut models = Vec::new();
     for provider in providers.into_iter().filter(|provider| provider.input.enabled) {
-        for model in provider.input.models.into_iter().filter(|model| model.enabled) {
+        for model in provider.input.models.into_iter().filter(|model| model.enabled && model.model_type == thinkrail_core::ModelType::Chat) {
             models.push(VisibilityModel {
                 reference: ModelRef {
                     provider: provider.id.clone(),
@@ -482,6 +482,7 @@ mod tests {
                 enabled,
                 models: vec![ProviderModel {
                     model_id: "hidden-model-id".into(),
+                    model_type: thinkrail_core::ModelType::Chat,
                     name: "Hidden Model".into(),
                     protocols: vec![Protocol::OpenaiChat],
                     context_window: None,

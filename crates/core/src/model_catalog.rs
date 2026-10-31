@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::{DiscoveredModel, Protocol, ProviderModel};
+use crate::{DiscoveredModel, ModelType, Protocol, ProviderModel};
 
 /// Group shown in the model list: the id up to the first `-`, `/` or `:` (`gpt-4o` → `gpt`,
 /// `Qwen/Qwen3` → `Qwen`). Empty when the id starts with a separator; callers show "其他".
@@ -22,11 +22,21 @@ pub struct ModelHints {
     pub tools: bool,
 }
 
-/// Non-chat model keywords (Aether `infer.rs`).
-const NON_CHAT: &[&str] = &[
-    "embed", "rerank", "tts", "speech", "whisper", "stt", "transcri", "dall-e", "image", "flux", "imagen", "video",
-    "sora", "veo",
+/// Type keywords, checked in order; the first hit wins (Aether `infer.rs`).
+const TYPES: &[(&[&str], ModelType)] = &[
+    (&["embed"], ModelType::Embedding),
+    (&["rerank"], ModelType::Rerank),
+    (&["tts", "speech"], ModelType::Tts),
+    (&["whisper", "stt", "transcri"], ModelType::Stt),
+    (&["dall-e", "image", "flux", "imagen"], ModelType::Image),
+    (&["video", "sora", "veo"], ModelType::Video),
 ];
+
+/// The type an id suggests; anything without a type keyword is `Chat`.
+pub fn model_type(model_id: &str) -> ModelType {
+    let id = model_id.to_ascii_lowercase();
+    TYPES.iter().find(|(words, _)| words.iter().any(|w| id.contains(w))).map_or(ModelType::Chat, |&(_, t)| t)
+}
 
 /// `(prefix, context window, max output, vision)`; known variants before their family default.
 const FAMILIES: &[(&str, u32, u32, bool)] = &[
@@ -51,7 +61,7 @@ const VISION_MARKERS: &[&str] = &["vision", "-vl", "vl-", "4v"];
 
 pub fn model_hints(model_id: &str) -> ModelHints {
     let id = model_id.to_ascii_lowercase();
-    let chat = !NON_CHAT.iter().any(|word| id.contains(word));
+    let chat = model_type(&id) == ModelType::Chat;
     let name = id.rsplit('/').next().unwrap_or_default();
     let marked = VISION_MARKERS.iter().any(|marker| name.contains(marker));
     let family = FAMILIES
@@ -76,6 +86,7 @@ pub fn model_from_discovery(found: &DiscoveredModel, protocol: Protocol) -> Prov
     let name = found.name.as_deref().map(str::trim).filter(|name| !name.is_empty());
     ProviderModel {
         model_id: found.id.clone(),
+        model_type: model_type(&found.id),
         name: name.unwrap_or(&found.id).to_owned(),
         protocols: vec![protocol],
         context_window: found.context_window.or(hints.context_window),
