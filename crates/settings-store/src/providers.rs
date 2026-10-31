@@ -15,7 +15,7 @@ use crate::{
     validate,
 };
 
-const PROVIDER_COLUMNS: &str = "id, name, default_protocol, headers, access, enabled, revision";
+const PROVIDER_COLUMNS: &str = "id, name, default_protocol, headers, access, enabled, revision, preset_id";
 
 fn provider_missing() -> Error {
     Error::not_found("提供方不存在，可能已被删除。")
@@ -91,6 +91,32 @@ fn write_children(conn: &Conn, id: &ProviderId, input: &ProviderInput) -> Result
     Ok(())
 }
 
+/// Inserts a validated provider row and its endpoints and models; returns the new id.
+/// `preset_id` is only ever set by preset seeding.
+pub(crate) fn insert(conn: &Conn, input: &ProviderInput, preset_id: Option<&str>) -> Result<ProviderId> {
+    ensure_unique_name(conn, &input.name, None)?;
+    let id = ProviderId::generate();
+    let sort = conn.int("SELECT COALESCE(MAX(sort), 0) + 1 FROM providers", ())?;
+    let now = db::now();
+    conn.execute(
+        "INSERT INTO providers (id, name, default_protocol, headers, access, enabled, sort, revision, \
+         created_at, updated_at, preset_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?8, ?9)",
+        (
+            id.as_str(),
+            input.name.as_str(),
+            db::to_word(&input.default_protocol)?,
+            db::to_json(&input.headers)?,
+            db::to_word(&input.access)?,
+            input.enabled,
+            sort,
+            now,
+            preset_id,
+        ),
+    )?;
+    write_children(conn, &id, input)?;
+    Ok(id)
+}
+
 fn decode(conn: &Conn, row: &Row) -> Result<Provider> {
     let id = ProviderId::from(db::text(row, 0)?);
     let mut endpoints = conn
@@ -134,6 +160,7 @@ fn decode(conn: &Conn, row: &Row) -> Result<Provider> {
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(Provider {
+        preset_id: db::optional_text(row, 7)?,
         revision: db::revision(row, 6)?,
         input: ProviderInput {
             name: db::text(row, 1)?,
@@ -186,26 +213,8 @@ impl ProviderService for SqliteSettingsStore {
 
     fn create(&self, input: ProviderInput) -> Result<Provider> {
         let input = validate::provider(input)?;
-        let id = ProviderId::generate();
         let provider = self.write(|conn| {
-            ensure_unique_name(conn, &input.name, None)?;
-            let sort = conn.int("SELECT COALESCE(MAX(sort), 0) + 1 FROM providers", ())?;
-            let now = db::now();
-            conn.execute(
-                "INSERT INTO providers (id, name, default_protocol, headers, access, enabled, sort, revision, \
-                 created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?8)",
-                (
-                    id.as_str(),
-                    input.name.as_str(),
-                    db::to_word(&input.default_protocol)?,
-                    db::to_json(&input.headers)?,
-                    db::to_word(&input.access)?,
-                    input.enabled,
-                    sort,
-                    now,
-                ),
-            )?;
-            write_children(conn, &id, &input)?;
+            let id = insert(conn, &input, None)?;
             load(conn, &id)
         })?;
         info!(provider = %provider.id, "provider created");
@@ -247,6 +256,10 @@ impl ProviderService for SqliteSettingsStore {
     fn delete(&self, id: &ProviderId, expect_revision: u64) -> Result<()> {
         self.write(|conn| {
             expect(conn, id, expect_revision)?;
+            let row = conn.row("SELECT preset_id FROM providers WHERE id = ?1", (id.as_str(),))?.ok_or_else(provider_missing)?;
+            if db::optional_text(&row, 0)?.is_some() {
+                return Err(Error::forbidden("内置服务商不能删除，可以停用。"));
+            }
             // Endpoints, models, keys and hidden-model rows go with it through ON DELETE CASCADE.
             conn.execute("DELETE FROM providers WHERE id = ?1", (id.as_str(),))?;
             Ok(())
@@ -336,5 +349,13 @@ impl ProviderService for SqliteSettingsStore {
         let selected = keys.swap_remove(position);
         cursor.insert(id.clone(), selected.id.clone());
         Ok(Some(selected))
+    }
+
+    fn seed_presets(&self) -> Result<Vec<Provider>> {
+        let seeded = self.write(crate::presets::seed)?;
+        if seeded > 0 {
+            info!(count = seeded, "provider presets seeded");
+        }
+        self.providers()
     }
 }

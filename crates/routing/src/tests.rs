@@ -818,22 +818,39 @@ fn probe_check_sends_minimal_requests() {
 }
 
 #[test]
-fn check_keys_checks_each_enabled_key_without_rotating() {
+fn check_keys_lists_models_once_per_enabled_key_without_rotating() {
     let fx = fixture();
-    let up = upstream(Reply::Json(200, "{}"));
+    let up = upstream(Reply::Json(200, r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#));
     let mut relay = input("Relay", Access::Direct);
     relay.endpoints = endpoints(&up.url(""), &up.url(""));
     let provider = create(&fx, relay, &KEYS);
     let provider = set_key_enabled(&fx, &provider, 1, false);
 
-    let checks = probe(&fx).check_keys(&provider.id, "claude-test").unwrap();
-    assert_eq!(checks.iter().map(|c| (c.key.clone(), c.ok)).collect::<Vec<_>>(), [(provider.keys[0].id.clone(), true), (provider.keys[2].id.clone(), true)]);
+    let checks = probe(&fx).check_keys(&provider.id, Protocol::AnthropicMessages).unwrap();
+    let summary: Vec<_> = checks.iter().map(|c| (c.key.clone(), c.models)).collect();
+    assert_eq!(summary, [(provider.keys[0].id.clone(), Some(2)), (provider.keys[2].id.clone(), Some(2))], "disabled keys are skipped");
     let seen = up.seen();
-    assert_eq!(seen.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(), ["/v1/messages", "/v1/messages"]);
+    assert_eq!(seen.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(), ["/v1/models", "/v1/models"]);
     assert_eq!(seen.iter().map(|s| header(s, "x-api-key").unwrap_or_default()).collect::<Vec<_>>(), [KEYS[0], KEYS[2]]);
     assert_eq!(header(&seen[0], "x-trace"), Some(HEADER_VALUE));
     // Rotation untouched: the next launch still starts with the first key.
     assert_eq!(fx.store.next_key(&provider.id).unwrap().unwrap().value.expose(), KEYS[0]);
+}
+
+#[test]
+fn check_keys_reports_a_rejected_key_without_its_value() {
+    let fx = fixture();
+    let up = upstream(Reply::Json(401, r#"{"error":{"message":"bad key"}}"#));
+    let mut relay = input("Relay", Access::Direct);
+    relay.endpoints = endpoints(&up.url(""), &up.url(""));
+    let provider = create(&fx, relay, &KEYS[..1]);
+    let checks = probe(&fx).check_keys(&provider.id, Protocol::OpenaiChat).unwrap();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0].models, None);
+    let error = checks[0].error.as_deref().unwrap();
+    assert!(!error.contains(KEYS[0]), "{error}");
+    let missing = probe(&fx).check_keys(&provider.id, Protocol::OpenaiResponses);
+    assert_eq!(missing.unwrap_err().kind(), Some(ErrorKind::Invalid), "a line the provider lacks is refused");
 }
 
 #[test]

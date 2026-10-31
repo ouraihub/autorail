@@ -24,7 +24,7 @@
 | 引擎 | 版本 | 接入方式 | 证据 |
 |---|---|---|---|
 | pi | 1.4.0（npm 最新） | `node dist/bundle/cli.js --mode rpc`，stdin/stdout JSONL（非 JSON-RPC） | **实测**：在隔离配置目录、无凭据的条件下，`get_state` 返回 `sessionFile` / `sessionId` |
-| OMP | 18.13.3（npm 最新） | `bun src/cli.ts --mode rpc-ui`；需 Bun ≥ 1.4.4 | **实测**：用临时目录中安装的 npm 18.13.3 和 Bun 1.4.4 运行，收到 `ready`（支持协议 v1/v2），`set_ask_dialog` 成功，`get_state` 返回 `sessionFile` / `sessionId`。本机完整源码 `E:/workspace/notepad-dev/oh-my-pi`（`v18.13.3-150-g6a8341674e`，比正式版多 150 个提交）用于读源码；它未执行 `bun install`，不能直接运行 |
+| OMP | 18.14.1（npm 最新） | `bun src/cli.ts --mode rpc-ui`；需 Bun ≥ 1.4.4 | **版本元数据已核实**：npm `@oh-my-pi/pi-coding-agent` 最新版为 18.14.1，要求 Bun ≥ 1.4.4；本适配器仍需用隔离配置目录和官方 CLI 做真实握手复核 |
 | DSH | 0.2.1-rc.5（npm `latest`，没有正式版） | `node lib/bin.js --profile acp`，JSON-RPC ACP；需 Node ≥ 24.9.0 | **实测**：临时目录 npm 安装，Node v24.21.0，被阻止的 5 个安装脚本都不需要启用。`initialize` 返回 `protocolVersion: 1`，`mcpCapabilities: {http:true}`，`sessionCapabilities` 含 `close`、`list`、`resume`。`session/new` 不需要模型和凭据，返回 `sessionId` 和 `configOptions`。`session/resume` 在新进程中成功 |
 
 协议要点（**源码**，实现前须用固定版本复核）：

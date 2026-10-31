@@ -6,6 +6,7 @@ mod db;
 mod mask;
 mod mcp;
 mod prefs;
+mod presets;
 mod providers;
 mod schema;
 mod store;

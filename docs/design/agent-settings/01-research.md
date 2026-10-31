@@ -7,7 +7,7 @@
 依据：
 
 - 原版：`E:/workspace/notepad-dev/thinkrail`，`main` 分支 `ec2f2db5`（2026-10-31 拉取）。
-- 引擎：pi 1.4.0（`node_modules/.bun/@earendil-works+pi-*`）、OMP 18.13.3（`oh-my-pi/packages` 源码与文档）、DSH 0.2.1-rc.5（npm 发布包 `@deepseek-ai/*` 的 README 与 `lib/index.js`）。
+- 引擎：pi 1.4.0（`node_modules/.bun/@earendil-works+pi-*`）、OMP 18.14.1（npm 最新，要求 Bun ≥ 1.4.4）、DSH 0.2.1-rc.5（npm 发布包 `@deepseek-ai/*` 的 README 与 `lib/index.js`）。
 - 参考实现：Cherry Studio，`E:/docs/AI申请/AI安装配置教程/ai/cherry-studio`（第 4 节）。
 - 原生版：`thinkrail-native` 提交 `ff1e9e3`。
 
@@ -120,7 +120,7 @@
 
 ### 3.1 提供方与模型
 
-| | pi 1.4.0 | OMP 18.13.3 | DSH 0.2.1-rc.5（ACP） |
+| | pi 1.4.0 | OMP 18.14.1 | DSH 0.2.1-rc.5（ACP） |
 |---|---|---|---|
 | 文件 | `<dir>/models.json` | `<dir>/models.yml`（旧 `models.json` 会被迁移） | `profiles/acp/cordis.patch.yml` 中 `id: llm-pi-ai` 的 `config.providers` |
 | 提供方字段 | `name, baseUrl, api, apiKey, headers, authHeader, compat, models[], modelOverrides` | `baseUrl, api, apiKey, headers, authHeader, auth, discovery, compat, models[], modelOverrides` | `displayName, api, baseURL, apiKeyEnv, headers, compat, models[], modelOverrides` |

@@ -157,23 +157,26 @@ pub struct DiscoveredModel {
     pub context_window: Option<u32>,
 }
 
-/// `error` is a redacted Chinese description: status code + first 200 chars of upstream message.
+/// One key's "检测" result on one line. `error` is a redacted Chinese description: status code
+/// + first 200 chars of upstream message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyCheck {
     pub key: ProviderKeyId,
-    pub ok: bool,
+    /// Number of models the line listed with this key; `None` when the request failed.
+    pub models: Option<usize>,
     pub elapsed_ms: u64,
     pub error: Option<String>,
 }
 
 pub trait ProviderProbe: Send + Sync {
-    /// "Find models": the upstream model list.
+    /// "同步模型": the upstream model list.
     fn list_models(&self, target: &ProbeTarget) -> Result<Vec<DiscoveredModel>>;
-    /// "Check": one minimal request with the model, 15 s timeout, no retry; elapsed ms.
+    /// Model check: one minimal request with the model, 15 s timeout, no retry; elapsed ms.
     fn check(&self, target: &ProbeTarget, model_id: &str) -> Result<u64>;
-    /// "Check all keys": once per enabled key, explicit key, no rotation.
-    fn check_keys(&self, provider: &ProviderId, model_id: &str) -> Result<Vec<KeyCheck>>;
+    /// "检测": lists the models of the provider's `protocol` line once per enabled key, explicit
+    /// key, no rotation. An empty result means the provider has no enabled key.
+    fn check_keys(&self, provider: &ProviderId, protocol: Protocol) -> Result<Vec<KeyCheck>>;
 }
 
 #[cfg(test)]

@@ -140,11 +140,7 @@ impl Probe {
 
 impl ProviderProbe for Probe {
     fn list_models(&self, target: &ProbeTarget) -> Result<Vec<DiscoveredModel>> {
-        let path = match target.endpoint.protocol {
-            Protocol::OpenaiChat | Protocol::OpenaiResponses => "/models",
-            Protocol::AnthropicMessages => "/v1/models",
-        };
-        let reply = self.send(target, path, None)?;
+        let reply = self.send(target, url::models_path(target.endpoint.protocol), None)?;
         if !(200..300).contains(&reply.status) {
             return Err(status_error(&reply, target));
         }
@@ -174,23 +170,14 @@ impl ProviderProbe for Probe {
     }
 
     /// Serial, in key order; each key is read with `reveal_key`, so rotation is untouched.
-    fn check_keys(&self, provider: &ProviderId, model_id: &str) -> Result<Vec<KeyCheck>> {
+    fn check_keys(&self, provider: &ProviderId, protocol: Protocol) -> Result<Vec<KeyCheck>> {
         let provider = self.providers.provider(provider)?;
-        let model = provider
-            .input
-            .models
-            .iter()
-            .find(|m| m.model_id == model_id)
-            .ok_or_else(|| Error::not_found(format!("模型 {model_id}")))?;
-        let protocol = model.protocols.first().copied().ok_or_else(|| {
-            Error::invalid(format!("模型 {model_id} 的端点类型没有对应的 API 地址。"))
-        })?;
         let endpoint = provider
             .input
             .endpoints
             .iter()
             .find(|e| e.protocol == protocol)
-            .ok_or_else(|| Error::invalid(format!("模型 {model_id} 的端点类型没有对应的 API 地址。")))?;
+            .ok_or_else(|| Error::invalid("这条线路没有 API 地址。"))?;
         let mut out = Vec::new();
         for summary in provider.keys.iter().filter(|k| k.enabled) {
             let target = ProbeTarget {
@@ -199,11 +186,11 @@ impl ProviderProbe for Probe {
                 key: Some(self.providers.reveal_key(&summary.id)?),
             };
             let started = Instant::now();
-            let result = self.check(&target, model_id);
+            let result = self.list_models(&target);
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             out.push(match result {
-                Ok(elapsed_ms) => KeyCheck { key: summary.id.clone(), ok: true, elapsed_ms, error: None },
-                Err(error) => KeyCheck { key: summary.id.clone(), ok: false, elapsed_ms, error: Some(error.to_string()) },
+                Ok(models) => KeyCheck { key: summary.id.clone(), models: Some(models.len()), elapsed_ms, error: None },
+                Err(error) => KeyCheck { key: summary.id.clone(), models: None, elapsed_ms, error: Some(error.to_string()) },
             });
         }
         Ok(out)

@@ -36,6 +36,19 @@ pub fn preview(raw: &str, protocol: Protocol) -> String {
     }
 }
 
+/// Path the model list is read from, appended to [`base_url`].
+pub(crate) fn models_path(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::OpenaiChat | Protocol::OpenaiResponses => "/models",
+        Protocol::AnthropicMessages => "/v1/models",
+    }
+}
+
+/// The address "同步模型" / "检测" request with `GET`; the same one [`crate::Probe`] uses.
+pub fn models_url(raw: &str, protocol: Protocol) -> String {
+    format!("{}{}", base_url(raw, protocol), models_path(protocol))
+}
+
 /// `v<digits>` optionally followed by `alpha` / `beta`.
 fn is_version(segment: &str) -> bool {
     let Some(rest) = segment.strip_prefix(['v', 'V']) else { return false };

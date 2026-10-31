@@ -80,12 +80,12 @@ flowchart TB
 | V05 | 终端 ConPTY 生命周期 | ✅ | ignored 测试 `windows_pty_lifecycle_smoke` 通过 |
 | V06 | 终端窗口交互 | ✅ | 真实窗口中打开终端面板，经 WM_CHAR 输入 `echo 终端中文-ok2; (Get-Location).Path`，看到中文输出与普通 `C:\…` 路径（已去掉 `\\?\` 前缀） |
 | V07 | pi 官方 RPC 握手 | ✅ | `PiRuntime`，pi 1.4.0 + Node v24.21.0，隔离配置目录：`get_state` 得到 locator、`get_messages` 回放、dispose 后 `Closed` 且无错误（ignored 测试 `smoke::pi_rpc_handshake`） |
-| V08 | OMP 官方 RPC 握手 | ✅ | `OmpRuntime`，npm 18.13.3 + Bun 1.4.4：`ready` → v2 协商 → delta 事件过滤 → `set_ask_dialog` →（启用时）`set_host_tools` → `get_state` → 分页回放；无模型时报 `BACKEND_UNAVAILABLE` 并提示 models.yml（`smoke::omp_*`） |
+| V08 | OMP 官方 RPC 握手 | 🟡 | 现有实测证据为 OMP 18.13.3 + Bun 1.4.4：`ready` → v2 协商 → delta 事件过滤 → `set_ask_dialog` →（启用时）`set_host_tools` → `get_state` → 分页回放；npm 最新版已更新为 18.14.1，升级后的真实握手待复测 |
 | V09 | DSH ACP 握手 | ✅ | `DshRuntime`，npm 0.2.1-rc.5 + Node v24.21.0：`initialize`、`session/new`、`session/close`，新进程 `session/resume` 同一 locator（`smoke::dsh_acp_handshake_and_resume`）；启用宿主工具时带 `--patch` 关闭 `tool-todo` |
-| V10 | 聊天发送、流式输出、停止、恢复 | ✅ | 真实窗口 + pi 1.4.0 + 用户中转模型（easyclaude / claude-opus-5-5，经用户同意）：关闭的会话按 locator 恢复；长文本逐步流式增长；运行中点停止后回到空闲，pi 会话记录该轮 `stopReason: aborted`；模型调用 `mcp__thinkrail__todo_list` / `todo_update` 后 TODO 条由 `1/3` 变为 `2/3`。无凭据时显示可读错误。OMP 18.13.3 + 同一中转：发送、正文流式中停止（`abort` → `session_settled`，已写 12852 字）、宿主工具 `todo_add` / `todo_list`；停止后下一条消息不再续做被停止的请求（`navigate_tree` 撤回，见 01-research）。DSH 0.2.1-rc.5 经 `acp` 覆盖走同一中转（`anthropic/claude-opus-5`）：发送、分块流式、停止后回到空闲且下一条不续做旧请求、宿主工具 `mcp__thinkrail__todo_add` / `todo_list`（TODO 条 `0/1`） |
+| V10 | 聊天发送、流式输出、停止、恢复 | 🟡 | 现有 OMP 证据为 18.13.3 + 同一中转：发送、正文流式中停止（`abort` → `session_settled`，已写 12852 字）、宿主工具 `todo_add` / `todo_list`，停止后下一条消息不再续做被停止的请求；npm 最新版已更新为 18.14.1，升级后的行为待复测。其余 pi / DSH 证据保持不变 |
 | V11 | 交互：提问与权限，不自动批准 | ✅ | OMP 真实窗口：`ask` 单选卡选择后模型复述答案；权限卡不点击时一直等待、不执行；点“拒绝”后不写文件；点“本会话批准”后执行。DSH 真实窗口：工作区内写文件按 `workspace-write` 沙箱直接执行、不弹卡（DSH 设计如此）；写工作区外文件触发 `session/request_permission`，不点击时等待，点 Reject 后工具失败、文件未创建，点 Allow once 后写出 |
 | V12 | 档案隔离：凭据不串用 | 🟡 | 环境剔除有单测；两个档案并发未测 |
-| V13 | 宿主工具：三个引擎都能发现 | ✅ | 临时集成烟测（已删除）用真实 `thinkrail-native.exe`：pi 1.4.0 经 `-e` 扩展、DSH 经 `mcpServers` 各自拉起 `mcp-host`，经命名管道和令牌完成 `tools/list`；OMP 18.13.3 接受 `set_host_tools` 后握手成功。pi 发给模型的工具列表含 `mcp__thinkrail__todo_*` 与 `resolve_comment`，并真实调用了 `mcp__thinkrail__todo_write` |
+| V13 | 宿主工具：三个引擎都能发现 | 🟡 | 现有 OMP 证据为 18.13.3 接受 `set_host_tools` 后握手成功；npm 最新版已更新为 18.14.1，升级后的宿主工具发现待复测。pi / DSH 的既有发现证据保持不变 |
 | V14 | 计划 / 审查语义 | 🟡 | 工具核心与命名管道端到端单测（`thinkrail-host-tools`）；真实窗口中 pi 调用 `todo_write` 后 TODO 条显示 `1/3`，展开为分组与三种状态。审查评论尚无界面 |
 | V15 | 设置对话框管理档案 | 🟡 | 真实窗口：齿轮打开设置；新建 OMP、DSH（标“预发布”）档案后写入 `agent-profiles.json`；编辑后保存生成版本 2，列表显示“版本 2”；取消编辑不关闭对话框。设为默认、删除未在窗口中操作 |
 | V16 | 界面与原版截图对照 | 🟡 | 与 `workbench-dark.png` 对照：布局、色板、顶栏、Projects、TODO 条、用户气泡、工具卡、Changes 一致；Specs 面板按 §5 不做；输入框下方无模型选择器（模型显示在聊天头部） |

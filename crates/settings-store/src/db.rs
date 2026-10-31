@@ -162,6 +162,9 @@ fn migrate(conn: &Conn) -> Result<()> {
     match int(row, 0)? {
         SCHEMA_VERSION => Ok(()),
         version if version > SCHEMA_VERSION => Err(Error::corrupt("数据库由更新版本的 ThinkRail 创建，请升级后再打开。")),
+        version if version >= 1 => {
+            Err(Error::corrupt("设置数据库来自早期开发版本，表结构已变更；请删除 thinkrail.db 后重新打开。"))
+        }
         _ => Err(Error::corrupt("设置数据库的版本号无效。")),
     }
 }

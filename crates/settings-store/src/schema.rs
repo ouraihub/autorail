@@ -1,7 +1,8 @@
 //! Schema version and table definitions (agent-settings 04 §3.2).
 
-/// Version written to `schema_meta`; a database with a higher version is refused as `Corrupt`.
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+/// Version written to `schema_meta`. A higher version is refused as `Corrupt`; a lower one is an
+/// earlier development layout, refused with a hint to recreate the file (no migrations yet).
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 /// Every table of [`SCHEMA_VERSION`], created in order on an empty database.
 pub(crate) const TABLES: &[&str] = &[
@@ -10,7 +11,8 @@ pub(crate) const TABLES: &[&str] = &[
         id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, default_protocol TEXT NOT NULL,
         headers TEXT NOT NULL,
         access TEXT NOT NULL, enabled INTEGER NOT NULL, sort INTEGER NOT NULL,
-        revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        preset_id TEXT UNIQUE)",
     "CREATE TABLE provider_endpoints (
         provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
         protocol TEXT NOT NULL, base_url TEXT NOT NULL, PRIMARY KEY (provider_id, protocol))",

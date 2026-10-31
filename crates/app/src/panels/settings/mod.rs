@@ -27,7 +27,8 @@ impl SettingsDialog {
         let mcp = cx.new(|cx| mcp::McpPage::new(state.clone(), window, cx));
         let agents = cx.new(|cx| agents::SettingsView::new(state.clone(), window, cx));
         let view = cx.new(|_| SettingsView { page: Page::Models, models, providers, mcp, agents });
-        window.open_dialog(cx, move |dialog, _, _| dialog.title(shell::TITLE).w(px(832.)).child(view.clone()));
+        // Enter inside a field must not close settings: the dialog has no OK action.
+        window.open_dialog(cx, move |dialog, _, _| dialog.title(shell::TITLE).w(px(1040.)).on_ok(|_, _, _| false).child(view.clone()));
     }
 }
 
@@ -61,13 +62,13 @@ impl Render for SettingsView {
             Page::Mcp => self.mcp.clone().into_any_element(),
             Page::Agents => self.agents.clone().into_any_element(),
         };
-        h_flex().id("settings-shell").h(window.viewport_size().height * 0.8 - px(72.)).min_h(px(0.)).bg(r.container_content_bg)
-            .child(v_flex().w(px(192.)).flex_none().gap(space::S4).p(space::S12).bg(r.container_elevated_bg).border_r_1().border_color(r.border_muted)
+        h_flex().id("settings-shell").items_start().h(window.viewport_size().height * 0.8 - px(72.)).min_h(px(0.)).bg(r.container_content_bg)
+            .child(v_flex().w(px(192.)).h_full().flex_none().gap(space::S4).p(space::S12).bg(r.container_elevated_bg).border_r_1().border_color(r.border_muted)
                 .child(label(text::LABEL_PILL, "AGENT").h(px(28.)).text_color(r.text_subtle))
                 .child(self.nav(Page::Models, IconName::Brain, s_models::TITLE, cx))
                 .child(self.nav(Page::Providers, IconName::KeyRound, s_providers::TITLE, cx))
                 .child(self.nav(Page::Mcp, IconName::Plug, sm::TITLE, cx))
                 .child(self.nav(Page::Agents, IconName::Bot, shell::AGENTS, cx)))
-            .child(v_flex().id("settings-content").flex_1().min_w(px(0.)).min_h(px(0.)).overflow_y_scrollbar().p(space::S16).child(content))
+            .child(v_flex().id("settings-content").flex_1().h_full().min_w(px(0.)).min_h(px(0.)).overflow_y_scrollbar().p(space::S16).child(content))
     }
 }

@@ -80,6 +80,9 @@ pub struct Provider {
     pub revision: u64,
     pub input: ProviderInput,
     pub keys: Vec<ProviderKeySummary>,
+    /// `Some` for a provider seeded from a built-in preset ([`crate::PROVIDER_PRESETS`]); set
+    /// only at seeding, never by `create` / `update`. Preset providers cannot be deleted.
+    pub preset_id: Option<String>,
 }
 
 /// Plaintext secret. `Debug` prints `Secret(***)`; no `Display` / `Serialize`; `expose` is the
@@ -164,6 +167,10 @@ pub trait ProviderService: Send + Sync {
     fn reveal_key(&self, key_id: &ProviderKeyId) -> Result<Secret>;
     /// Round-robin to the next enabled key; advances rotation. None when no key is enabled.
     fn next_key(&self, id: &ProviderId) -> Result<Option<SelectedKey>>;
+    /// Creates each missing built-in preset as a disabled provider with one endpoint, no models
+    /// and no keys. A preset whose name is already taken by a user provider is skipped.
+    /// Returns every provider afterwards.
+    fn seed_presets(&self) -> Result<Vec<Provider>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -494,6 +494,7 @@ mod tests {
                 }],
             },
             keys: Vec::new(),
+            preset_id: None,
         }
     }
 

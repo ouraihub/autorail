@@ -573,7 +573,7 @@ fn migration_creates_tables_and_reopens_durably() {
             "schema_meta"
         ]
     );
-    assert_eq!(store.read(|conn| conn.int("SELECT version FROM schema_meta", ())).unwrap(), 1);
+    assert_eq!(store.read(|conn| conn.int("SELECT version FROM schema_meta", ())).unwrap(), crate::schema::SCHEMA_VERSION);
     let provider = create(&store, input("relay")).unwrap();
     let provider = store.add_key(&provider.id, key("sk-test-a")).unwrap();
     let server = add(&store, stdio("context7", McpScope::Global));

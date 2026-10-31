@@ -11,7 +11,7 @@ mod url;
 pub use gateway::Gateway;
 pub use probe::Probe;
 pub use router::{GatewayRoutes, Router};
-pub use url::preview;
+pub use url::{models_url, preview};
 
 #[cfg(test)]
 mod tests;
