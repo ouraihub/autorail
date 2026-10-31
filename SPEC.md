@@ -33,23 +33,30 @@ These rules apply to new code and to every production file substantially modifie
 - A meaningful feature directory MUST use `mod.rs` as its coordinator and boundary. Sibling modules MUST be private by default; expose only the smallest `pub(super)` or `pub(crate)` surface required by the coordinator.
 - The coordinator owns composition, routing between submodules, and feature-level state. It MUST NOT also own a second implementation of a submodule's persistence, probe, CRUD, or row-rendering logic.
 - A submodule MUST NOT reach into another submodule's private fields. Pass an intent-specific method or narrow data type instead. Do not solve a boundary problem with `pub` fields, duplicate state, re-exports, or a second implementation.
-- For a feature with multiple concerns, the expected shape is:
+The production feature tree and test tree are separate. A feature with multiple concerns SHOULD look like:
 
   ```text
-  feature/
-    mod.rs       coordinator and public boundary
+  crates/app/src/panels/settings/providers/
+    mod.rs       coordinator and production boundary
     draft.rs     pure draft/validation transformations
     keys.rs      key state and key operations
     models.rs    model state and model operations
-    tests.rs     tests for the feature's pure/state contracts
+
+  crates/app/tests/
+    providers.rs feature-level integration and contract tests
   ```
 
-  `providers/` follows this shape: `mod.rs`, `draft.rs`, `keys.rs`, `models.rs`, and `tests.rs`. This is an example of responsibility boundaries, not a mandatory filename template for every feature.
+`providers/` is the concrete example in this repository. `tests.rs` MUST NOT be placed under a production `src/` feature directory for new or substantially modified tests. The exact split may differ for a library crate, but test sources MUST still be outside the production module directory.
+
+The coordinator owns composition, routing between submodules, and feature-level state. It MUST NOT also own a second implementation of a submodule's persistence, probe, CRUD, or row-rendering logic.
+
+A submodule MUST NOT reach into another submodule's private fields. Pass an intent-specific method or narrow data type instead. Do not solve a boundary problem with `pub` fields, duplicate state, re-exports, or a second implementation.
 
 ### Test and production separation
 
-- New feature tests MUST live in a sibling `tests.rs` or `*_tests.rs` module under the owning feature directory. Production files MUST NOT accumulate large inline `#[cfg(test)]` modules.
-- Test modules MAY access the owning module's private implementation through `#[cfg(test)] mod tests;`, but production modules MUST NOT depend on test-only code, fixtures, or helpers.
+- New feature tests MUST live under the crate's dedicated `tests/` directory or in a dedicated test crate. Production `src/` feature directories MUST NOT contain new test files, and production modules MUST NOT register tests with `#[cfg(test)] mod tests;` for feature-level tests.
+- Integration tests MUST exercise public contracts or real reachable behavior. If a pure helper is worth direct testing, move that helper into a small production module with an intentional public or crate-level contract; do not make production internals public solely to rescue a misplaced test.
+- Production modules MUST NOT depend on test-only code, fixtures, or helpers.
 - Tests MUST cover pure transformations and observable state transitions at the narrowest owning boundary. Do not add tests that pin layout text, forwarding copies, wiring, or incidental defaults.
 - A test file MAY exceed the ordinary production-file target when its fixtures are inherently large, but it still MUST remain organized by contract and SHOULD be split before 500 lines.
 
@@ -60,7 +67,7 @@ Before adding a non-trivial feature to a Rust module, the author MUST:
 1. list the file's current responsibilities and physical line count;
 2. identify the state owner, service boundary, and every affected caller;
 3. decide whether the change belongs in the coordinator or a submodule;
-4. place new tests in the separate test module;
+4. place new tests under the crate-level `tests/` directory or dedicated test crate;
 5. run the affected check after the split, not only before it.
 
 The implementation MUST finish with no stale duplicate path, compatibility copy, unused extracted module, or test code left in the production coordinator.

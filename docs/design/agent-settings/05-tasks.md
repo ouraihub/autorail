@@ -199,11 +199,24 @@ flowchart LR
 
 ### T12 app：提供方页与密钥管理
 
-- **读**：01 §1.4、§4.4、§4.5；02 §3.3、§3.4；04 §7.6、§7.7。
-- **改**：`panels/settings/providers.rs`、`strings/settings_providers.rs`。
-- **做**：列表、编辑对话框（双地址 + 预览 + 默认协议 + 接入方式 + 额外请求头 + 模型编辑）、查找模型、检测、密钥管理（多密钥、掩码、显示 / 复制 / 编辑 / 删除 / 启停、检测所有密钥）。
-- **窗口验证**（需用户同意使用真实中转）：添加 easyclaude 提供方（Anthropic 地址），查找模型并启用 2 个、其中一个打开“视觉”；添加两个密钥，掩码正确，“显示”出现明文、“复制”后剪贴板内容正确（读剪贴板验证，不把值打印到汇报里）；“检测所有密钥”逐条显示结果；停用一个密钥后页脚变为“1 / 2 已启用”。
-- **验收**：完成门槛通过 + 截图（截图前隐藏明文）。
+- **读**：01 §1.4、§4.4、§4.5；02 §3.3、§3.4；04 §2.2、§2.5、§3.3、§5.3、§7.6、§7.7；现有 `crates/app/src/panels/settings/providers/{mod.rs,draft.rs,models.rs,keys.rs}`、`crates/routing/src/probe.rs`、`crates/core/src/provider.rs`。
+- **改**：`crates/app/src/panels/settings/providers/{mod.rs,draft.rs,models.rs,keys.rs}`、`crates/app/src/strings/settings_providers.rs`；integration contracts in `crates/app/tests/providers.rs`。
+- **当前基线**：提供方协调器已拥有完整的 `ProviderEditor` draft、`save_input`、revision-aware create/update、地址/请求头校验、密钥异步 CRUD、`probe.list_models` / `probe.check` / `probe.check_keys` 调用链。`models.rs` 当前仍是行内模型编辑实现；同步结果当前直接追加到 `ProviderEditor.models`，这是下一阶段必须替换的行为。测试已从生产目录移到 crate-level `tests/`，不得恢复 `#[cfg(test)] mod tests;`。
+- **设计不变量**：`ProviderEditor` 是唯一 draft owner；`models.rs` 只通过 `pub(super)` intent methods 读写模型状态，不持有第二份 Provider draft。后台 probe 只返回 `Vec<DiscoveredModel>`；UI 确认前不得修改 `editor.models`。取消同步必须丢弃选择；确认同步只合并选择的模型，保留已有模型的手工字段和 enabled 状态。重复模型按 `model_id` 合并，不重复追加。
+- **做**：
+  1. 保持 `ProviderEditor` 的现有字段和 `save_input` 契约，先为模型同步定义窄接口：`open_model_picker(discovered, window, cx)` 与 `apply_discovered_models(selection, window, cx)`；禁止 Picker 直接访问 `ProviderEditor` 私有字段。
+  2. 实现独立 `ModelPicker` dialog：搜索 `id/name`；显示 discovered 模型的 id、名称、上下文窗口；初始选择只匹配已有模型的 `model_id`，新发现模型默认不选；确认返回选中的 id 集合；取消不产生 draft 变更。不得用 `window.open_dialog` 闭包捕获可变 editor 作为状态 owner。
+  3. 确认同步时：已有 id 只更新探测得到的 `context_window`（若有），不覆盖名称、协议、视觉、推理、工具、档位和启用状态；新 id 创建 disabled 的 `ModelFields`，协议使用当前默认协议；只有用户明确勾选后才启用。同步结果必须可重复打开而不产生重复行。
+  4. 将模型详情改为独立编辑层：优先复用现有 GPUI dialog；编辑副本，确认后按索引/id 原子替换，取消不改 draft。编辑层必须覆盖名称、协议顺序、上下文、最大输出、视觉/推理/工具和推理档位；推理关闭时清空 efforts。行本身只展示摘要、enabled switch、编辑、检测、删除。
+  5. 地址/密钥/模型保存：保留 `parse_url`、`parse_headers` 与 core/settings-store 校验为最终边界；新建必须先 `ProviderService::create`，成功后再 `add_key`，失败时保留 editor 和 revision；已有提供方更新不得删除密钥，密钥编辑走 `update_key`；所有成功写操作发 `AppEvent::Routing`，并刷新本地 Provider 快照。
+  6. 修复协议选择：默认协议只能从已填写地址中选择；模型协议只能选择已填写地址；切换/删除地址后若当前默认协议或模型协议失效，保存前显示校验错误，不静默改写用户输入。
+- **测试**（`crates/app/tests/providers.rs` 和受影响 routing tests）：
+  - 同步结果中重复 id 不产生重复模型；取消 picker 不改变 draft；确认只加入勾选模型；已有模型的手工字段保持不变；已有模型只补充非空上下文窗口。
+  - 新建成功后添加密钥；添加密钥失败时 provider 已创建但编辑器仍可继续保存，且不泄露明文。
+  - 更新保留未在 draft 中输入的旧密钥；地址、默认协议、模型协议和请求头非法组合被拒绝；成功写入发出一次 `AppEvent::Routing`。
+  - 保持现有真实行为测试：密钥复制只在剪贴板写入，不把明文写日志或测试输出；模型检测错误脱敏。
+- **窗口验证**（需用户同意使用真实中转）：添加 easyclaude 提供方（Anthropic 地址），同步后只勾选 2 个模型并确认；再次同步不重复；取消同步不改变列表；打开一个模型详情修改视觉/推理后取消与确认各一次；添加两个密钥，掩码正确，“复制”后剪贴板内容正确（读剪贴板验证，不把值打印到汇报里）；检测所有密钥逐条显示；停用一个密钥后页脚为“1 / 2 已启用”。截图前隐藏明文。
+- **验收**：完成门槛通过 + 专门的状态转换测试 + 设置窗口实际操作；更新本节状态和证据后才标记完成。
 
 ### T13 app：MCP 页
 
