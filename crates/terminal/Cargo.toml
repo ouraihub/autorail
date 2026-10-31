@@ -1,0 +1,23 @@
+[package]
+name = "thinkrail-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thinkrail-core.workspace = true
+fs2.workspace = true
+parking_lot.workspace = true
+portable-pty.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+async-channel.workspace = true
+
+[lints]
+workspace = true

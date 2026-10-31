@@ -1,0 +1,197 @@
+use std::{path::PathBuf, sync::Arc};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{BackendKind, ChatId, HostToolAccess, NativeSessionKey, Profile, ProfileId, Result, WorkspaceId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Role { User, Assistant, Tool, System }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolStatus { Running, Completed, Failed }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum ContentBlock {
+    Text { text: String },
+    Thinking { text: String },
+    /// Images are announced by type only; the engine owns the bytes.
+    Image { mime_type: String },
+    Tool {
+        tool_call_id: String,
+        name: String,
+        status: ToolStatus,
+        /// Raw engine arguments, rendered as code, never interpreted.
+        input: Option<serde_json::Value>,
+        output: Option<String>,
+    },
+}
+
+/// A host projection of one engine message. `id` is stable across streaming updates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub id: String,
+    pub role: Role,
+    pub content: Vec<ContentBlock>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionPhase {
+    /// Ready for a prompt.
+    Idle,
+    /// A turn is in flight; only settle frames (not `agent_end`) return it to idle.
+    Running,
+    /// The engine is waiting on an [`Interaction`].
+    Waiting,
+    /// The engine process is gone; a new prompt resumes it from its native locator.
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InteractionKind { Permission, Confirm, Select, Input, Editor, Ask }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InteractionOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// A question the engine is blocked on. Nothing auto-approves it; dismissing is a cancel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Interaction {
+    pub request_id: String,
+    pub kind: InteractionKind,
+    pub title: String,
+    pub message: String,
+    pub options: Vec<InteractionOption>,
+    /// Engine-specific request (ACP `toolCall`, OMP `questions`) for richer rendering.
+    pub detail: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum InteractionAnswer {
+    Cancel,
+    Confirm { confirmed: bool },
+    /// An option id from [`Interaction::options`].
+    Select { option_id: String },
+    Text { text: String },
+    /// OMP structured questionnaire answers, passed through verbatim.
+    Answers { answers: serde_json::Value },
+}
+
+/// What a backend can actually do. The UI offers only what is true here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Capabilities {
+    pub resume: bool,
+    /// Old turns can be re-read from the engine after a restart.
+    pub history_replay: bool,
+    /// Assistant text streams as deltas (else it arrives committed per message).
+    pub token_deltas: bool,
+    pub questions: bool,
+    /// The engine asks before every tool call (not just some).
+    pub tool_permissions: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub provider: Option<String>,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionError {
+    pub code: String,
+    pub message: String,
+}
+
+/// The authoritative state of one chat. `revision` increases on every change so a late snapshot
+/// can never overwrite a newer event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSnapshot {
+    pub id: ChatId,
+    pub backend: BackendKind,
+    pub profile_id: ProfileId,
+    pub config_revision: u64,
+    pub native_session_key: Option<NativeSessionKey>,
+    pub cwd: PathBuf,
+    pub phase: SessionPhase,
+    pub model: Option<ModelInfo>,
+    pub messages: Vec<Message>,
+    pub interactions: Vec<Interaction>,
+    pub capabilities: Capabilities,
+    /// Older messages were dropped from this projection; the engine still has them.
+    pub output_truncated: bool,
+    pub last_error: Option<SessionError>,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum SessionEvent {
+    Snapshot { snapshot: Box<SessionSnapshot> },
+    /// Insert or replace a message by id.
+    Message { chat: ChatId, revision: u64, message: Message },
+    /// Append streamed text to `content[block]` of a message (a text or thinking block).
+    Delta { chat: ChatId, revision: u64, message_id: String, block: usize, text: String },
+    Error { chat: ChatId, revision: u64, error: SessionError },
+}
+
+impl SessionEvent {
+    pub fn chat(&self) -> &ChatId {
+        match self {
+            Self::Snapshot { snapshot } => &snapshot.id,
+            Self::Message { chat, .. } | Self::Delta { chat, .. } | Self::Error { chat, .. } => chat,
+        }
+    }
+}
+
+/// Receives session events from engine reader threads. Must not block.
+pub trait SessionSink: Send + Sync {
+    fn publish(&self, event: SessionEvent);
+}
+
+#[derive(Debug, Clone)]
+pub struct StartSession {
+    pub chat: ChatId,
+    /// Plans, reviews and host tools of this chat are scoped to `(workspace, chat)`.
+    pub workspace: WorkspaceId,
+    pub profile: Profile,
+    pub cwd: PathBuf,
+    /// Resume this native session instead of creating one.
+    pub resume: Option<NativeSessionKey>,
+    /// `None` starts the engine without the host's TODO / review tools.
+    pub host_tools: Option<HostToolAccess>,
+}
+
+/// One live engine conversation. All methods return once the engine has *accepted* the command;
+/// completion is reported through the [`SessionSink`].
+pub trait AgentSession: Send + Sync {
+    fn snapshot(&self) -> SessionSnapshot;
+    fn prompt(&self, text: &str) -> Result<()>;
+    fn stop(&self) -> Result<()>;
+    fn respond(&self, request_id: &str, answer: InteractionAnswer) -> Result<()>;
+    /// Graceful shutdown; the native transcript is kept.
+    fn dispose(&self) -> Result<()>;
+}
+
+/// An engine family's process protocol (pi RPC, OMP RPC, DSH ACP).
+///
+/// `start` blocks only for the bounded handshake that produces a real native locator, so a chat is
+/// never bound to a session that does not exist.
+pub trait AgentRuntime: Send + Sync {
+    fn backend(&self) -> BackendKind;
+    fn capabilities(&self) -> Capabilities;
+    fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>>;
+}

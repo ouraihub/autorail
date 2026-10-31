@@ -1,0 +1,208 @@
+[
+ {
+  "name": "todo_list",
+  "description": "Read this chat's TODO plan — loose items plus named groups (optionally filtered by status). The plan is the source of truth and the user may edit it at any time, so re-read before choosing each next item, after user input, and before completion. A plan beyond Pi's 2,000-line / 50 KiB output limit continues at the offset given in the result; oversized text is saved to a temporary file.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "status": {
+     "type": "string",
+     "enum": [
+      "pending",
+      "in_progress",
+      "done"
+     ],
+     "description": "Filter to one status: pending | in_progress | done (flat across groups). Omit for the whole plan."
+    },
+    "offset": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "Zero-based rendered-line offset (default: 0). Continue with the offset given in the result and the same status filter; restart after plan edits."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_add",
+  "description": "Add one item to this chat's TODO plan without touching the rest. Pass `group` (the task it belongs to — created if new) to append it as that task's next step, `after` (the id of an existing step **inside a task**) to insert it right after that step, or omit both to drop a raw item into the loose queue — the shared pre-work scratchpad you and the user both write to. Loose is for unprocessed notes/kernels only; when you actually take a loose item into work you promote it into a group first (see the skill). An `after` pointing at a loose item is rejected. Prefer this over todo_write for a single addition, which never disturbs existing (esp. done) items.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "title"
+   ],
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "The step's one-line title: imperative and about the change/outcome, short and scannable — not the process (\"make a plan\", \"read the files\") and not agent bookkeeping (that goes in note)."
+    },
+    "group": {
+     "type": "string",
+     "description": "Title of the group (task) to append into — created if it doesn't exist yet. Omit `group` and `after` to drop a raw item into the loose queue (a shared scratchpad with the user) — do that for unprocessed notes, not for work you are about to execute: a loose item you take into work gets promoted into a proper group first (see the skill)."
+    },
+    "after": {
+     "type": "string",
+     "description": "Id of an existing step to insert right after — the surgical mid-plan insert. Must be a step inside a task, never one of the user's own loose items. When given, `group` is ignored (the new item joins that step's group)."
+    },
+    "note": {
+     "type": "string",
+     "description": "A short secondary line (origin hint or detail)."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_update",
+  "description": "Update one item by id (status, title, or note) — the tool for progressing your plan: flip an item to in_progress when you start it and done when you finish. Marking done is how items complete — they STAY in the list as history (don't remove them). This is the safe way to edit the list: it touches only the one item.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Id of the item to update."
+    },
+    "status": {
+     "type": "string",
+     "enum": [
+      "pending",
+      "in_progress",
+      "done"
+     ],
+     "description": "New lifecycle status: pending | in_progress | done. Setting in_progress auto-returns any other in_progress item to pending (one step in work at a time)."
+    },
+    "title": {
+     "type": "string",
+     "description": "New title. Keep the step contract: imperative and about the change/outcome, short and scannable — not the process (\"make a plan\", \"look into X\") and not agent bookkeeping (that goes in note)."
+    },
+    "note": {
+     "type": "string",
+     "description": "New note (empty string clears it)."
+    },
+    "summary": {
+     "type": "string",
+     "description": "Completion summary, set together with status=done when the step changed code. Rendered as Markdown on the plan page — write it structured: a short lead sentence plus a bullet list when it has parts (what changed, why — decisions not visible in the diff — and any scope drift), NOT one run-on paragraph. Do NOT restate the title — add what the title can't show. Verification goes in the separate verification field, not here. Empty string clears it."
+    },
+    "verification": {
+     "type": "string",
+     "description": "Verification, set together with status=done: each check in the normalized shape `check → result` — the EXACT check you ran and its outcome (\"bun test src/todos → 34 pass\", \"typecheck → green\"). Rendered as Markdown on the plan page: when you ran several checks write them as a Markdown bullet list (one `- check → result` per line), not one run-on line; a single check stays one line. Write exactly \"not verified\" when you ran nothing. No prose, no summary restatement. Never claim a check you did not run. Empty string clears it."
+    },
+    "commitSubject": {
+     "type": "string",
+     "description": "Commit subject for this step's code changes, set together with status=done when the step changed code — the host commits the step's delta under it verbatim. One line, imperative, describing the CHANGE (not the plan step), and written in THIS repository's existing commit style: read `git log --oneline -20` and match what you see (a Conventional-Commits repo gets `type(scope): subject`, a prose-subject repo gets prose). It lands on the user's branch and must be pushable as-is: no todo/plan markers, no ids, no tool attribution. Empty string clears it; omitted, the host falls back to the step title."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_promote",
+  "description": "Promote one loose item into a group of its own in a single atomic step. The item disappears from the loose lane and a group inherits its id (and its title, unless you pass `title`). No duplicate window and no `todo_remove` dance — this IS the promotion. Use it the moment you take a loose item into work (typically a user-authored ask): one `todo_promote`, then `todo_add` the first step and flip it `in_progress`. The empty group is a valid \"task taken, plan forming\" state — don't backfill it with a synthetic placeholder.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Id of the loose item to promote (must be a loose-lane item — a grouped step is already in a group, so promotion doesn't apply)."
+    },
+    "title": {
+     "type": "string",
+     "description": "Optional override for the new group's title. When omitted, the loose item's own title becomes the group title verbatim — preserve the user's wording unless you have a clear reason to rephrase."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_remove",
+  "description": "Delete an item from the list by id. Rarely needed: a finished item is marked done (todo_update), not removed — done items stay as the user's history. Remove only when the user explicitly asks to drop an item; to take a loose item into work, use todo_promote.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "id"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "Id of the item to remove."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_write",
+  "description": "Lay out or reconcile the plan as these groups — one group per task (a user ask; title = the outcome), each with its ordered steps. This RECONCILES, it does not destructively replace: written steps are matched to existing ones by group title + step title and keep their status/summary/id, so re-running it is safe and lossless (a re-listed in-progress or done step is NOT reset — status advances only via todo_update, and a status you pass here for an existing step is ignored). Unmatched written steps are created; your steps you omit are dropped; loose items and completed (done) items are always preserved. Keep step titles stable across a re-plan — a reworded title reads as a new step. For a single change prefer todo_add/todo_update (cheaper than restating the whole plan).",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "groups"
+   ],
+   "properties": {
+    "groups": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "title",
+       "todos"
+      ],
+      "properties": {
+       "title": {
+        "type": "string",
+        "description": "The task's short name — an outcome (\"Fix login redirect\"), not a process."
+       },
+       "todos": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "required": [
+          "title"
+         ],
+         "properties": {
+          "title": {
+           "type": "string",
+           "description": "The step's one-line title: imperative and about the change/outcome, short and scannable — not the process (\"make a plan\", \"read the files\") and not agent bookkeeping (that goes in note)."
+          },
+          "status": {
+           "type": "string",
+           "enum": [
+            "pending",
+            "in_progress",
+            "done"
+           ],
+           "description": "Initial status (defaults to pending)."
+          },
+          "note": {
+           "type": "string",
+           "description": "A short secondary line."
+          }
+         }
+        },
+        "description": "The task's ordered steps."
+       }
+      }
+     },
+     "description": "The plan as tasks: one group per user ask (title = the outcome), each carrying its ordered steps. Use a 1–2-step group only when the user explicitly asked for a plan; otherwise plans start at three substantive steps. Loose items are the shared raw-input queue — todo_write never touches them."
+    }
+   }
+  }
+ },
+ {
+  "name": "todo_plan_summary",
+  "description": "Set the plan's overall completion summary — a short, CUMULATIVE handoff note covering EVERYTHING done across the whole plan (all tasks, all completions), not just the last step. Call it right after the last open item flips done (the todo_update result nudges you). When a summary from an earlier completion still exists, EXTEND it rather than rewriting from scratch. Shape it as a PR body (three H2 sections: '## Summary' / '## Changes' / '## Testing') — the host prepends this verbatim when it renders the PR body, so a well-shaped summary ships as-is. Not per-item: an item's own summary goes on todo_update's summary field.",
+  "inputSchema": {
+   "type": "object",
+   "required": [
+    "summary"
+   ],
+   "properties": {
+    "summary": {
+     "type": "string",
+     "description": "The CUMULATIVE completion summary for the WHOLE plan — everything accomplished across every task and every completion, not a recap of the last step. If a summary from an earlier completion already exists (a plan that gained new work and finished again — the done-flip nudge shows it to you), EXTEND it: carry every earlier point forward and add the new work, never narrow it down to only the most recent step. Write it in the PR-body shape so a host can use it as a PR body as-is: three H2 sections in order — '## Summary' (what and why in prose, decisions the diff can't show, 'Closes #NNN' when issue-driven), '## Changes' (plan-scale cross-cutting notes: migrations, scope drift, new/dropped deps, renames — NOT a restatement of the step titles; the auto '## Plan' section already lists them with their own summaries), '## Testing' (end-to-end checks beyond per-step verification, each as a bullet in the shape 'check → result', or the honest 'not verified'). Include anything left undone or deferred inside the matching section — an omission reads as 'nothing left'. Empty string clears it."
+    }
+   }
+  }
+ }
+]
