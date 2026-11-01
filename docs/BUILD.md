@@ -65,12 +65,6 @@ scripts\msvc\cargo-msvc.bat test -p thinkrail-agents smoke:: -- --ignored --noca
 
 ## 运行时要求
 
-应用不内置任何 Agent 引擎。在“设置 → Agent 档案”中，为每个档案填写可执行文件的绝对路径和启动参数；在“提供方”中配置中转地址、模型及 API 密钥，或继续使用引擎原有模型配置。
+应用安装包不带 Agent 引擎。打开“设置 → 编码搭档”：已在 `PATH` 上的 `pi` / `omp` / `dsh` 会被检测到并标“系统”；没装的点“安装”，应用下载固定版本的 Node v24.22.2 或 Bun 1.4.4（校验 SHA-256），再把 pi 1.4.0、OMP 18.14.2、DSH 0.2.1-rc.5 装到 `<data>/coding`，标“内置”。“设为默认”决定新聊天用哪个引擎；新建项目或新建聊天时没装引擎、没设默认，界面会给出引导按钮直接打开这一页。引擎使用自己的默认配置目录（pi `~/.pi/agent`、OMP `~/.omp/agent`、DSH `~/.dsh`）。中转地址、模型和 API 密钥在“模型服务”中配置；每个引擎用哪个服务商在“编码搭档”里选，也可以选“{引擎} 官方”继续用引擎原有的模型配置。
 
-| 后端 | 可执行文件 | 参数示例 |
-|---|---|---|
-| pi | `node.exe`（Node ≥ 22.19） | `["C:/…/@earendil-works/pi-coding-agent/dist/bundle/cli.js"]` |
-| OMP | `omp.exe` 或 `bun.exe`（Bun ≥ 1.4.4） | 可执行发行版参数 `[]`；源码入口 `["C:/…/@oh-my-pi/pi-coding-agent/src/cli.ts"]`。使用宿主 MCP 时填写独立配置目录 |
-| DSH | `node.exe`（Node ≥ 24.9） | `["C:/…/@deepseek-ai/dsh/lib/bin.js"]`（预发布版） |
-
-模型、提供方、密钥和 MCP 存在 `<exe>/data/thinkrail.db`；显式 `--data-dir <目录>` 时数据库在该目录。项目、Agent 档案与日志默认位于 `%USERPROFILE%/.autorail`，不读取或自动迁移 `.thinkrail`、`.thinkrail-native` 的数据。API 密钥按用户选择明文存储，复制/显示才取出；请保护数据库文件。不同项目共用同一个 OMP 配置目录时，MCP 集合以最后启动的项目为准，建议使用独立档案目录。
+模型、提供方、密钥、MCP、默认 Agent 和聊天绑定存在 `<exe>/data/thinkrail.db`；显式 `--data-dir <目录>` 时数据库在该目录。项目与日志默认位于 `%USERPROFILE%/.autorail`，不读取或自动迁移 `.thinkrail`、`.thinkrail-native` 的数据；旧开发版的 `agent-profiles.json` 不再读取，旧版本号的 `thinkrail.db` 需要删除后重建。API 密钥按用户选择明文存储，复制/显示才取出；请保护数据库文件。所有项目共用 OMP 的默认配置目录，MCP 集合以最后启动的项目为准。

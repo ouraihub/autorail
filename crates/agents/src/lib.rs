@@ -8,6 +8,7 @@
 mod dsh;
 mod framing;
 mod host;
+mod install;
 mod omp;
 mod omp_mcp;
 mod pi;
@@ -16,11 +17,14 @@ mod projection;
 mod projection_engine;
 mod rpc;
 mod session;
+mod workflow;
 #[cfg(test)]
 mod testing;
 #[cfg(test)]
 mod smoke;
 
 pub use dsh::DshRuntime;
+pub use install::ManagedEngines;
 pub use omp::OmpRuntime;
 pub use pi::PiRuntime;
+pub use workflow::skill_command;

@@ -128,6 +128,49 @@ impl WorkspaceService for GitWorkspaceService {
         Ok(projects)
     }
 
+    fn is_repository(&self, path: &Path) -> bool {
+        git::toplevel(path).is_ok()
+    }
+
+    fn init_project(&self, path: &Path) -> Result<Project> {
+        let requested = fs::canonicalize(path).map_err(|_| Error::not_found("文件夹"))?;
+        // Already inside a repository: open it rather than nest a second one.
+        if git::toplevel(&requested).is_err() {
+            git::bootstrap(&requested)?;
+            info!(path = %requested.display(), "git repository initialized");
+        }
+        self.open_project(&requested)
+    }
+
+    fn create_project(&self, parent: &Path, name: &str) -> Result<Project> {
+        let name = name.trim();
+        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0', ':']) {
+            return Err(Error::invalid(format!("项目文件夹名不合法：{name}")));
+        }
+        fs::create_dir_all(parent).map_err(|e| Error::invalid(format!("无法创建位置 {}：{e}", parent.display())))?;
+        let path = parent.join(name);
+        let created = match fs::read_dir(&path) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
+                    return Err(Error::conflict(format!("文件夹已存在且不为空：{}", path.display())));
+                }
+                false
+            }
+            Err(_) => {
+                fs::create_dir(&path).map_err(|e| Error::invalid(format!("无法创建 {}：{e}", path.display())))?;
+                true
+            }
+        };
+        let opened = git::bootstrap(&path).and_then(|()| self.open_project(&path));
+        if opened.is_err() {
+            let _ = fs::remove_dir_all(path.join(".git"));
+            if created {
+                let _ = fs::remove_dir(&path);
+            }
+        }
+        opened
+    }
+
     fn open_project(&self, path: &Path) -> Result<Project> {
         let requested = fs::canonicalize(path).map_err(|_| Error::not_found("文件夹"))?;
         let top = git::toplevel(&requested)?;

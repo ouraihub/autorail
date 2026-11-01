@@ -28,6 +28,7 @@ use crate::{
     projection_engine,
     rpc::{self, Dialogs, Stream},
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
+    workflow,
 };
 
 /// OMP physical line limit; logical frames up to [`crate::framing::MAX_FRAME`] arrive as v2 chunks.
@@ -35,20 +36,8 @@ const LINE_LIMIT: usize = 1024 * 1024;
 const PAGE: u64 = 256;
 const MAX_HISTORY: usize = 2000;
 const READY: &str = "ready";
-const RESERVED: [&str; 10] = [
-    "--mode",
-    "--session",
-    "--no-session",
-    "--continue",
-    "-c",
-    "--resume",
-    "-r",
-    "--fork",
-    "--print",
-    "--approval-mode",
-];
 const NO_MODEL: (&str, &str) =
-    ("No default model selected", "OMP 没有可用的默认模型：请在该档案的 OMP 配置目录中配置模型（例如 models.yml）后重试");
+    ("No default model selected", "OMP 没有可用的默认模型：请在 OMP 配置目录中配置模型（例如 models.yml）后重试");
 const CAPABILITIES: Capabilities =
     Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: true, model_switch: true };
 
@@ -73,7 +62,6 @@ impl AgentRuntime for OmpRuntime {
 
     fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Omp)?;
-        session::reject_args(&request.profile, &RESERVED)?;
         let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, LINE_LIMIT)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
@@ -106,26 +94,27 @@ impl AgentRuntime for OmpRuntime {
     }
 }
 
-/// Host arguments and environment of one OMP launch: the provider extension (`-e`), the overlay
-/// (`--config`) and the `thinkrail-` entries of the config root's `mcp.json`. Host tools travel
-/// over RPC (`set_host_tools`), so they add neither arguments nor variables.
+/// Host arguments and environment of one OMP launch: the extension (`-e`: workflow rules and
+/// providers), the overlay (`--config`: bundled skills, MCP, default model) and the `thinkrail-`
+/// entries of the config root's (default `~/.omp/agent`) `mcp.json`. Host tools travel over RPC
+/// (`set_host_tools`), so they add neither arguments nor variables.
 fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     let mut host_args: Vec<String> =
         ["--mode", "rpc-ui", "--approval-mode", "always-ask"].into_iter().map(Into::into).collect();
-    omp_mcp::sync(request.profile.input.config_root.as_deref(), &request.routing.mcp)?;
-    if let Some(extension) = projection_engine::omp_extension(&request.routing) {
-        let path = host::write_support(&request.support_dir, projection_engine::OMP_EXTENSION_FILE, &extension)?;
-        host_args.extend(["-e".to_owned(), path.display().to_string()]);
-    }
-    if let Some(overlay) = projection_engine::omp_overlay(&request.routing) {
-        let path = host::write_support(&request.support_dir, projection_engine::OMP_OVERLAY_FILE, &overlay)?;
-        host_args.extend(["--config".to_owned(), path.display().to_string()]);
-    }
+    omp_mcp::sync(&process::config_dir(request.config_root.as_deref(), ".omp/agent")?, &request.routing.mcp)?;
+    let skills = workflow::stage_skills(&request.support_dir)?;
+    let extension = projection_engine::omp_extension(&request.routing);
+    let path = host::write_support(&request.support_dir, projection_engine::OMP_EXTENSION_FILE, &extension)?;
+    host_args.extend(["-e".to_owned(), path.display().to_string()]);
+    let overlay = projection_engine::omp_overlay(&request.routing, &skills);
+    let path = host::write_support(&request.support_dir, projection_engine::OMP_OVERLAY_FILE, &overlay)?;
+    host_args.extend(["--config".to_owned(), path.display().to_string()]);
     if let Some(key) = &request.resume {
         host_args.extend(["--session".to_owned(), key.as_str().to_owned()]);
     }
     Ok(LaunchSpec {
-        profile: &request.profile,
+        launch: &request.launch,
+        config_root: request.config_root.as_deref(),
         host_args,
         cwd: request.cwd.clone(),
         config_var: "PI_CODING_AGENT_DIR",

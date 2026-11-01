@@ -14,15 +14,16 @@ fn assert_no_secret(text: &str) {
 #[test]
 fn generated_engine_files_do_not_contain_secret_values() {
     let routing = sample_routing();
-    assert_no_secret(&pi_extension(true, &routing).unwrap());
-    assert_no_secret(&omp_extension(&routing).unwrap());
-    assert_no_secret(&omp_overlay(&routing).unwrap());
-    assert_no_secret(&dsh_patch(true, &dsh_routing()).unwrap().unwrap());
+    let skills = std::path::Path::new("skills");
+    assert_no_secret(&pi_extension(true, &routing));
+    assert_no_secret(&omp_extension(&routing));
+    assert_no_secret(&omp_overlay(&routing, skills));
+    assert_no_secret(&dsh_patch(true, &dsh_routing(), skills).unwrap());
 }
 
 #[test]
 fn dsh_patch_refuses_header_bindings() {
-    let error = dsh_patch(false, &sample_routing()).unwrap_err();
+    let error = dsh_patch(false, &sample_routing(), std::path::Path::new("skills")).unwrap_err();
     assert_eq!(error.kind(), Some(ErrorKind::Invalid));
     assert!(!error.to_string().contains(SECRETS[1]));
 }

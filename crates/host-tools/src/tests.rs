@@ -28,8 +28,9 @@ struct Fixture {
 fn fixture() -> Fixture {
     let (data, work) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     fs::write(work.path().join("a.txt"), "one\ntwo\n").unwrap();
-    let store = Arc::new(JsonPlanReviewStore::open(data.path(), Arc::new(Root(work.path().to_path_buf()))).unwrap());
-    let tools = HostTools::new(store.clone());
+    let root: Arc<dyn WorkspaceRoots> = Arc::new(Root(work.path().to_path_buf()));
+    let store = Arc::new(JsonPlanReviewStore::open(data.path(), root.clone()).unwrap());
+    let tools = HostTools::new(store.clone(), root);
     Fixture { _dirs: (data, work), store, tools, scope: PlanScope { workspace: "w".into(), chat: "c".into() } }
 }
 
@@ -55,7 +56,11 @@ fn specs_are_the_original_tools_plus_resolve_comment() {
     let names: Vec<String> = fixture().tools.specs().into_iter().map(|s| s.name).collect();
     assert_eq!(
         names,
-        ["todo_list", "todo_add", "todo_update", "todo_promote", "todo_remove", "todo_write", "todo_plan_summary", "resolve_comment"]
+        [
+            "todo_list", "todo_add", "todo_update", "todo_promote", "todo_remove", "todo_write", "todo_plan_summary",
+            "spec_grep", "spec_get", "spec_graph", "spec_create", "spec_update", "spec_delete", "spec_validate",
+            "resolve_comment"
+        ]
     );
 }
 
@@ -217,7 +222,7 @@ fn pipe_bridge_scopes_calls_by_token_and_rejects_strangers() {
 
     let mut client = BridgeClient::connect(bridge.pipe_name(), &token).unwrap();
     let listed = client.request(json!({"method": "list"})).unwrap();
-    assert_eq!(listed["result"].as_array().map(Vec::len), Some(8));
+    assert_eq!(listed["result"].as_array().map(Vec::len), Some(15));
     let added = client.request(json!({"method": "call", "name": "todo_add", "arguments": {"title": "Via pipe"}})).unwrap();
     assert_eq!(added["result"]["isError"], false, "{added}");
     assert!(f.ok("todo_list", json!({})).contains("Via pipe"), "the call landed in the token's scope");

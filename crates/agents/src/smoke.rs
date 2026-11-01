@@ -9,9 +9,9 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use tempfile::TempDir;
 use thinkrail_core::{
-    AgentRuntime, BackendKind, DefaultModel, EngineRouting, EnvBinding, ErrorKind, Launch, Profile, ProfileInput,
-    ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel, ProjectedProvider, Protocol, Secret, SessionPhase,
-    StartSession, ThinkingLevel,
+    AgentRuntime, BackendKind, DefaultModel, EngineRouting, EnvBinding, ErrorKind, Launch, ProjectedMcpServer,
+    ProjectedMcpTransport, ProjectedModel, ProjectedProvider, Protocol, Secret, SessionPhase, StartSession,
+    ThinkingLevel,
 };
 
 use crate::{DshRuntime, OmpRuntime, PiRuntime, projection::tests::Events};
@@ -24,18 +24,19 @@ fn launch(var: &str) -> Launch {
     Launch::External { executable, args }
 }
 
-fn profile(backend: BackendKind, launch: Launch, config_root: PathBuf) -> Profile {
-    Profile {
-        id: "smoke".into(),
-        config_revision: 1,
-        input: ProfileInput {
-            backend_id: backend,
-            label: "smoke".into(),
-            enabled: true,
-            config_root: Some(config_root),
-            launch,
-            env_refs: Vec::new(),
-        },
+/// A new session of `backend` launched from `var`, in the fixture's isolated config and cwd.
+fn request(backend: BackendKind, var: &str, f: &Fixture) -> StartSession {
+    StartSession {
+        chat: "smoke".into(),
+        workspace: "w".into(),
+        backend,
+        launch: launch(var),
+        config_root: Some(f.config.clone()),
+        cwd: f.cwd.clone(),
+        resume: None,
+        host_tools: None,
+        routing: EngineRouting::default(),
+        support_dir: std::env::temp_dir().join("thinkrail-smoke-engines"),
     }
 }
 
@@ -55,10 +56,9 @@ fn fixture() -> Fixture {
 }
 
 /// Start → real locator → idle → dispose → closed; then resume the same native session.
-fn round_trip(runtime: &dyn AgentRuntime, profile: Profile, cwd: PathBuf, resume: bool) {
+fn round_trip(runtime: &dyn AgentRuntime, request: StartSession, resume: bool) {
     let events = Arc::new(Events::default());
-    let request = StartSession { chat: "smoke".into(), workspace: "w".into(), profile: profile.clone(), cwd: cwd.clone(), resume: None, host_tools: None, routing: EngineRouting::default(), support_dir: std::env::temp_dir().join("thinkrail-smoke-engines") };
-    let session = runtime.start(request, events.clone()).unwrap_or_else(|e| panic!("start: {e}"));
+    let session = runtime.start(request.clone(), events.clone()).unwrap_or_else(|e| panic!("start: {e}"));
     let snapshot = session.snapshot();
     let key = snapshot.native_session_key.clone().expect("a real native locator");
     assert!(!key.as_str().is_empty());
@@ -68,7 +68,7 @@ fn round_trip(runtime: &dyn AgentRuntime, profile: Profile, cwd: PathBuf, resume
     assert!(session.snapshot().last_error.is_none(), "graceful dispose is not an error");
     assert_eq!(session.prompt("x").unwrap_err().kind(), Some(ErrorKind::SessionClosed));
     if resume {
-        let request = StartSession { chat: "smoke".into(), workspace: "w".into(), profile, cwd, resume: Some(key.clone()), host_tools: None, routing: EngineRouting::default(), support_dir: std::env::temp_dir().join("thinkrail-smoke-engines") };
+        let request = StartSession { resume: Some(key.clone()), ..request };
         let resumed = runtime.start(request, events).unwrap_or_else(|e| panic!("resume: {e}"));
         assert_eq!(resumed.snapshot().native_session_key, Some(key));
         resumed.dispose().unwrap();
@@ -79,15 +79,14 @@ fn round_trip(runtime: &dyn AgentRuntime, profile: Profile, cwd: PathBuf, resume
 #[ignore = "needs THINKRAIL_SMOKE_PI"]
 fn pi_rpc_handshake() {
     let f = fixture();
-    round_trip(&PiRuntime::new(), profile(BackendKind::Pi, launch("THINKRAIL_SMOKE_PI"), f.config.clone()), f.cwd.clone(), false);
+    round_trip(&PiRuntime::new(), request(BackendKind::Pi, "THINKRAIL_SMOKE_PI", &f), false);
 }
 
 #[test]
 #[ignore = "needs THINKRAIL_SMOKE_OMP"]
 fn omp_without_a_model_reports_a_readable_start_error() {
     let f = fixture();
-    let profile = profile(BackendKind::Omp, launch("THINKRAIL_SMOKE_OMP"), f.config.clone());
-    let request = StartSession { chat: "smoke".into(), workspace: "w".into(), profile, cwd: f.cwd.clone(), resume: None, host_tools: None, routing: EngineRouting::default(), support_dir: std::env::temp_dir().join("thinkrail-smoke-engines") };
+    let request = request(BackendKind::Omp, "THINKRAIL_SMOKE_OMP", &f);
     let error = OmpRuntime::new().start(request, Arc::new(Events::default())).err().expect("start must fail");
     assert_eq!(error.kind(), Some(ErrorKind::BackendUnavailable));
     assert!(error.to_string().contains("models.yml"), "{error}");
@@ -103,23 +102,22 @@ fn omp_rpc_ui_v2_handshake() {
         "providers:\n  smoke:\n    baseUrl: http://127.0.0.1:9/v1\n    api: openai-completions\n    auth: none\n    models:\n      - id: smoke-model\n        name: Smoke\n",
     )
     .unwrap();
-    round_trip(&OmpRuntime::new(), profile(BackendKind::Omp, launch("THINKRAIL_SMOKE_OMP"), f.config.clone()), f.cwd.clone(), false);
+    round_trip(&OmpRuntime::new(), request(BackendKind::Omp, "THINKRAIL_SMOKE_OMP", &f), false);
 }
 
 #[test]
 #[ignore = "needs THINKRAIL_SMOKE_DSH"]
 fn dsh_acp_handshake_and_resume() {
     let f = fixture();
-    round_trip(&DshRuntime::new(), profile(BackendKind::Dsh, launch("THINKRAIL_SMOKE_DSH"), f.config.clone()), f.cwd.clone(), true);
+    round_trip(&DshRuntime::new(), request(BackendKind::Dsh, "THINKRAIL_SMOKE_DSH", &f), true);
 }
 
 /// Starts a session on the config's first model, switches to its second keyless placeholder model
 /// at `high` and checks the engine's `get_state` (via the snapshot) reports it and that nothing in
 /// the engine config (outside the model list and session transcripts) records it. No prompt is sent.
-fn switch_round(runtime: &dyn AgentRuntime, profile: Profile, cwd: PathBuf) {
-    let config = profile.input.config_root.clone().expect("an isolated config root");
+fn switch_round(runtime: &dyn AgentRuntime, request: StartSession) {
+    let config = request.config_root.clone().expect("an isolated config root");
     let events = Arc::new(Events::default());
-    let request = StartSession { chat: "smoke".into(), workspace: "w".into(), profile, cwd, resume: None, host_tools: None, routing: EngineRouting::default(), support_dir: std::env::temp_dir().join("thinkrail-smoke-engines") };
     let session = runtime.start(request, events).unwrap_or_else(|e| panic!("start: {e}"));
     assert!(session.snapshot().capabilities.model_switch);
     let before = session.snapshot().model.expect("a starting model");
@@ -163,7 +161,7 @@ fn pi_switches_model_in_a_running_session() {
     )
     .unwrap();
     fs::write(f.config.join("settings.json"), r#"{"defaultProvider":"smoke","defaultModel":"smoke-a"}"#).unwrap();
-    switch_round(&PiRuntime::new(), profile(BackendKind::Pi, launch("THINKRAIL_SMOKE_PI"), f.config.clone()), f.cwd.clone());
+    switch_round(&PiRuntime::new(), request(BackendKind::Pi, "THINKRAIL_SMOKE_PI", &f));
 }
 
 #[test]
@@ -175,7 +173,7 @@ fn omp_switches_model_in_a_running_session() {
         "providers:\n  smoke:\n    baseUrl: http://127.0.0.1:9/v1\n    api: openai-completions\n    auth: none\n    models:\n      - id: smoke-a\n        name: Smoke A\n        reasoning: true\n      - id: smoke-b\n        name: Smoke B\n        reasoning: true\n",
     )
     .unwrap();
-    switch_round(&OmpRuntime::new(), profile(BackendKind::Omp, launch("THINKRAIL_SMOKE_OMP"), f.config.clone()), f.cwd.clone());
+    switch_round(&OmpRuntime::new(), request(BackendKind::Omp, "THINKRAIL_SMOKE_OMP", &f));
 }
 
 /// A stdio MCP server that records each run in `<dir>/echo-<pid>.log` (the value of
@@ -288,10 +286,10 @@ fn assert_no_secret_in(dir: &std::path::Path) {
 /// Starts a new session with only the projection (the config dir has no model of its own): the
 /// default model and level come from it, the other projected model is selectable, and the echo
 /// MCP server is started with the token and asked for its tools.
-fn projection_round(runtime: &dyn AgentRuntime, profile: Profile, f: &Fixture) {
+fn projection_round(runtime: &dyn AgentRuntime, request: StartSession, f: &Fixture) {
     let support = f.config.parent().unwrap().join("support");
     let routing = placeholder_routing(f.config.parent().unwrap());
-    let request = StartSession { chat: "smoke".into(), workspace: "w".into(), profile, cwd: f.cwd.clone(), resume: None, host_tools: None, routing, support_dir: support.clone() };
+    let request = StartSession { routing, support_dir: support.clone(), ..request };
     let session = runtime.start(request, Arc::new(Events::default())).unwrap_or_else(|e| panic!("start: {e}"));
     let model = session.snapshot().model.expect("the projected default model");
     assert_eq!((model.provider.as_deref(), model.id.as_str(), model.effort), (Some("thinkrail-00000000-oc"), "proj-a", Some(ThinkingLevel::Low)));
@@ -308,14 +306,14 @@ fn projection_round(runtime: &dyn AgentRuntime, profile: Profile, f: &Fixture) {
 #[ignore = "needs THINKRAIL_SMOKE_PI"]
 fn pi_loads_the_projected_provider_default_model_and_mcp_server() {
     let f = fixture();
-    projection_round(&PiRuntime::new(), profile(BackendKind::Pi, launch("THINKRAIL_SMOKE_PI"), f.config.clone()), &f);
+    projection_round(&PiRuntime::new(), request(BackendKind::Pi, "THINKRAIL_SMOKE_PI", &f), &f);
 }
 
 #[test]
 #[ignore = "needs THINKRAIL_SMOKE_OMP"]
 fn omp_loads_the_projected_provider_default_model_and_mcp_server() {
     let f = fixture();
-    projection_round(&OmpRuntime::new(), profile(BackendKind::Omp, launch("THINKRAIL_SMOKE_OMP"), f.config.clone()), &f);
+    projection_round(&OmpRuntime::new(), request(BackendKind::Omp, "THINKRAIL_SMOKE_OMP", &f), &f);
 }
 
 #[test]
@@ -334,11 +332,7 @@ fn dsh_loads_the_projected_provider_default_model_and_mcp_server() {
         "        models:\n          - id: user-model\n            name: !!js '\"User\"'\n",
         "            contextWindow: 128000\n            maxTokens: 4096\n            reasoningEfforts: false\n",
     )).unwrap();
-    let request = StartSession {
-        chat: "smoke".into(), workspace: "w".into(),
-        profile: profile(BackendKind::Dsh, launch("THINKRAIL_SMOKE_DSH"), f.config.clone()),
-        cwd: f.cwd.clone(), resume: None, host_tools: None, routing, support_dir: support.clone(),
-    };
+    let request = StartSession { routing, support_dir: support.clone(), ..request(BackendKind::Dsh, "THINKRAIL_SMOKE_DSH", &f) };
     let session = DshRuntime::new().start(request, Arc::new(Events::default())).unwrap_or_else(|e| panic!("start: {e}"));
     let current = session.snapshot().model.expect("projected model");
     assert_eq!((current.provider.as_deref(), current.id.as_str(), current.effort),
@@ -351,4 +345,95 @@ fn dsh_loads_the_projected_provider_default_model_and_mcp_server() {
     assert!(log.starts_with(&format!("token={ECHO_TOKEN}\n")));
     session.dispose().unwrap();
     assert_no_secret_in(&support);
+}
+
+/// A loopback "provider" that records each request body under `dir/request-<n>.json` and answers
+/// 500, so the turn fails right after the engine built its first model request (no model cost).
+fn capture_provider(dir: &std::path::Path) -> String {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let dir = dir.to_owned();
+    std::thread::spawn(move || {
+        for (n, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let _ = fs::write(dir.join(format!("request-{n}.json")), &body);
+            let reply = r#"{"error":{"message":"smoke capture","type":"server_error"}}"#;
+            let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}", reply.len());
+        }
+    });
+    format!("http://127.0.0.1:{port}/v1")
+}
+
+/// Sends the setup skill command and returns the first model request the engine built.
+fn skill_round(runtime: &dyn AgentRuntime, request: StartSession, f: &Fixture, command: &str) -> String {
+    let dir = f.config.parent().unwrap().to_owned();
+    let mut routing = placeholder_routing(&dir);
+    routing.mcp.clear();
+    routing.providers[0].headers.clear();
+    routing.providers[0].base_url = capture_provider(&dir);
+    let request = StartSession { routing, support_dir: dir.join("support"), ..request };
+    let session = runtime.start(request, Arc::new(Events::default())).unwrap_or_else(|e| panic!("start: {e}"));
+    session.prompt(&format!("{command}天气 app")).unwrap_or_else(|e| panic!("prompt: {e}"));
+    // Engines may send side requests first (OMP summarizes skill descriptions); the turn's
+    // request is the one carrying the user's words.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let body = loop {
+        let turn = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("request-")))
+            .filter_map(|p| fs::read_to_string(p).ok())
+            .find(|body| body.contains("天气 app"));
+        if let Some(body) = turn {
+            break body;
+        }
+        assert!(std::time::Instant::now() < deadline, "the engine never sent the turn's model request");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let _ = session.dispose();
+    body
+}
+
+/// The engine expands the bundled setup skill and carries the workflow and spec rules.
+fn assert_setup_skill_expanded(body: &str) {
+    assert!(body.contains("Setting up a project"), "the skill body reached the model");
+    assert!(body.contains("天气 app"), "the user's words follow the skill");
+    assert!(body.contains("read the choosing-a-workflow skill"), "WORKFLOW_RULE is in the system prompt");
+    assert!(body.contains("Specs are this project's ground truth."), "SPEC_RULE is in the system prompt");
+}
+
+#[test]
+#[ignore = "needs THINKRAIL_SMOKE_PI"]
+fn pi_expands_the_bundled_setup_skill() {
+    let f = fixture();
+    let request = request(BackendKind::Pi, "THINKRAIL_SMOKE_PI", &f);
+    assert_setup_skill_expanded(&skill_round(&PiRuntime::new(), request, &f, &crate::skill_command(BackendKind::Pi, "setting-up-a-project")));
+}
+
+#[test]
+#[ignore = "needs THINKRAIL_SMOKE_OMP"]
+fn omp_expands_the_bundled_setup_skill() {
+    let f = fixture();
+    let request = request(BackendKind::Omp, "THINKRAIL_SMOKE_OMP", &f);
+    assert_setup_skill_expanded(&skill_round(&OmpRuntime::new(), request, &f, &crate::skill_command(BackendKind::Omp, "setting-up-a-project")));
+}
+
+#[test]
+#[ignore = "needs THINKRAIL_SMOKE_DSH"]
+fn dsh_expands_the_bundled_setup_skill() {
+    let f = fixture();
+    let request = request(BackendKind::Dsh, "THINKRAIL_SMOKE_DSH", &f);
+    assert_setup_skill_expanded(&skill_round(&DshRuntime::new(), request, &f, &crate::skill_command(BackendKind::Dsh, "setting-up-a-project")));
 }

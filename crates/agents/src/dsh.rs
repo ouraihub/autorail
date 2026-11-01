@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorKind, Interaction,
-    InteractionAnswer, InteractionKind, InteractionOption, Message, ModelInfo, NativeSessionKey, Result, Role,
+    InteractionAnswer, InteractionKind, InteractionOption, IoContext, Message, ModelInfo, NativeSessionKey, Result, Role,
     SessionSink, SessionSnapshot, StartSession, ThinkingLevel, ToolStatus,
 };
 use tracing::{debug, info};
@@ -25,17 +25,18 @@ use crate::{
     projection_engine::{self, level_name},
     rpc,
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
+    workflow,
 };
 
 const CLOSE: Duration = Duration::from_secs(10);
-const RESERVED: [&str; 1] = ["--profile"];
 const CAPABILITIES: Capabilities =
     Capabilities { resume: false, history_replay: false, token_deltas: false, questions: false, tool_permissions: false, model_switch: true };
 const MODEL_OPTION: &str = "model";
 const METHOD_NOT_FOUND: i64 = -32601;
 
-/// Launches DSH `--profile acp` per chat. Profile arguments are the CLI entry (e.g. `lib/bin.js`);
-/// the launcher flags must precede any app argument, so the host inserts them right after.
+/// Launches DSH `--profile acp` (DSH's own `acp` profile) per chat. Launch arguments are the CLI
+/// entry (e.g. `lib/bin.js`); the launcher flags must precede any app argument, so the host
+/// inserts them right after.
 #[derive(Debug, Default)]
 pub struct DshRuntime;
 
@@ -56,7 +57,6 @@ impl AgentRuntime for DshRuntime {
 
     fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Dsh)?;
-        session::reject_args(&request.profile, &RESERVED)?;
         let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
@@ -75,19 +75,20 @@ impl AgentRuntime for DshRuntime {
     }
 }
 
-/// Host arguments and environment of one DSH launch: the generated patch (built-in TODO tool off,
-/// providers, `acp` default model).
+/// Host arguments and environment of one DSH launch: the generated patch (bundled skills,
+/// workflow rules, built-in TODO tool off, providers, `acp` default model).
 fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     let home = dsh_home(request)?;
     let mut host_args = vec!["--profile".to_owned(), "acp".to_owned()];
     let mut host_env: Vec<_> = process::routing_env(&request.routing).collect();
-    if let Some(patch) = projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing)? {
-        let patch = preserve_user_routes(&home, patch, &mut host_env)?;
-        let path = host::write_support(&request.support_dir, projection_engine::DSH_PATCH_FILE, &patch)?;
-        host_args.extend(["--patch".to_owned(), path.display().to_string()]);
-    }
+    let skills = workflow::stage_skills(&request.support_dir)?;
+    let patch = projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing, &skills)?;
+    let patch = preserve_user_routes(&home, patch, &mut host_env)?;
+    let path = host::write_support(&request.support_dir, projection_engine::DSH_PATCH_FILE, &patch)?;
+    host_args.extend(["--patch".to_owned(), path.display().to_string()]);
     Ok(LaunchSpec {
-        profile: &request.profile,
+        launch: &request.launch,
+        config_root: request.config_root.as_deref(),
         host_args,
         // DSH loads `.env` from its process cwd; keep the workspace out of that lookup.
         cwd: home,
@@ -177,18 +178,11 @@ fn yaml_expressions(value: &serde_yaml_ng::Value) -> Result<Value> {
         _ => serde_json::to_value(value).map_err(|_| Error::invalid("无法编码 DSH 配置值")),
     }
 }
-/// The config root the process runs in: the profile's, else DSH's default `~/.dsh`.
+/// The config root the process runs in: the request's, else DSH's default `~/.dsh`, created when
+/// missing so a fresh install starts.
 fn dsh_home(request: &StartSession) -> Result<PathBuf> {
-    let home = match &request.profile.input.config_root {
-        Some(root) => root.clone(),
-        None => std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .map(|home| PathBuf::from(home).join(".dsh"))
-            .ok_or_else(|| Error::invalid("找不到用户主目录，请为 DSH 档案设置配置目录"))?,
-    };
-    if !home.is_dir() {
-        return Err(Error::new(ErrorKind::BackendUnavailable, format!("DSH 配置目录不存在：{}", home.display())));
-    }
+    let home = process::config_dir(request.config_root.as_deref(), ".dsh")?;
+    std::fs::create_dir_all(&home).context(format!("无法创建 DSH 配置目录 {}", home.display()))?;
     Ok(home)
 }
 

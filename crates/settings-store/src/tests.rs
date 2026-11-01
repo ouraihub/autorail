@@ -563,6 +563,7 @@ fn migration_creates_tables_and_reopens_durably() {
     assert_eq!(
         tables,
         [
+            "chat_bindings",
             "hidden_models",
             "mcp_overrides",
             "mcp_servers",
@@ -602,26 +603,6 @@ fn newer_schema_is_corrupt_and_left_untouched() {
     assert_eq!(error.kind(), Some(ErrorKind::Corrupt), "{error}");
     assert!(error.to_string().contains("更新版本"), "{error}");
     assert_eq!(snapshot(&data), before, "file bytes unchanged");
-}
-
-#[test]
-fn version_2_gains_inferred_model_types_and_keeps_its_data() {
-    let directory = TempDir::new().unwrap();
-    let store = open(&directory);
-    let mut relay = input("relay");
-    relay.models.push(model("gpt-image-2", &[Protocol::OpenaiChat]));
-    let provider = create(&store, relay).unwrap();
-    // Rebuild the v2 layout: no model_type column.
-    store.write(|conn| {
-        conn.execute("ALTER TABLE provider_models DROP COLUMN model_type", ())?;
-        conn.execute("UPDATE schema_meta SET version = 2", ())
-    }).unwrap();
-    drop(store);
-    let store = open(&directory);
-    let models = store.provider(&provider.id).unwrap().input.models;
-    let types: Vec<_> = models.iter().map(|m| (m.model_id.as_str(), m.model_type)).collect();
-    assert_eq!(types, [("gpt-test", ModelType::Chat), ("claude-test", ModelType::Chat), ("gpt-image-2", ModelType::Image)]);
-    assert_eq!(store.read(|conn| conn.int("SELECT version FROM schema_meta", ())).unwrap(), crate::schema::SCHEMA_VERSION);
 }
 
 #[test]

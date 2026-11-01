@@ -107,24 +107,28 @@ fn a_failed_turn_is_visible_in_the_transcript() {
     assert_eq!(snapshot.last_error.map(|e| e.code), Some("EXTERNAL".into()));
 }
 
-/// Expected values recorded from the adapter before routing existed; only the patch file name
-/// changed (`dsh-host.patch.yml` → `dsh-thinkrail.patch.yml`, 04 §6.4).
+/// Every launch patches in the workflow: the bundled skills directory and the rules as the persona
+/// suffix, keeping the `acp` persona prefix (a patch row replaces its whole config).
 #[test]
-fn empty_routing_keeps_the_pre_routing_launch() {
+fn every_launch_patches_in_the_workflow() {
     let f = Fixture::new();
-    let request = f.request(BackendKind::Dsh, None, false, EngineRouting::default());
-    let spec = launch_spec(&request).unwrap();
-    assert_eq!(spec.host_args, ["--profile", "acp"]);
-    assert!(spec.host_env.is_empty());
-    assert_eq!((spec.cwd, spec.config_var), (f.config(), "DSH_HOME"));
-    assert!(!f.support().exists(), "no host tools and no routing must not generate files");
-
-    let request = f.request(BackendKind::Dsh, None, true, EngineRouting::default());
-    let spec = launch_spec(&request).unwrap();
     let patch = f.support_arg("dsh-thinkrail.patch.yml");
-    assert_eq!(spec.host_args, ["--profile", "acp", "--patch", patch.as_str()]);
-    assert!(spec.host_env.is_empty(), "DSH gets the host pipe and token through ACP, not its environment");
-    assert_eq!(std::fs::read_to_string(&patch).unwrap(), "- id: tool-todo\n  disabled: true\n");
+    for host_tools in [false, true] {
+        let request = f.request(BackendKind::Dsh, None, host_tools, EngineRouting::default());
+        let spec = launch_spec(&request).unwrap();
+        assert_eq!(spec.host_args, ["--profile", "acp", "--patch", patch.as_str()]);
+        assert!(spec.host_env.is_empty(), "DSH gets the host pipe and token through ACP, not its environment");
+        assert_eq!((spec.cwd, spec.config_var), (f.config(), "DSH_HOME"));
+        let rows: Vec<serde_yaml_ng::Value> = serde_yaml_ng::from_str(&std::fs::read_to_string(&patch).unwrap()).unwrap();
+        let row = |id: &str| rows.iter().find(|r| r["id"].as_str() == Some(id)).cloned();
+        let skills = row("skill-filesystem").unwrap();
+        assert_eq!(skills["config"]["customSkillDirs"][0].as_str(), Some(f.support_arg("skills").as_str()));
+        let prompt = row("system-prompt").unwrap();
+        assert_eq!(prompt["config"]["personaPrefix"].as_str(), Some("You are a coding agent powered by the {{model}} model."));
+        assert!(prompt["config"]["personaSuffix"].as_str().unwrap().contains("read the choosing-a-workflow skill"));
+        assert_eq!(row("tool-todo").is_some(), host_tools, "the built-in TODO tool yields to the host's only with host tools");
+    }
+    assert!(f.support().join("skills").join("importing-a-codebase").join("SKILL.md").is_file());
 }
 
 #[test]
@@ -147,7 +151,7 @@ fn routing_writes_the_provider_patch() {
     let patch = f.support_arg("dsh-thinkrail.patch.yml");
     assert_eq!(spec.host_args, ["--profile", "acp", "--patch", patch.as_str()]);
     assert_eq!(spec.host_env, routing_vars(&routing));
-    assert_eq!(std::fs::read_to_string(&patch).unwrap(), projection_engine::dsh_patch(false, &routing).unwrap().unwrap());
+    assert_eq!(std::fs::read_to_string(&patch).unwrap(), projection_engine::dsh_patch(false, &routing, &f.support().join("skills")).unwrap());
     f.assert_no_secret_written();
 }
 
@@ -201,7 +205,7 @@ fn merging_dsh_routes_keeps_user_values_out_of_generated_files() {
         "        headers: { X-Private: sensitive-header-value }\n",
         "        displayName: !!js '\"Mine\"'\n",
     )).unwrap();
-    let patch = projection_engine::dsh_patch(false, &dsh_routing()).unwrap().unwrap();
+    let patch = projection_engine::dsh_patch(false, &dsh_routing(), std::path::Path::new("skills")).unwrap();
     let mut env = Vec::new();
     let output = preserve_user_routes(dir.path(), patch, &mut env).unwrap();
     assert!(!output.contains("sensitive-header-value"));

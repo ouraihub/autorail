@@ -4,6 +4,7 @@
 //! consumes them through trait objects.
 
 mod agent;
+mod engine_setup;
 mod error;
 mod host_tools;
 mod ids;
@@ -19,6 +20,7 @@ mod terminal;
 mod workspace;
 
 pub use agent::*;
+pub use engine_setup::*;
 pub use error::{Error, ErrorCode, ErrorKind, IoContext, Result};
 pub use host_tools::*;
 pub use ids::*;

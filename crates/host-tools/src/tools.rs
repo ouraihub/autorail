@@ -1,13 +1,14 @@
-//! The TODO / review tools (04 §6.1). Names, schemas and model-facing wording are the original
-//! ThinkRail tools' (`specs/todo-tools.json` is exported from `packages/pi-todos`); semantics come
-//! from `plan_ops`. A tool-level failure is a result with `is_error`, never an `Err`.
+//! The TODO / review tools (04 §6.1) plus the `spec_*` tools (`crate::spec`). Names, schemas and
+//! model-facing wording are the original ThinkRail tools' (`specs/todo-tools.json` is exported from
+//! `packages/pi-todos`); semantics come from `plan_ops`. A tool-level failure is a result with
+//! `is_error`, never an `Err`.
 
 use std::sync::{Arc, LazyLock};
 
 use serde_json::{Value, json};
 use thinkrail_core::{
     Error, ErrorKind, HostToolHandler, HostToolResult, HostToolSpec, Plan, PlanItem, PlanItemId, PlanReviewService,
-    PlanScope, PlanStatus, ReviewId, ReviewState, Result,
+    PlanScope, PlanStatus, ReviewId, ReviewState, Result, WorkspaceRoots,
 };
 use thinkrail_plan_review::plan_ops::{self, GroupStatus, ItemPatch, NewItem, WriteGroup, WriteItem};
 
@@ -19,13 +20,13 @@ const RESOLVE_COMMENT: &str = "resolve_comment";
 const RESOLVE_DESCRIPTION: &str = "Mark a review comment as resolved, after you have actually addressed it (by editing the file, or by answering when no change is needed). Only valid for comment ids you received in a review package in this conversation. If a comment is unclear or you disagree with it, reply in the conversation instead — do NOT resolve it.";
 
 static SPECS: LazyLock<Vec<HostToolSpec>> = LazyLock::new(|| {
-    let mut specs: Vec<HostToolSpec> = match serde_json::from_str(TODO_SPECS) {
-        Ok(specs) => specs,
-        Err(error) => {
-            tracing::error!(%error, "bundled TODO tool specs are invalid");
-            Vec::new()
+    let mut specs: Vec<HostToolSpec> = Vec::new();
+    for (what, json) in [("TODO", TODO_SPECS), ("spec", crate::spec::SPEC_SPECS)] {
+        match serde_json::from_str::<Vec<HostToolSpec>>(json) {
+            Ok(parsed) => specs.extend(parsed),
+            Err(error) => tracing::error!(%error, "bundled {what} tool specs are invalid"),
         }
-    };
+    }
     specs.push(HostToolSpec {
         name: RESOLVE_COMMENT.into(),
         description: RESOLVE_DESCRIPTION.into(),
@@ -41,10 +42,12 @@ static SPECS: LazyLock<Vec<HostToolSpec>> = LazyLock::new(|| {
     specs
 });
 
-/// Dispatches host tool calls for one `(workspace, chat)` scope onto the plan/review store.
+/// Dispatches host tool calls for one `(workspace, chat)` scope onto the plan/review store and,
+/// for `spec_*`, the scope's worktree.
 #[derive(Clone)]
 pub struct HostTools {
     plans: Arc<dyn PlanReviewService>,
+    roots: Arc<dyn WorkspaceRoots>,
 }
 
 impl std::fmt::Debug for HostTools {
@@ -73,8 +76,8 @@ fn classify(error: Error) -> Result<Refusal> {
 }
 
 impl HostTools {
-    pub fn new(plans: Arc<dyn PlanReviewService>) -> Self {
-        Self { plans }
+    pub fn new(plans: Arc<dyn PlanReviewService>, roots: Arc<dyn WorkspaceRoots>) -> Self {
+        Self { plans, roots }
     }
 
     /// Runs one plan mutation; domain failures surface as refusals.
@@ -316,6 +319,15 @@ impl HostToolHandler for HostTools {
         let args = if arguments.is_null() { json!({}) } else { arguments };
         if !args.is_object() {
             return Ok(HostToolResult { text: "Tool arguments must be a JSON object.".into(), is_error: true, structured: None });
+        }
+        if crate::spec::is_spec_tool(name) {
+            return match self.roots.workspace_root(&scope.workspace) {
+                Ok(root) => Ok(crate::spec::call(&root, name, &args)),
+                Err(error) => {
+                    let Refusal(text) = classify(error)?;
+                    Ok(HostToolResult { text, is_error: true, structured: None })
+                }
+            };
         }
         let outcome = match name {
             "todo_list" => self.list(scope, &args)?,

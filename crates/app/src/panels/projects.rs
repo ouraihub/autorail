@@ -1,14 +1,12 @@
 //! Projects panel: open/close projects, list workspaces, create and remove managed worktrees.
 
-use std::path::PathBuf;
+use gpui_kit::component::{button::{Button, ButtonVariants as _}, menu::{DropdownMenu as _, PopupMenuItem}, Sizable as _};
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
     StatefulInteractiveElement as _, Subscription, Window,
     assets::IconName,
     base::v_flex,
-    component::input::{Input, InputEvent, InputState},
-    div,
     prelude::FluentBuilder as _,
     px,
 };
@@ -26,35 +24,14 @@ use crate::{
 
 pub struct ProjectsPanel {
     state: Entity<AppState>,
-    path: Entity<InputState>,
-    opening: bool,
     collapsed: Vec<ProjectId>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ProjectsPanel {
-    pub fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let path = cx.new(|cx| InputState::new(window, cx).placeholder(s::PATH_PLACEHOLDER));
-        let subscriptions = vec![
-            cx.subscribe(&state, |_, _, _: &AppEvent, cx| cx.notify()),
-            cx.subscribe_in(&path, window, |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    this.submit(window, cx);
-                }
-            }),
-        ];
-        Self { state, path, opening: false, collapsed: Vec::new(), _subscriptions: subscriptions }
-    }
-
-    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.path.read(cx).value().trim().to_owned();
-        if value.is_empty() {
-            return;
-        }
-        self.state.update(cx, |state, cx| state.open_project(PathBuf::from(value), cx));
-        self.path.update(cx, |input, cx| input.set_value("", window, cx));
-        self.opening = false;
-        cx.notify();
+    pub fn new(state: Entity<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let subscriptions = vec![cx.subscribe(&state, |_, _, _: &AppEvent, cx| cx.notify())];
+        Self { state, collapsed: Vec::new(), _subscriptions: subscriptions }
     }
 
     fn toggle(&mut self, project: &ProjectId, cx: &mut Context<Self>) {
@@ -71,12 +48,13 @@ impl ProjectsPanel {
 impl Render for ProjectsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
-        let header = PanelHeader::new(s::TITLE).action(IconButton::new("project-open", IconName::Plus).tooltip(s::OPEN).on_click(
-            cx.listener(|this, _, _, cx| {
-                this.opening = !this.opening;
-                cx.notify();
-            }),
-        ));
+        let (create, open) = (self.state.clone(), self.state.clone());
+        let add = Button::new("project-open").ghost().xsmall().icon(IconName::Plus).tooltip(s::OPEN).dropdown_menu(move |menu, _, _| {
+            let (create, open) = (create.clone(), open.clone());
+            menu.item(PopupMenuItem::new(s::CREATE_TITLE).icon(IconName::Sparkles).on_click(move |_, window, cx| super::open_project::create(create.clone(), window, cx)))
+                .item(PopupMenuItem::new(s::OPEN).icon(IconName::FolderOpen).on_click(move |_, window, cx| super::open_project::open(open.clone(), window, cx)))
+        });
+        let header = PanelHeader::new(s::TITLE).action(add);
         let state = self.state.read(cx);
         let selected = state.workspace.clone();
         let mut rows = Vec::new();
@@ -141,9 +119,6 @@ impl Render for ProjectsPanel {
             .border_r_1()
             .border_color(r.border_muted)
             .child(header)
-            .when(self.opening, |panel| {
-                panel.child(div().p(size::PANEL_PADDING).child(Input::new(&self.path)))
-            })
             .child(
                 v_flex()
                     .id("projects-tree")

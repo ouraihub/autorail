@@ -62,8 +62,6 @@ mod tests {
         SessionSnapshot {
             id: "c".into(),
             backend: BackendKind::Pi,
-            profile_id: "p".into(),
-            config_revision: 1,
             native_session_key: None,
             cwd: "C:/w".into(),
             phase: SessionPhase::Idle,

@@ -199,12 +199,25 @@ pub struct ModelPrefs {
     pub default_model: Option<ModelRef>,
     pub default_effort: Option<ThinkingLevel>,
     pub hidden: Vec<ModelRef>,
+    /// 编码搭档 choice per engine; an engine missing here has no choice.
+    pub engine_providers: Vec<(crate::BackendKind, crate::EngineProvider)>,
+    /// 编码搭档 设为默认: the engine new chats run (agent-settings 07).
+    pub default_agent: Option<crate::BackendKind>,
+}
+
+impl ModelPrefs {
+    pub fn engine_provider(&self, backend: crate::BackendKind) -> Option<&crate::EngineProvider> {
+        self.engine_providers.iter().find(|(b, _)| *b == backend).map(|(_, p)| p)
+    }
 }
 
 pub trait ModelPrefService: Send + Sync {
     fn prefs(&self) -> Result<ModelPrefs>;
     fn set_default(&self, model: Option<ModelRef>, effort: Option<ThinkingLevel>) -> Result<ModelPrefs>;
     fn set_hidden(&self, model: &ModelRef, hidden: bool) -> Result<ModelPrefs>;
+    /// 编码搭档: which provider row `backend` uses.
+    fn set_engine_provider(&self, backend: crate::BackendKind, choice: crate::EngineProvider) -> Result<ModelPrefs>;
+    fn set_default_agent(&self, backend: Option<crate::BackendKind>) -> Result<ModelPrefs>;
 }
 
 #[cfg(test)]

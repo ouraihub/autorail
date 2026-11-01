@@ -20,10 +20,9 @@ use crate::{
     projection_engine,
     rpc::{self, Dialogs, Stream},
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
+    workflow,
 };
 
-const RESERVED: [&str; 10] =
-    ["--mode", "--session", "--session-id", "--no-session", "--continue", "-c", "--resume", "-r", "--fork", "--print"];
 const CAPABILITIES: Capabilities =
     Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: false, model_switch: true };
 
@@ -48,7 +47,6 @@ impl AgentRuntime for PiRuntime {
 
     fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Pi)?;
-        session::reject_args(&request.profile, &RESERVED)?;
         let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
@@ -64,15 +62,17 @@ impl AgentRuntime for PiRuntime {
     }
 }
 
-/// Host arguments and environment of one pi launch: the generated extension (host tools,
-/// providers, MCP servers) and, for a new session, the default model.
+/// Host arguments and environment of one pi launch: the generated extension (workflow rules,
+/// host tools, providers, MCP servers), the bundled skills (`--skill`) and, for a new session,
+/// the default model.
 fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     let mut host_args = vec!["--mode".to_owned(), "rpc".to_owned()];
     let mut host_env = Vec::new();
-    if let Some(extension) = projection_engine::pi_extension(request.host_tools.is_some(), &request.routing) {
-        let path = host::write_support(&request.support_dir, projection_engine::PI_EXTENSION_FILE, &extension)?;
-        host_args.extend(["-e".to_owned(), path.display().to_string()]);
-    }
+    let extension = projection_engine::pi_extension(request.host_tools.is_some(), &request.routing);
+    let path = host::write_support(&request.support_dir, projection_engine::PI_EXTENSION_FILE, &extension)?;
+    host_args.extend(["-e".to_owned(), path.display().to_string()]);
+    let skills = workflow::stage_skills(&request.support_dir)?;
+    host_args.extend(["--skill".to_owned(), skills.display().to_string()]);
     if let Some(access) = &request.host_tools {
         host_env = host::env(access);
     }
@@ -82,7 +82,8 @@ fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     }
     host_env.extend(process::routing_env(&request.routing));
     Ok(LaunchSpec {
-        profile: &request.profile,
+        launch: &request.launch,
+        config_root: request.config_root.as_deref(),
         host_args,
         cwd: request.cwd.clone(),
         config_var: "PI_CODING_AGENT_DIR",

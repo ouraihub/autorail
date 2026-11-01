@@ -54,6 +54,8 @@ pub struct AppState {
     pub workspaces: Vec<Workspace>,
     pub workspace: Option<WorkspaceId>,
     pub notice: Option<Notice>,
+    /// 新建项目 with "让 Agent 起草规格": this project's first chat starts the setup skill.
+    pub setup_project: Option<ProjectId>,
 }
 
 impl EventEmitter<AppEvent> for AppState {}
@@ -73,6 +75,7 @@ impl AppState {
             workspaces: Vec::new(),
             workspace: None,
             notice: None,
+            setup_project: None,
         };
         state.reload(cx);
         state
@@ -157,13 +160,16 @@ impl AppState {
     pub fn open_project(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         let workspace = self.services.workspace.clone();
         run(cx, move || workspace.open_project(&path), |this, result, cx| match result {
-            Ok(project) => {
-                this.project = Some(project.id);
-                this.workspace = None;
-                this.reload(cx);
-            }
+            Ok(project) => this.opened(project, cx),
             Err(error) => this.report(&error, cx),
         });
+    }
+
+    /// Selects a freshly opened (or initialized) project and reloads the tree.
+    pub fn opened(&mut self, project: Project, cx: &mut Context<Self>) {
+        self.project = Some(project.id);
+        self.workspace = None;
+        self.reload(cx);
     }
 
     pub fn close_project(&mut self, id: ProjectId, cx: &mut Context<Self>) {

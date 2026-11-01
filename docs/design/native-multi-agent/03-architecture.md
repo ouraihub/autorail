@@ -50,7 +50,7 @@ flowchart TB
 |---|---|---|
 | 项目、worktree 注册表 | `WorkspaceService`（`<data>/workbench.json`） | 视图投影，按代际丢弃过期响应 |
 | Git、文件内容 | 磁盘与 Git 本身 | 只读投影；文件变化后标记过期 |
-| Agent 档案、聊天绑定 | `ProfileService`（`<data>/agent-profiles.json`） | 非敏感摘要 |
+| 默认 Agent、聊天绑定 | `ModelPrefService` / `ChatBindingService`（`thinkrail.db`）。Agent 档案已取消，见 [agent-settings 07](../agent-settings/07-default-agent.md) | 非敏感摘要 |
 | 引擎 transcript、模型、压缩、原生子任务 | 对应引擎的原生存储 | `SessionSnapshot` 投影，按 revision 单调更新 |
 | 计划项、审查评论 | `PlanReviewService`（`<data>/review-plan.json`） | 视图投影 |
 | 待回答的交互 | 引擎持有 continuation；`AgentSession` 持有可路由的请求 | 界面展示；关闭界面视为取消 |
@@ -63,8 +63,8 @@ flowchart TB
 
 ## 4. 进程与作用域
 
-- **每个聊天一个引擎子进程**，以 `(profileId, configRevision)` 启动。档案的配置目录和环境变量只注入这个子进程；继承来的环境会先剔除凭据类变量（`*_API_KEY`、`*_TOKEN` 等）和引擎配置变量。
-- **会话恢复**：引擎进程退出后聊天进入 `Closed`。下一条 prompt 用绑定中的 `NativeSessionKey` 恢复，并使用创建时的同一档案版本。修改档案只影响新聊天。
+- **每个聊天一个引擎子进程**，按绑定的后端和编码搭档检测到的安装启动（agent-settings 07 §5.3），使用引擎自己的默认配置目录；继承来的环境会先剔除凭据类变量（`*_API_KEY`、`*_TOKEN` 等）和引擎配置变量。
+- **会话恢复**：引擎进程退出后聊天进入 `Closed`。下一条 prompt 用绑定中的 `NativeSessionKey` 和同一后端恢复；改默认 Agent 只影响新聊天。引擎找不到时聊天只读，并引导去编码搭档。
 - **MCP 子进程**：引擎按需拉起 `thinkrail-native.exe mcp-host`，它带着进程令牌连接主进程的命名管道。主进程维护“令牌 → 聊天”映射，因此引擎切换会话不会让工具调用错发到别的聊天。
 - **退出**：先停止接收新请求，再取消待答交互，然后让引擎正常退出（关闭 stdin，DSH 用 `session/close`），超过时限才结束整个进程树，最后释放 PTY。
 

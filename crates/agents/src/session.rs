@@ -16,9 +16,7 @@ use std::{
 
 use parking_lot::Mutex;
 use serde_json::Value;
-use thinkrail_core::{
-    BackendKind, Error, ErrorCode, ErrorKind, Launch, Profile, Result, SessionError, StartSession,
-};
+use thinkrail_core::{BackendKind, Error, ErrorCode, ErrorKind, Result, SessionError, StartSession};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -290,14 +288,10 @@ pub(crate) fn spawn_reader(
         .map_err(|error| Error::new(ErrorKind::BackendUnavailable, format!("无法创建读取线程：{error}")))
 }
 
-/// Checks that the profile may launch `backend` in `request.cwd`.
+/// Checks that `request` is for `backend` and runs in an existing `request.cwd`.
 pub(crate) fn validate(request: &StartSession, backend: BackendKind) -> Result<()> {
-    let input = &request.profile.input;
-    if input.backend_id != backend {
-        return Err(Error::invalid(format!("档案的后端是 {}，不是 {}", input.backend_id.label(), backend.label())));
-    }
-    if !input.enabled {
-        return Err(Error::new(ErrorKind::ProfileDisabled, &input.label));
+    if request.backend != backend {
+        return Err(Error::invalid(format!("会话的后端是 {}，不是 {}", request.backend.label(), backend.label())));
     }
     if !request.cwd.is_absolute() || !request.cwd.is_dir() {
         return Err(Error::invalid(format!("工作目录不存在：{}", request.cwd.display())));
@@ -305,25 +299,10 @@ pub(crate) fn validate(request: &StartSession, backend: BackendKind) -> Result<(
     Ok(())
 }
 
-/// Rejects profile arguments the host must own (`--mode`, `--session`, ...), in `--flag` and
-/// `--flag=value` forms.
-pub(crate) fn reject_args(profile: &Profile, reserved: &[&str]) -> Result<()> {
-    let Launch::External { args, .. } = &profile.input.launch;
-    for arg in args {
-        let flag = arg.split_once('=').map_or(arg.as_str(), |(flag, _)| flag);
-        if reserved.contains(&flag) {
-            return Err(Error::invalid(format!("启动参数里不能包含 {flag}，这个参数由应用设置")));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn identity(request: &StartSession, capabilities: thinkrail_core::Capabilities) -> Identity {
     Identity {
         chat: request.chat.clone(),
-        backend: request.profile.input.backend_id,
-        profile_id: request.profile.id.clone(),
-        config_revision: request.profile.config_revision,
+        backend: request.backend,
         cwd: process::plain_path(&request.cwd),
         capabilities,
     }

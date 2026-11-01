@@ -24,23 +24,21 @@ fn host_vars(f: &Fixture) -> Vec<(String, OsString)> {
     ]
 }
 
-/// Expected values recorded from the adapter before routing existed; only the extension file
-/// name changed (`pi-host-tools.js` → `pi-thinkrail.js`, 04 §6.2).
+/// Every launch loads the workflow (rules in the extension, bundled skills via `--skill`); host
+/// tools add only the MCP server and its variables.
 #[test]
-fn empty_routing_keeps_the_pre_routing_launch() {
+fn every_launch_loads_the_workflow_extension_and_skills() {
     let f = Fixture::new();
-    assert_eq!(launch(&f, None, false, EngineRouting::default()), (vec!["--mode".to_owned(), "rpc".to_owned()], Vec::new()));
+    let (extension, skills) = (f.support_arg("pi-thinkrail.js"), f.support_arg("skills"));
     let (args, env) = launch(&f, Some("s.jsonl"), false, EngineRouting::default());
-    assert_eq!(args, ["--mode", "rpc", "--session", "s.jsonl"]);
+    assert_eq!(args, ["--mode", "rpc", "-e", extension.as_str(), "--skill", skills.as_str(), "--session", "s.jsonl"]);
     assert!(env.is_empty());
-    assert!(!f.support().exists(), "no host tools and no routing must not generate files");
+    let text = fs::read_to_string(&extension).unwrap();
+    assert!(text.contains(r#"sections["pi-thinkrail-workflow"]"#) && !text.contains("registerMcpServer"));
+    assert!(f.support().join("skills").join("setting-up-a-project").join("SKILL.md").is_file());
 
-    let extension = f.support_arg("pi-thinkrail.js");
-    let (args, env) = launch(&f, Some("s.jsonl"), true, EngineRouting::default());
-    assert_eq!(args, ["--mode", "rpc", "-e", extension.as_str(), "--session", "s.jsonl"]);
+    let (_, env) = launch(&f, Some("s.jsonl"), true, EngineRouting::default());
     assert_eq!(env, host_vars(&f));
-    let files: Vec<_> = fs::read_dir(f.support()).unwrap().map(|e| e.unwrap().file_name()).collect();
-    assert_eq!(files, ["pi-thinkrail.js"]);
     assert!(fs::read_to_string(&extension).unwrap().contains(r#"pi.registerMcpServer("thinkrail", {"#));
 }
 
@@ -49,7 +47,7 @@ fn routing_env_follows_the_host_variables_and_never_reaches_files() {
     let f = Fixture::new();
     let routing = secret_routing();
     let (args, env) = launch(&f, None, true, routing.clone());
-    assert_eq!(args, ["--mode", "rpc", "-e", f.support_arg("pi-thinkrail.js").as_str()]);
+    assert_eq!(args[..3], ["--mode", "rpc", "-e"]);
     let mut expected = host_vars(&f);
     expected.extend(routing_vars(&routing));
     assert_eq!(env, expected);
@@ -61,17 +59,17 @@ fn routing_env_follows_the_host_variables_and_never_reaches_files() {
 fn routing_adds_the_extension_and_the_default_model_for_new_sessions_only() {
     let f = Fixture::new();
     let routing = sample_routing();
-    let extension = f.support_arg("pi-thinkrail.js");
+    let (extension, skills) = (f.support_arg("pi-thinkrail.js"), f.support_arg("skills"));
     let (args, env) = launch(&f, None, false, routing.clone());
     assert_eq!(
         args,
-        ["--mode", "rpc", "-e", extension.as_str(), "--model", "thinkrail-1a2b3c4d-am/claude-x", "--thinking", "high"]
+        ["--mode", "rpc", "-e", extension.as_str(), "--skill", skills.as_str(), "--model", "thinkrail-1a2b3c4d-am/claude-x", "--thinking", "high"]
     );
     assert_eq!(env, routing_vars(&routing));
-    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::pi_extension(false, &routing).unwrap());
+    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::pi_extension(false, &routing));
 
     let (args, _) = launch(&f, Some("s.jsonl"), true, routing.clone());
-    assert_eq!(args, ["--mode", "rpc", "-e", extension.as_str(), "--session", "s.jsonl"]);
-    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::pi_extension(true, &routing).unwrap());
+    assert_eq!(args, ["--mode", "rpc", "-e", extension.as_str(), "--skill", skills.as_str(), "--session", "s.jsonl"]);
+    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::pi_extension(true, &routing));
     f.assert_no_secret_written();
 }

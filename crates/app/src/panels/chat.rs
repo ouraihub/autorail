@@ -1,6 +1,6 @@
 //! Chat column (04 §8, §9.2): one tab per chat of the current workspace, the live transcript,
-//! interaction cards (never auto-answered) and the composer. A chat is pinned to the profile
-//! revision it was created with; a closed engine is resumed from its native locator on send.
+//! interaction cards (never auto-answered) and the composer. A chat is pinned to the backend it
+//! was created with; a closed engine is resumed from its native locator on send.
 
 mod plan;
 mod projection;
@@ -29,8 +29,8 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentSession, BackendKind, ChatBinding, ChatId, Error, ErrorKind, Interaction, InteractionAnswer, InteractionKind,
-    ModelChoice, Plan, PlanScope, Profile, ProjectId, Result, RouteRequest, SessionEvent, SessionPhase, SessionSink, SessionSnapshot,
+    AgentSession, BackendKind, ChatBinding, ChatId, Error, Interaction, InteractionAnswer, InteractionKind,
+    ModelChoice, Plan, PlanScope, ProjectId, Readiness, Result, RouteRequest, SessionEvent, SessionPhase, SessionSink, SessionSnapshot,
     StartSession, ThinkingLevel, WorkspaceId,
 };
 use thinkrail_ui::{
@@ -40,16 +40,19 @@ use thinkrail_ui::{
 };
 use tracing::{debug, info};
 
+use super::agent_guide;
 use crate::{
     services::Services,
     state::{AppEvent, AppState, run},
     strings::chat as s,
 };
 
+/// The bundled skill that turns a new project into a spec graph (original `SETUP_PROMPT`).
+const SETUP_SKILL: &str = "setting-up-a-project";
+
 struct Chat {
     workspace: WorkspaceId,
     binding: Option<ChatBinding>,
-    profile: Option<Profile>,
     session: Option<Arc<dyn AgentSession>>,
     snapshot: Option<SessionSnapshot>,
     routing_signature: Option<String>,
@@ -57,8 +60,8 @@ struct Chat {
     restart_pending: bool,
     closing: bool,
     starting: bool,
-    /// Why this chat cannot send (profile revision missing or disabled).
-    blocked: bool,
+    /// Set when this chat's engine is not installed (07 §5.3): history stays, sending is off.
+    blocked: Option<Readiness>,
     ordinal: usize,
     /// The host-owned TODO plan; `None` until first read.
     plan: Option<Plan>,
@@ -105,7 +108,6 @@ fn routing_action(old_signature: Option<&str>, new_signature: Option<&str>, phas
 
 /// What a background start/resume produced.
 struct Started {
-    profile: Profile,
     session: Arc<dyn AgentSession>,
     binding: ChatBinding,
     routing_signature: String,
@@ -126,7 +128,8 @@ pub struct ChatPanel {
     answers: HashMap<String, Entity<InputState>>,
     picks: HashMap<String, Vec<String>>,
     scroll: ScrollHandle,
-    hint: Option<&'static str>,
+    /// Readiness guidance shown in place of the empty state when a new chat could not start.
+    guide: Option<Readiness>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -136,9 +139,10 @@ impl ChatPanel {
             TextareaState::new(window, cx).rows(3).submit_on_enter(true).placeholder(s::PLACEHOLDER)
         });
         let subscriptions = vec![
-            cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
+            cx.subscribe_in(&state, window, |this, _, event: &AppEvent, window, cx| {
                 if *event == AppEvent::Workspace || *event == AppEvent::Projects {
                     this.sync_workspace(cx);
+                    this.start_setup(window, cx);
                 } else if *event == AppEvent::Routing {
                     this.on_routing_changed(cx);
                 }
@@ -161,7 +165,7 @@ impl ChatPanel {
             answers: HashMap::new(),
             picks: HashMap::new(),
             scroll: ScrollHandle::new(),
-            hint: None,
+            guide: None,
             _subscriptions: subscriptions,
         };
         panel.sync_workspace(cx);
@@ -186,12 +190,12 @@ impl ChatPanel {
         self.order = self.chats.iter().filter(|(_, c)| Some(&c.workspace) == workspace.as_ref()).map(|(id, _)| id.clone()).collect();
         self.order.sort_by_key(|id| self.chats.get(id).map_or(0, |c| c.ordinal));
         self.active = self.order.first().cloned();
-        self.hint = None;
+        self.guide = None;
         cx.notify();
         let Some(workspace) = workspace else { return };
-        let profiles = self.services(cx).profiles;
+        let bindings = self.services(cx).bindings;
         let ws = workspace.clone();
-        run(cx, move || profiles.bindings(&ws), move |this, result, cx| {
+        run(cx, move || bindings.bindings(&ws), move |this, result, cx| {
             if this.workspace.as_ref() != Some(&workspace) {
                 return;
             }
@@ -206,7 +210,6 @@ impl ChatPanel {
                         this.chats.insert(id.clone(), Chat {
                             workspace: workspace.clone(),
                             binding: Some(binding),
-                            profile: None,
                             session: None,
                             snapshot: None,
                             routing_signature: None,
@@ -214,7 +217,7 @@ impl ChatPanel {
                             restart_pending: false,
                             closing: false,
                             starting: false,
-                            blocked: false,
+                            blocked: None,
                             ordinal,
                             plan: None,
                         });
@@ -242,7 +245,6 @@ impl ChatPanel {
         self.chats.insert(id.clone(), Chat {
             workspace,
             binding: None,
-            profile: None,
             session: None,
             snapshot: None,
             routing_signature: None,
@@ -250,13 +252,41 @@ impl ChatPanel {
             restart_pending: false,
             closing: false,
             starting: false,
-            blocked: false,
+            blocked: None,
             ordinal,
             plan: None,
         });
         self.order.push(id.clone());
         self.active = Some(id.clone());
         self.start(id, None, cx);
+    }
+
+    /// 新建项目 + 让 Agent 起草规格: once that project's workspace is shown, a new chat opens with
+    /// the setting-up-a-project skill command in the composer for the user to finish (original
+    /// `startProjectSetupChat`; the engine expands the command). Spelled for the default Agent,
+    /// which the new chat binds to.
+    fn start_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.read(cx);
+        let ready = state.current_workspace().is_some_and(|w| state.setup_project.as_ref() == Some(&w.project_id));
+        if !ready || self.workspace != state.workspace {
+            return;
+        }
+        self.state.update(cx, |state, _| state.setup_project = None);
+        self.new_chat(cx);
+        let prefs = self.services(cx).prefs;
+        let handle = window.window_handle();
+        run(cx, move || prefs.prefs(), move |this, result, cx| {
+            let Some(backend) = result.ok().and_then(|prefs| prefs.default_agent) else { return };
+            let draft = thinkrail_agents::skill_command(backend, SETUP_SKILL);
+            let composer = this.composer.clone();
+            let _ = handle.update(cx, |_, window, cx| composer.update(cx, |input, cx| {
+                let end = draft.len();
+                input.set_value(draft, window, cx);
+                // The user types the project idea after the command.
+                input.set_selected_range(end..end, cx);
+                input.focus(window, cx);
+            }));
+        });
     }
 
     /// Starts (new chat) or resumes (bound chat) the engine, then sends `prompt` if given.
@@ -287,19 +317,19 @@ impl ChatPanel {
             move || start_engine(input),
             move |this, result, cx| {
                 let Some(chat) = this.chats.get_mut(&id) else {
-                    if let Ok(started) = result {
+                    if let Ok(Ok(started)) = result {
                         dispose_engine(&this.services(cx), id.clone(), Some(started.session), true, cx);
                     }
                     return;
                 };
                 chat.starting = false;
                 match result {
-                    Ok(started) => {
-                        info!(chat = %id, backend = started.profile.input.backend_id.label(), "chat engine started");
+                    Ok(Ok(started)) => {
+                        info!(chat = %id, backend = started.binding.backend.label(), "chat engine started");
                         chat.snapshot = Some(started.session.snapshot());
                         chat.session = Some(started.session);
-                        chat.profile = Some(started.profile);
                         chat.binding = Some(started.binding);
+                        chat.blocked = None;
                         chat.routing_signature = Some(started.routing_signature);
                         chat.catalog = Vec::new();
                         chat.restart_pending = false;
@@ -308,18 +338,24 @@ impl ChatPanel {
                         this.refresh_catalog(&id, cx);
                         this.on_routing_changed(cx);
                     }
-                    Err(error) => {
-                        if matches!(error.kind(), Some(ErrorKind::NotFound | ErrorKind::ProfileDisabled)) && chat.binding.is_some() {
-                            chat.blocked = true;
-                        }
-                        if chat.binding.is_none() && chat.session.is_none() {
+                    Ok(Err(readiness)) => {
+                        if chat.binding.is_some() {
+                            chat.blocked = Some(readiness);
+                        } else {
                             this.chats.remove(&id);
                             this.order.retain(|c| c != &id);
                             if this.active.as_ref() == Some(&id) {
                                 this.active = this.order.last().cloned();
                             }
-                            if error.kind() == Some(ErrorKind::NotFound) {
-                                this.hint = Some(s::NO_PROFILE);
+                            this.guide = Some(readiness);
+                        }
+                    }
+                    Err(error) => {
+                        if chat.binding.is_none() && chat.session.is_none() {
+                            this.chats.remove(&id);
+                            this.order.retain(|c| c != &id);
+                            if this.active.as_ref() == Some(&id) {
+                                this.active = this.order.last().cloned();
                             }
                         }
                         this.report(&error, cx);
@@ -337,7 +373,7 @@ impl ChatPanel {
         }
         let Some(id) = self.active.clone() else { return };
         let Some(chat) = self.chats.get(&id) else { return };
-        if chat.blocked || chat.starting || chat.closing {
+        if chat.blocked.is_some() || chat.starting || chat.closing {
             return;
         }
         self.composer.update(cx, |input, cx| input.set_value("", window, cx));
@@ -448,12 +484,12 @@ impl ChatPanel {
             .chats
             .iter()
             .filter_map(|(id, chat)| {
-                let profile = chat.profile.as_ref()?;
+                let backend = chat.binding.as_ref()?.backend;
                 let project = project_ids.get(&chat.workspace)?.clone();
                 let session = chat.live()?.clone();
                 Some((
                     id.clone(),
-                    RouteRequest { chat: id.clone(), project, backend: profile.input.backend_id, new_session: false },
+                    RouteRequest { chat: id.clone(), project, backend, new_session: false },
                     chat.routing_signature.clone(),
                     session,
                 ))
@@ -500,9 +536,8 @@ impl ChatPanel {
 
     fn refresh_catalog(&mut self, id: &ChatId, cx: &mut Context<Self>) {
         let Some(chat) = self.chats.get(id) else { return };
-        let Some(profile) = chat.profile.as_ref() else { return };
+        let Some(backend) = chat.binding.as_ref().map(|b| b.backend) else { return };
         let router = self.services(cx).router;
-        let backend = profile.input.backend_id;
         let id = id.clone();
         run(cx, move || router.catalog(backend), move |this, result, cx| {
             match result {
@@ -544,9 +579,8 @@ impl ChatPanel {
     }
 
     fn header(&self, chat: &Chat, phase: SessionPhase, r: Roles, cx: &mut Context<Self>) -> AnyElement {
-        let backend = chat.profile.as_ref().map(|p| p.input.backend_id).or(chat.snapshot.as_ref().map(|s| s.backend));
+        let backend = chat.binding.as_ref().map(|b| b.backend).or(chat.snapshot.as_ref().map(|s| s.backend));
         let backend_label = backend.map(|b| match b { BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE), _ => b.label().to_owned() });
-        let profile = chat.profile.as_ref().map(|p| format!("{} · {} {}", p.input.label, s::REVISION, p.config_revision));
         let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
         let current_label = current.map_or_else(|| s::NO_MODEL.to_owned(), |m| m.provider.as_ref().map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id)));
         let current_choice = current.and_then(|model| chat.catalog.iter().find(|choice| choice.route == model.provider.as_deref().unwrap_or_default() && choice.model.id == model.id));
@@ -581,7 +615,6 @@ impl ChatPanel {
         let (status, phase_label) = match phase { SessionPhase::Idle => (Status::Success, s::PHASE_IDLE), SessionPhase::Running => (Status::Info, s::PHASE_RUNNING), SessionPhase::Waiting => (Status::Warning, s::PHASE_WAITING), SessionPhase::Closed => (Status::Idle, s::PHASE_CLOSED) };
         h_flex().h(size::PANEL_HEADER).flex_none().px(size::PANEL_PADDING).gap(space::S8).border_b_1().border_color(r.border_muted)
             .children(backend_label.map(|b| label(text::LABEL_PILL, b).text_color(r.primary)))
-            .children(profile.map(|p| label(text::METADATA, p).text_color(r.text_muted).truncate()))
             .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(model_menu))
             .child(effort_menu).child(StatusDot::new(status).label(phase_label)).into_any_element()
     }
@@ -606,20 +639,24 @@ struct StartInput {
     prompt: Option<String>,
 }
 
-fn start_engine(input: StartInput) -> Result<Started> {
-    let StartInput { services, chat, workspace, project, cwd, binding, sink, prompt } = input;
-    let profile = match &binding {
-        Some(b) => services.profiles.revision(&b.profile_id, b.config_revision)?,
-        None => {
-            let catalog = services.profiles.catalog()?;
-            let default = catalog.default_profile_id.as_ref().and_then(|id| catalog.profiles.iter().find(|p| &p.id == id));
-            default.cloned().ok_or_else(|| Error::not_found(s::NO_PROFILE))?
-        }
+/// `Ok(Err(readiness))` when no usable engine was found (07 §5.1): guidance, not an error.
+fn start_engine(input: StartInput) -> Result<std::result::Result<Started, Readiness>> {
+    // A bound chat keeps its backend; a new one takes the default Agent (07 §5.3).
+    let (backend, launch) = match &input.binding {
+        Some(b) => match input.services.launch(b.backend)? {
+            Some(launch) => (b.backend, launch),
+            None => return Ok(Err(Readiness::DefaultMissing(b.backend))),
+        },
+        None => match input.services.readiness()? {
+            (Readiness::Ready(backend), Some(launch)) => (backend, launch),
+            (readiness, _) => return Ok(Err(readiness)),
+        },
     };
-    if !profile.input.enabled {
-        return Err(Error::new(ErrorKind::ProfileDisabled, &profile.input.label));
-    }
-    let backend = profile.input.backend_id;
+    launch_engine(input, backend, launch).map(Ok)
+}
+
+fn launch_engine(input: StartInput, backend: BackendKind, launch: thinkrail_core::Launch) -> Result<Started> {
+    let StartInput { services, chat, workspace, project, cwd, binding, sink, prompt } = input;
     let route_request = RouteRequest { chat: chat.clone(), project, backend, new_session: binding.is_none() };
     let routing = match services.router.prepare(&route_request) {
         Ok(routing) => routing,
@@ -646,7 +683,9 @@ fn start_engine(input: StartInput) -> Result<Started> {
     let request = StartSession {
         chat: chat.clone(),
         workspace: workspace.clone(),
-        profile: profile.clone(),
+        backend,
+        launch,
+        config_root: None,
         cwd,
         resume: binding.as_ref().map(|b| b.native_session_key.clone()),
         host_tools,
@@ -676,11 +715,10 @@ fn start_engine(input: StartInput) -> Result<Started> {
             let binding = ChatBinding {
                 chat_id: chat.clone(),
                 workspace_id: workspace,
-                profile_id: profile.id.clone(),
-                config_revision: profile.config_revision,
+                backend,
                 native_session_key: key,
             };
-            if let Err(error) = services.profiles.bind(binding.clone()) {
+            if let Err(error) = services.bindings.bind(binding.clone()) {
                 let _ = session.dispose();
                 services.router.release(&chat);
                 let _ = services.remove_support_dir(&chat);
@@ -690,7 +728,7 @@ fn start_engine(input: StartInput) -> Result<Started> {
         }
     };
     let prompt_error = prompt.and_then(|text| session.prompt(&text).err());
-    Ok(Started { profile, session, binding, routing_signature, prompt_error })
+    Ok(Started { session, binding, routing_signature, prompt_error })
 }
 
 /// Disposes an engine, revokes routing and removes generated files. `unbind` only when closing.
@@ -701,7 +739,7 @@ fn dispose_engine(
     unbind: bool,
     cx: &mut Context<ChatPanel>,
 ) {
-    let profiles = services.profiles.clone();
+    let bindings = services.bindings.clone();
     let router = services.router.clone();
     let support = services.clone();
     let callback_chat = chat.clone();
@@ -712,7 +750,7 @@ fn dispose_engine(
         router.release(&chat);
         let cleanup = support.remove_support_dir(&chat);
         if unbind {
-            profiles.unbind(&chat)?;
+            bindings.unbind(&chat)?;
         }
         info!(chat = %chat, "chat engine disposed");
         cleanup
@@ -732,7 +770,10 @@ impl Render for ChatPanel {
         let strip = self.tab_strip(cx).into_any_element();
         let body: AnyElement = match (self.workspace.is_some(), self.active.clone()) {
             (false, _) => empty(s::NO_WORKSPACE, &r),
-            (true, None) => empty(self.hint.unwrap_or(s::NO_CHATS), &r),
+            (true, None) => match self.guide.and_then(|readiness| agent_guide::row("chat-guide", self.state.clone(), readiness, cx)) {
+                Some(guide) => div().size_full().p(space::S16).child(guide).into_any_element(),
+                None => empty(s::NO_CHATS, &r),
+            },
             (true, Some(id)) => self.chat_body(&id, r, window, cx),
         };
         v_flex()
@@ -781,6 +822,7 @@ impl ChatPanel {
         let header = self.header(chat, phase, r, cx).into_any_element();
         let snapshot = chat.snapshot.clone();
         let (starting, blocked, bound) = (chat.starting || chat.closing, chat.blocked, chat.binding.is_some());
+        let guide = blocked.and_then(|readiness| agent_guide::row("chat-blocked", self.state.clone(), readiness, cx));
         let entity = cx.entity().downgrade();
         let toggle: transcript::Toggle = Rc::new(move |key, _, cx| {
             if let Some(panel) = entity.upgrade() {
@@ -809,8 +851,8 @@ impl ChatPanel {
             .collect();
         let status_line = if starting {
             Some(s::STARTING)
-        } else if blocked {
-            Some(s::PROFILE_MISSING)
+        } else if blocked.is_some() {
+            None
         } else if phase == SessionPhase::Closed && bound {
             Some(s::CLOSED_HINT)
         } else {
@@ -833,9 +875,10 @@ impl ChatPanel {
                     .when(truncated, |d| d.child(label(text::METADATA, s::TRUNCATED).text_color(r.text_subtle)))
                     .children(messages)
                     .children(interactions)
-                    .when_some(status_line, |d, line| d.child(label(text::METADATA, line).text_color(r.text_subtle))),
+                    .when_some(status_line, |d, line| d.child(label(text::METADATA, line).text_color(r.text_subtle)))
+                    .children(guide),
             )
-            .child(self.composer_box(phase, starting || blocked, cx))
+            .child(self.composer_box(phase, starting || blocked.is_some(), cx))
             .into_any_element()
     }
 

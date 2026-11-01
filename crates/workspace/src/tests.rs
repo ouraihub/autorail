@@ -155,3 +155,39 @@ fn junction_cannot_escape_workspace() {
     assert!(service.read_dir(&workspace, "").unwrap().iter().all(|e| e.name != "escape"));
     fs::remove_dir(root.join("escape")).unwrap();
 }
+
+#[test]
+fn a_plain_folder_is_initialized_and_never_nested() {
+    let temp = TempDir::new().unwrap();
+    let folder = temp.path().join("新项目");
+    fs::create_dir_all(folder.join("src")).unwrap();
+    let service = GitWorkspaceService::open(&temp.path().join("data")).unwrap();
+    assert!(!service.is_repository(&folder));
+    kind(service.open_project(&folder), ErrorKind::Invalid);
+
+    let project = service.init_project(&folder).unwrap();
+    assert!(service.is_repository(&folder));
+    let workspaces = service.workspaces(&project.id).unwrap();
+    assert_eq!(workspaces[0].branch, "main");
+    assert!(git::ok(&folder, &["rev-parse", "--verify", "HEAD"]).is_ok(), "an initial commit exists, so worktrees work");
+
+    let again = service.init_project(&folder.join("src")).unwrap();
+    assert_eq!(again.id, project.id, "a subfolder opens the enclosing repository");
+    assert!(!folder.join("src").join(".git").exists(), "no nested repository");
+}
+
+#[test]
+fn create_project_makes_an_empty_committed_repo_and_refuses_a_full_folder() {
+    let temp = TempDir::new().unwrap();
+    let service = GitWorkspaceService::open(&temp.path().join("data")).unwrap();
+    let parent = temp.path().join("thinkrail");
+    let project = service.create_project(&parent, "天气 app").unwrap();
+    assert_eq!(project.name, "天气 app");
+    assert!(git::ok(&parent.join("天气 app"), &["rev-parse", "--verify", "HEAD"]).is_ok(), "HEAD exists");
+
+    fs::create_dir(parent.join("full")).unwrap();
+    fs::write(parent.join("full").join("keep.txt"), "mine").unwrap();
+    kind(service.create_project(&parent, "full"), ErrorKind::Conflict);
+    assert!(!parent.join("full").join(".git").exists(), "a refused folder is untouched");
+    kind(service.create_project(&parent, "../escape"), ErrorKind::Invalid);
+}

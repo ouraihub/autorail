@@ -123,7 +123,15 @@ pub trait WorkspaceRoots: Send + Sync {
 /// background executor, never the UI thread.
 pub trait WorkspaceService: WorkspaceRoots {
     fn projects(&self) -> Result<Vec<Project>>;
+    /// Whether `path` is inside a Git working tree. No side effects.
+    fn is_repository(&self, path: &std::path::Path) -> bool;
     fn open_project(&self, path: &std::path::Path) -> Result<Project>;
+    /// Unless `path` is already in a repository: `git init -b main` plus an initial commit of
+    /// what is there (empty if nothing), so worktrees work. Then opens it as a project.
+    fn init_project(&self, path: &std::path::Path) -> Result<Project>;
+    /// 新建项目: makes `parent/name` (which must be missing or empty), initializes it like
+    /// [`Self::init_project`] and opens it. A failure removes what was created.
+    fn create_project(&self, parent: &std::path::Path, name: &str) -> Result<Project>;
     fn rename_project(&self, id: &ProjectId, name: &str) -> Result<Project>;
     fn close_project(&self, id: &ProjectId) -> Result<()>;
 

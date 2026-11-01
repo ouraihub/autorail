@@ -183,20 +183,28 @@ fn pi_mcp(server: &ProjectedMcpServer) -> String {
     format!("\tpi.registerMcpServer({}, {{ {} }});\n", quote(&server.name), config.join(", "))
 }
 
-/// `pi-thinkrail.js` (04 §6.2): host tools (when on), then providers, then MCP servers. `None`
-/// when there is nothing to load, so no file and no `-e`.
-pub(crate) fn pi_extension(host_tools: bool, routing: &EngineRouting) -> Option<String> {
-    if !host_tools && routing.providers.is_empty() && routing.mcp.is_empty() {
-        return None;
-    }
+/// The original extensions' `before_agent_start` hook: the workflow and spec rules as named
+/// system-prompt sections (pi `systemPromptOptions.sections`).
+fn pi_rules() -> String {
+    let sections: Vec<String> = crate::workflow::RULES
+        .iter()
+        .map(|(name, rule)| format!("\t\tevent.systemPromptOptions.sections[{}] = {};\n", quote(name), quote(rule)))
+        .collect();
+    format!("\tpi.on(\"before_agent_start\", (event) => {{\n{}\t}});\n", sections.concat())
+}
+
+/// `pi-thinkrail.js` (04 §6.2): the workflow rules, host tools (when on), then providers, then
+/// MCP servers.
+pub(crate) fn pi_extension(host_tools: bool, routing: &EngineRouting) -> String {
     let mut body = String::from("export default function (pi) {\n");
+    body.push_str(&pi_rules());
     if host_tools {
         body.push_str(PI_HOST_TOOLS);
     }
     body.extend(routing.providers.iter().map(pi_provider));
     body.extend(routing.mcp.iter().map(pi_mcp));
     body.push_str("}\n");
-    Some(body)
+    body
 }
 
 /// pi arguments for the default model (new sessions only; a resumed session keeps its own).
@@ -210,7 +218,7 @@ pub(crate) fn pi_model_args(routing: &EngineRouting) -> Vec<String> {
 }
 
 /// The extension API surface `omp-thinkrail.ts` uses; the rest of OMP's API stays untyped.
-const OMP_EXTENSION_HEAD: &str = "interface ExtensionApi {\n\tregisterProvider(name: string, config: Record<string, unknown>): void;\n}\n\nexport default function (pi: ExtensionApi): void {\n";
+const OMP_EXTENSION_HEAD: &str = "interface ExtensionApi {\n\tregisterProvider(name: string, config: Record<string, unknown>): void;\n\ton(event: \"before_agent_start\", handler: (event: { systemPrompt: string[] }) => { systemPrompt: string[] } | void): void;\n}\n\nexport default function (pi: ExtensionApi): void {\n";
 
 /// OMP model fields. `thinking` is left out on purpose: OMP passes it through verbatim and a
 /// range without `mode` disables its adaptive / effort request paths, while an omitted
@@ -248,25 +256,27 @@ fn omp_provider(provider: &ProjectedProvider) -> String {
     out
 }
 
-/// `omp-thinkrail.ts` (04 §6.3): provider registrations only (host tools travel over RPC).
-/// `None` without providers.
-pub(crate) fn omp_extension(routing: &EngineRouting) -> Option<String> {
-    if routing.providers.is_empty() {
-        return None;
-    }
+/// `omp-thinkrail.ts` (04 §6.3): the workflow rules appended to OMP's system prompt
+/// (`before_agent_start` → `systemPrompt`), then provider registrations (host tools travel over RPC).
+pub(crate) fn omp_extension(routing: &EngineRouting) -> String {
     let mut body = OMP_EXTENSION_HEAD.to_owned();
+    let rules: Vec<String> = crate::workflow::RULES.iter().map(|(name, rule)| quote(&format!("<{name}>\n{rule}\n</{name}>"))).collect();
+    body.push_str(&format!(
+        "\tpi.on(\"before_agent_start\", (event) => ({{ systemPrompt: [...event.systemPrompt, {}] }}));\n",
+        rules.join(", ")
+    ));
     body.extend(routing.providers.iter().map(omp_provider));
     body.push_str("}\n");
-    Some(body)
+    body
 }
 
-/// `omp-thinkrail.yml` (04 §6.3), loaded with `--config`: project MCP configs off, and the default
-/// model as `modelRoles.default`. `None` when there is neither MCP nor a default model.
-pub(crate) fn omp_overlay(routing: &EngineRouting) -> Option<String> {
-    if routing.mcp.is_empty() && routing.default_model.is_none() {
-        return None;
+/// `omp-thinkrail.yml` (04 §6.3), loaded with `--config`: the bundled skills directory, project
+/// MCP configs off when there are host MCP servers, and the default model as `modelRoles.default`.
+pub(crate) fn omp_overlay(routing: &EngineRouting, skills: &std::path::Path) -> String {
+    let mut body = format!("skills:\n  customDirectories:\n    - {}\n", quote(&skills.display().to_string()));
+    if !routing.mcp.is_empty() || routing.default_model.is_some() {
+        body.push_str("mcp:\n  enableProjectConfig: false\n");
     }
-    let mut body = String::from("mcp:\n  enableProjectConfig: false\n");
     if let Some(default) = &routing.default_model {
         let mut role = model_ref(&default.route, &default.model_id);
         if let Some(effort) = default.effort {
@@ -274,7 +284,7 @@ pub(crate) fn omp_overlay(routing: &EngineRouting) -> Option<String> {
         }
         body.push_str(&format!("modelRoles:\n  default: {}\n", quote(&role)));
     }
-    Some(body)
+    body
 }
 
 fn dsh_model(model: &ProjectedModel) -> String {
@@ -289,15 +299,22 @@ fn dsh_model(model: &ProjectedModel) -> String {
     )
 }
 
-/// `dsh-thinkrail.patch.yml` (04 §6.4): the built-in TODO tool off (host tools on), the providers
-/// merged into `llm-pi-ai`, and the `acp` default model. `None` when none of them applies.
-/// Providers carry no headers: DSH cannot reference header values by variable, so `prepare`
-/// routes such providers through the gateway.
-pub(crate) fn dsh_patch(host_tools: bool, routing: &EngineRouting) -> Result<Option<String>> {
-    if !host_tools && routing.providers.is_empty() && routing.default_model.is_none() {
-        return Ok(None);
-    }
-    let mut body = String::new();
+/// `@deepseek-ai/dsh-acp-app` 0.2.1-rc.5 `system-prompt.personaPrefix`, restated in our patch row.
+const DSH_ACP_PERSONA: &str = "You are a coding agent powered by the {{model}} model.";
+
+/// `dsh-thinkrail.patch.yml` (04 §6.4): the bundled skills directory, the workflow rules as the
+/// persona suffix (the `acp` persona prefix is restated: a patch row replaces its whole config),
+/// the built-in TODO tool off (host tools on), the providers merged into `llm-pi-ai`, and the
+/// `acp` default model. Providers carry no headers: DSH cannot reference header values by
+/// variable, so `prepare` routes such providers through the gateway.
+pub(crate) fn dsh_patch(host_tools: bool, routing: &EngineRouting, skills: &std::path::Path) -> Result<String> {
+    let mut body = format!("- id: skill-filesystem\n  config:\n    customSkillDirs:\n      - {}\n", quote(&skills.display().to_string()));
+    let rules: Vec<String> = crate::workflow::RULES.iter().map(|(name, rule)| format!("<{name}>\n{rule}\n</{name}>")).collect();
+    body.push_str(&format!(
+        "- id: system-prompt\n  config:\n    personaPrefix: {}\n    personaSuffix: {}\n",
+        quote(DSH_ACP_PERSONA),
+        quote(&rules.join("\n\n"))
+    ));
     if host_tools {
         body.push_str("- id: tool-todo\n  disabled: true\n");
     }
@@ -325,7 +342,7 @@ pub(crate) fn dsh_patch(host_tools: bool, routing: &EngineRouting) -> Result<Opt
             quote(&default.model_id)
         ));
     }
-    Ok(Some(body))
+    Ok(body)
 }
 
 fn acp_values(server: &str, bindings: &[EnvBinding], routing: &EngineRouting) -> Result<Value> {

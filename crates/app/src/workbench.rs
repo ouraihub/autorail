@@ -15,7 +15,7 @@ use thinkrail_ui::{
 use gpui_kit::assets::IconName;
 
 use crate::{
-    panels::{changes::ChangesPanel, chat::ChatPanel, files::FilePanel, projects::ProjectsPanel, settings::SettingsDialog, terminal::TerminalPanel},
+    panels::{changes::ChangesPanel, chat::ChatPanel, files::FilePanel, projects::ProjectsPanel, settings::SettingsDialog, terminal::TerminalPanel, welcome::Welcome},
     services::{Channels, Services},
     state::AppState,
     strings::shell as s,
@@ -24,6 +24,7 @@ use crate::{
 pub struct Workbench {
     state: Entity<AppState>,
     projects: Entity<ProjectsPanel>,
+    welcome: Entity<Welcome>,
     chat: Entity<ChatPanel>,
     files: Entity<FilePanel>,
     changes: Entity<ChangesPanel>,
@@ -37,6 +38,7 @@ impl Workbench {
     pub fn new(services: Services, channels: Channels, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.new(|cx| AppState::new(services, cx));
         let projects = cx.new(|cx| ProjectsPanel::new(state.clone(), window, cx));
+        let welcome = cx.new(|_| Welcome::new(state.clone()));
         let chat = cx.new(|cx| ChatPanel::new(state.clone(), channels.session_sink.clone(), window, cx));
         let files = cx.new(|cx| FilePanel::new(state.clone(), window, cx));
         let changes = cx.new(|cx| ChangesPanel::new(state.clone(), files.clone(), window, cx));
@@ -45,7 +47,7 @@ impl Workbench {
         Self::pump_plans(&chat, channels.plans, cx);
         Self::pump_terminals(&terminal, channels.terminals, cx);
         let subscriptions = vec![cx.observe(&state, |_, _, cx| cx.notify())];
-        Self { state, projects, chat, files, changes, terminal, show_projects: true, show_terminal: false, _subscriptions: subscriptions }
+        Self { state, projects, welcome, chat, files, changes, terminal, show_projects: true, show_terminal: false, _subscriptions: subscriptions }
     }
 
     /// One foreground task per channel; each event goes to the panel that owns it.
@@ -193,7 +195,10 @@ impl Render for Workbench {
                     .when(self.show_projects, |row| {
                         row.child(div().w(px(280.)).flex_none().h_full().child(self.projects.clone()))
                     })
-                    .child(div().flex_1().min_w(px(0.)).h_full().child(main)),
+                    // No project yet: the welcome cards replace the empty panels (original ThinkRail).
+                    .child(div().flex_1().min_w(px(0.)).h_full().map(|d| {
+                        if self.state.read(cx).projects.is_empty() { d.child(self.welcome.clone()) } else { d.child(main) }
+                    })),
             )
     }
 }

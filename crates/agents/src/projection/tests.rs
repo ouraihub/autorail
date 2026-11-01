@@ -22,8 +22,6 @@ pub(crate) fn projection() -> (Projection, Arc<Events>) {
     let identity = Identity {
         chat: "chat".into(),
         backend: BackendKind::Pi,
-        profile_id: "profile".into(),
-        config_revision: 1,
         cwd: "C:/work".into(),
         capabilities: Capabilities::default(),
     };

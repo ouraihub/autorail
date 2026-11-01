@@ -57,15 +57,9 @@ pub(crate) fn merge(path: &Path, current: Option<&str>, servers: &[ProjectedMcpS
         .map_err(|e| Error::protocol(format!("无法编码 {}：{e}", path.display())))
 }
 
-/// Brings `<config root>/mcp.json` in line with `servers`. Without servers an unparseable file is
-/// left alone silently: there is nothing to project, and the launch must behave as before routing.
-pub(crate) fn sync(config_root: Option<&Path>, servers: &[ProjectedMcpServer]) -> Result<()> {
-    let Some(root) = config_root else {
-        if servers.is_empty() {
-            return Ok(());
-        }
-        return Err(Error::invalid("OMP 档案需要设置配置目录才能使用 ThinkRail 的 MCP 服务器。"));
-    };
+/// Brings `<root>/mcp.json` in line with `servers`. Without servers an unparseable file is left
+/// alone silently: there is nothing to project, and the launch must behave as before routing.
+pub(crate) fn sync(root: &Path, servers: &[ProjectedMcpServer]) -> Result<()> {
     let path = root.join(FILE);
     let current = match fs::read_to_string(&path) {
         Ok(text) => Some(text),

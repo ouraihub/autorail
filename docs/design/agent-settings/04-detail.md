@@ -83,7 +83,7 @@ pub trait ProviderService: Send + Sync {
 ```
 
 - 密钥操作都让提供方 `revision` 加 1，并返回更新后的 `Provider`。
-- 提供方**没有任何密钥**时视为不需要鉴权（本机模型服务），投影时用占位值 `thinkrail-no-key`（与原版一致）；**有密钥但全部停用**时，`ModelRouter::prepare` 报 `Invalid`：“提供方 {name} 没有启用的 API 密钥，请在设置 → 提供方中启用一个。”
+- 提供方**没有任何密钥**时视为不需要鉴权（本机模型服务），投影时用占位值 `thinkrail-no-key`（与原版一致）；**有密钥但全部停用**时，`ModelRouter::prepare` 报 `Invalid`：“提供方 {name} 没有启用的 API 密钥，请在设置 → 模型服务中启用一个。”
 
 ### 2.3 MCP（`mcp.rs`）
 
@@ -124,12 +124,17 @@ pub trait McpService: Send + Sync {
 
 ```rust
 pub struct ModelRef { pub provider: ProviderId, pub model_id: String }
-pub struct ModelPrefs { pub default_model: Option<ModelRef>, pub default_effort: Option<ThinkingLevel>, pub hidden: Vec<ModelRef> }
+pub struct ModelPrefs {
+    pub default_model: Option<ModelRef>, pub default_effort: Option<ThinkingLevel>, pub hidden: Vec<ModelRef>,
+    pub engine_providers: Vec<(BackendKind, EngineProvider)>,   // 编码搭档的选择（§7.10），没有记录 = 未选择
+}
+pub enum EngineProvider { Gateway, Official, Provider(ProviderId) }   // core::engine_setup
 
 pub trait ModelPrefService: Send + Sync {
     fn prefs(&self) -> Result<ModelPrefs>;
     fn set_default(&self, model: Option<ModelRef>, effort: Option<ThinkingLevel>) -> Result<ModelPrefs>;
     fn set_hidden(&self, model: &ModelRef, hidden: bool) -> Result<ModelPrefs>;
+    fn set_engine_provider(&self, backend: BackendKind, choice: EngineProvider) -> Result<ModelPrefs>;  // 存为 model_prefs 键 engine_provider.<引擎>
 }
 ```
 
@@ -357,7 +362,9 @@ pub(crate) fn base_url(raw: &str, protocol: Protocol) -> String
 
 ```text
 输入 RouteRequest{chat, project, backend, new_session}
-1. providers = ProviderService::providers() 中 enabled 的；models 取 enabled 的。
+1. providers = ProviderService::providers() 中 enabled 的，再按该引擎在编码搭档里的选择过滤（§7.10）：
+     未选择 / 统一网关 → 全部；官方 → 无；某个服务商 → 只有它（已删或停用时报 Invalid）。
+     统一网关时每个提供方都按 gateway 处理。models 取 enabled 且类型为 chat 的。
 2. 对每个提供方 p、每个协议 proto ∈ p.endpoints：
      若 backend 不支持 proto（§4.5）→ 跳过；
      models_for(proto) = p.models 中 protocols 含 proto 的；
@@ -579,15 +586,16 @@ pi/OMP 从 `get_state` 的 `thinkingLevel` 读；DSH 从 `configOptions` 里 `ca
 `panels/settings.rs` 拆成目录：
 
 ```
-panels/settings/mod.rs        # SettingsDialog::open；左侧导航 + 内容区；当前页 enum Page { Models, Providers, Mcp, Agents }
+panels/settings/mod.rs        # SettingsDialog::open；左侧导航 + 内容区；enum Page { Models, Providers, Coding, Mcp, Agents }
 panels/settings/agents.rs     # 现有档案页，原样迁入（含 Form / to_input 及其测试）
 panels/settings/models.rs     # 模型页
-panels/settings/providers.rs  # 提供方列表 + 编辑对话框 + 密钥管理
+panels/settings/providers/    # 模型服务页（§7.6–§7.7）
+panels/settings/coding.rs     # 编码搭档页（§7.10）
 panels/settings/mcp.rs        # MCP 页 + 编辑对话框
 ```
 
 - 对话框宽度改为 832（原版 `max-w-[52rem]`），高度为窗口高度的 80%。
-- 左侧导航宽 192、内边距 12，背景 `container_elevated_bg`，右边框 `border_muted`；分组标题“AGENT”高 28、`text::LABEL_PILL`、`text_subtle`；导航项高 28、`px 8`、14px 图标、选中时文字 `primary`、底色 `primary_subtle`。项与图标：模型（`Brain`）、提供方（`KeyRound`）、MCP 服务器（`Plug`）、Agent 档案（`Bot`）。原版的其他分组本期不放（不做空壳）。
+- 左侧导航宽 192、内边距 12，背景 `container_elevated_bg`，右边框 `border_muted`；分组标题“AGENT”高 28、`text::LABEL_PILL`、`text_subtle`；导航项高 28、`px 8`、14px 图标、选中时文字 `primary`、底色 `primary_subtle`。项与图标：模型（`Brain`）、模型服务（`KeyRound`）、编码搭档（`SquareTerminal`）、MCP 服务器（`Plug`）、Agent 档案（`Bot`）。原版的其他分组本期不放（不做空壳）。对话框宽 1040。
 - 内容区内边距 16，可滚动；分组之间上边框 + 上下 24；行 `py 12`、下边框，组内最后一行无下边框；行左侧标签最小宽 160。
 - 只用 `Roles` 和 `metrics`；缺的图标（如 `EyeOff`）加进 `ui::assets` 的 `icon_assets!`。
 
@@ -620,6 +628,24 @@ panels/settings/mcp.rs        # MCP 页 + 编辑对话框
 ### 7.7 密钥管理（`providers/keys.rs`）
 
 对话框标题“API 密钥管理”，说明“管理当前服务商的多个 API 密钥，按顺序轮流使用。”。每行显示标签（未填为“API Key”）、掩码，以及复制、编辑、删除和启用开关。底部是标签加密码框（`mask_toggle`），用于“添加 API 密钥”；编辑已有密钥时，密钥框留空表示不修改。页脚显示“N / M 已启用”，没有密钥时显示“暂无 API 密钥”。明文只在“显示”或“复制”时通过 `reveal_key` 取得，切换服务商、写入成功或关闭设置时清掉。复制用 `cx.write_to_clipboard`。
+
+### 7.10 编码搭档页（`coding.rs`，对标 Cherry Studio `CodeCliPage`）
+
+原则（U06，同 Cherry Studio）：用户已装的引擎直接用；没装时在这里一键安装，方便用户管理。应用安装包本身不带引擎。
+
+设置导航里排在“模型服务”下面。左边列出 Pi、Oh My Pi、DeepSeek Harness，未安装的引擎显示“未安装”，安装中显示“安装中…”，默认引擎显示“默认”。
+
+- 检测（`agents::ManagedEngines::status`，不联网）：先找数据目录 `coding/<引擎>` 下的托管安装，读包的 `package.json` 拿到 `bin` 入口和版本，徽标显示“内置”；再在 `PATH` 上找 `pi` / `omp` / `dsh`（排除应用自己的目录），徽标显示“系统”。`.exe` 直接运行；npm 生成的 shim 解析到旁边 `node_modules/<包>` 的入口，用 `PATH` 上的 node / bun 运行（系统运行时的版本不检查）。
+- 安装（`install`，阻塞，首次需要几分钟）：用系统自带的 `curl.exe` 下载固定版本的运行时，校验 SHA-256 后用 `tar.exe` 解压到 `coding/runtimes`（先解到 `.part` 目录再改名）。固定版本：Node v24.22.2 `win-x64`、Bun 1.4.4 `windows-x64-baseline`，校验和写在代码常量里，不信任下载源自带的校验文件。然后安装固定版本的引擎包：pi `@earendil-works/pi-coding-agent@1.4.0`、DSH `@deepseek-ai/dsh@0.2.1-rc.5`（npm `--ignore-scripts --omit=dev --save-exact`），OMP `@oh-my-pi/pi-coding-agent@18.14.2`（`bun add --exact --ignore-scripts`）。界面显示“首次安装需要下载运行时，耗时数分钟”；失败时显示输出的最后 12 行，按钮变成“重试”。
+- 设为默认：只写 `model_prefs.default_agent`，不创建档案（[07](07-default-agent.md) §5.4）。之后的新聊天都用它。
+- 模型服务商（单选，存在 `model_prefs` 的 `engine_provider.<引擎>` 键里，路由见 `router::plan`）：
+  - 统一网关：全部启用的服务商，一律走本机网关，真实密钥不进入引擎进程。
+  - {引擎} 官方：不投影任何服务商，引擎使用自己配置目录里的模型和登录。
+  - 某一个服务商：只投影这一个，按它自己的接入方式。服务商被删除或停用后，启动时报 `Invalid`，提示回到编码搭档重新选择。
+  - 未选择：保持本页出现前的行为，全部启用的服务商各按自己的接入方式（提示“未选择：使用全部已启用的服务商…”）。
+  - 选择变化发 `AppEvent::Routing`，已打开的聊天按签名判断是否需要重启引擎。
+- 底部“在 设置 → 模型服务 添加服务商”切换到模型服务页。
+- 没有做：卸载、升级、自定义工作目录或终端、DSH 的 Web UI；也没有 Cherry 的“启动”按钮，引擎仍在聊天里启动。
 
 ### 7.8 MCP 页（`mcp.rs`）
 

@@ -7485,6 +7485,7 @@ dependencies = [
  "parking_lot 0.13.0",
  "serde_json",
  "serde_yaml_ng",
+ "sha2 0.11.1",
  "tempfile",
  "thinkrail-core",
  "tracing",
@@ -7507,8 +7508,10 @@ version = "0.1.0"
 dependencies = [
  "interprocess",
  "parking_lot 0.13.0",
+ "regex",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "tempfile",
  "thinkrail-core",
  "thinkrail-plan-review",
@@ -7528,7 +7531,6 @@ dependencies = [
  "thinkrail-core",
  "thinkrail-host-tools",
  "thinkrail-plan-review",
- "thinkrail-profiles",
  "thinkrail-routing",
  "thinkrail-settings-store",
  "thinkrail-terminal",
@@ -7550,20 +7552,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "tempfile",
- "thinkrail-core",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "thinkrail-profiles"
-version = "0.1.0"
-dependencies = [
- "fs2",
- "parking_lot 0.13.0",
- "serde",
- "serde_json",
  "tempfile",
  "thinkrail-core",
  "tracing",

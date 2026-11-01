@@ -71,7 +71,7 @@ fn sync_writes_references_never_values_and_leaves_invalid_files_alone() {
     let root = tempfile::tempdir().unwrap();
     let file = root.path().join("mcp.json");
     let servers = sample_routing().mcp;
-    sync(Some(root.path()), &servers).unwrap();
+    sync(root.path(), &servers).unwrap();
     let text = fs::read_to_string(&file).unwrap();
     for secret in SECRETS {
         assert!(!text.contains(secret), "mcp.json contains {secret}");
@@ -79,23 +79,15 @@ fn sync_writes_references_never_values_and_leaves_invalid_files_alone() {
     assert!(text.contains("${THINKRAIL_MCP_5E6F7A8B_E0}"));
 
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
-    sync(Some(root.path()), &servers).unwrap();
+    sync(root.path(), &servers).unwrap();
     assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), modified, "unchanged content is not rewritten");
 
     fs::write(&file, "{ broken").unwrap();
-    let error = sync(Some(root.path()), &servers).unwrap_err();
+    let error = sync(root.path(), &servers).unwrap_err();
     assert_eq!(error.kind(), Some(ErrorKind::Invalid));
     assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken");
-    sync(Some(root.path()), &[]).unwrap();
+    sync(root.path(), &[]).unwrap();
     assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken", "nothing to project: the launch goes on untouched");
     let leftovers: Vec<_> = fs::read_dir(root.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(leftovers, ["mcp.json"]);
-}
-
-#[test]
-fn sync_needs_a_config_root_only_when_there_are_servers() {
-    sync(None, &[]).unwrap();
-    let error = sync(None, &sample_routing().mcp).unwrap_err();
-    assert_eq!(error.kind(), Some(ErrorKind::Invalid));
-    assert!(error.to_string().contains("配置目录"), "{error}");
 }

@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BackendKind, ChatId, EngineRouting, HostToolAccess, NativeSessionKey, Profile, ProfileId, Result, ThinkingLevel, WorkspaceId};
+use crate::{BackendKind, ChatId, EngineRouting, HostToolAccess, Launch, NativeSessionKey, Result, ThinkingLevel, WorkspaceId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,8 +125,6 @@ pub struct SessionError {
 pub struct SessionSnapshot {
     pub id: ChatId,
     pub backend: BackendKind,
-    pub profile_id: ProfileId,
-    pub config_revision: u64,
     pub native_session_key: Option<NativeSessionKey>,
     pub cwd: PathBuf,
     pub phase: SessionPhase,
@@ -170,7 +168,12 @@ pub struct StartSession {
     pub chat: ChatId,
     /// Plans, reviews and host tools of this chat are scoped to `(workspace, chat)`.
     pub workspace: WorkspaceId,
-    pub profile: Profile,
+    pub backend: BackendKind,
+    /// The install 编码搭档 found for `backend`.
+    pub launch: Launch,
+    /// The engine's config dir (`PI_CODING_AGENT_DIR` / `DSH_HOME`). The app passes `None`, the
+    /// engine's own default; tests pass an isolated directory.
+    pub config_root: Option<PathBuf>,
     pub cwd: PathBuf,
     /// Resume this native session instead of creating one.
     pub resume: Option<NativeSessionKey>,

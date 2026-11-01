@@ -1,8 +1,8 @@
-//! Schema version and table definitions (agent-settings 04 §3.2).
+//! Schema version and table definitions (agent-settings 04 §3.2, 07 §4).
 
-/// Version written to `schema_meta`. A higher version is refused as `Corrupt`; version 2 is
-/// upgraded in place (`db::migrate`); older development layouts are refused.
-pub(crate) const SCHEMA_VERSION: i64 = 3;
+/// Version written to `schema_meta`. Only this version opens; any other is refused as `Corrupt`
+/// (no upgrade steps: a development database is deleted and recreated).
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 
 /// Every table of [`SCHEMA_VERSION`], created in order on an empty database.
 pub(crate) const TABLES: &[&str] = &[
@@ -40,4 +40,7 @@ pub(crate) const TABLES: &[&str] = &[
     "CREATE TABLE mcp_overrides (
         project_id TEXT NOT NULL, server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
         enabled INTEGER NOT NULL, PRIMARY KEY (project_id, server_id))",
+    "CREATE TABLE chat_bindings (
+        chat_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, backend TEXT NOT NULL,
+        native_session_key TEXT NOT NULL, created_at INTEGER NOT NULL)",
 ];

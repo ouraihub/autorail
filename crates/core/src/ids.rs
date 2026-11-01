@@ -26,7 +26,6 @@ macro_rules! id {
 
 id!(ProjectId);
 id!(WorkspaceId);
-id!(ProfileId);
 id!(
     /// Host-owned chat identity. Engine-native locators are a separate [`NativeSessionKey`].
     ChatId

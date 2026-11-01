@@ -13,14 +13,14 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
-use thinkrail_core::{EngineRouting, EnvSource, Error, ErrorKind, Launch, Profile, Result};
+use thinkrail_core::{EngineRouting, Error, ErrorKind, Launch, Result};
 use tracing::{debug, info, warn};
 
 const STDERR_TAIL: usize = 64 * 1024;
 const STDERR_SUMMARY: usize = 2 * 1024;
 const SENSITIVE: [&str; 5] = ["key", "token", "secret", "password", "authorization"];
 
-/// Inherited variables that could carry another profile's credentials or engine configuration.
+/// Inherited variables that could carry the user's own credentials or engine configuration.
 pub(crate) fn is_isolated(name: &str) -> bool {
     const PREFIXES: [&str; 18] = [
         "PI_", "OMP_", "DSH_", "THINKRAIL_", "AWS_", "OPENAI_", "ANTHROPIC_", "AZURE_", "GOOGLE_", "GEMINI_",
@@ -43,12 +43,25 @@ pub(crate) fn plain_path(path: &Path) -> PathBuf {
     }
 }
 
+/// `config_root`, else the engine's default `<home>/<default>` (USERPROFILE, then HOME).
+pub(crate) fn config_dir(config_root: Option<&Path>, default: &str) -> Result<PathBuf> {
+    match config_root {
+        Some(root) => Ok(root.to_path_buf()),
+        None => std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(|home| PathBuf::from(home).join(default))
+            .ok_or_else(|| Error::invalid("找不到用户主目录（USERPROFILE / HOME），无法定位引擎配置目录")),
+    }
+}
+
 pub(crate) struct LaunchSpec<'a> {
-    pub profile: &'a Profile,
-    /// Inserted right after the profile's own arguments.
+    pub launch: &'a Launch,
+    /// Inserted right after the launch's own arguments.
     pub host_args: Vec<String>,
     pub cwd: PathBuf,
-    /// Variable that carries the profile's config root (`PI_CODING_AGENT_DIR` / `DSH_HOME`).
+    /// The engine config dir; `None` leaves the engine on its own default.
+    pub config_root: Option<&'a Path>,
+    /// Variable that carries `config_root` (`PI_CODING_AGENT_DIR` / `DSH_HOME`).
     pub config_var: &'static str,
     /// Extra variables set last (host tool pipe and token, then `EngineRouting.env`); never logged.
     pub host_env: Vec<(String, OsString)>,
@@ -61,7 +74,7 @@ pub(crate) fn routing_env(routing: &EngineRouting) -> impl Iterator<Item = (Stri
 }
 
 pub(crate) fn command(spec: &LaunchSpec<'_>) -> Result<Command> {
-    let Launch::External { executable, args } = &spec.profile.input.launch;
+    let Launch::External { executable, args } = spec.launch;
     if !executable.is_absolute() || !executable.is_file() {
         return Err(Error::new(ErrorKind::BackendUnavailable, format!("可执行文件不存在：{}", executable.display())));
     }
@@ -78,18 +91,8 @@ pub(crate) fn command(spec: &LaunchSpec<'_>) -> Result<Command> {
             command.env_remove(&name);
         }
     }
-    if let Some(root) = &spec.profile.input.config_root {
+    if let Some(root) = spec.config_root {
         command.env(spec.config_var, plain_path(root));
-    }
-    for entry in &spec.profile.input.env_refs {
-        if entry.name.eq_ignore_ascii_case(spec.config_var) {
-            return Err(Error::invalid(format!("请用档案的配置目录设置 {}，不要通过环境变量引用", spec.config_var)));
-        }
-        let value = match entry.source {
-            EnvSource::Launch => std::env::var_os(&entry.reference),
-        }
-        .ok_or_else(|| Error::invalid(format!("启动环境中没有变量 {}", entry.reference)))?;
-        command.env(&entry.name, value);
     }
     for (name, value) in &spec.host_env {
         command.env(name, value);
@@ -366,18 +369,20 @@ mod tests {
     }
 
     #[test]
-    fn routing_env_is_applied_last_and_wins_over_profile_variables() {
+    fn routing_env_is_applied_as_launch_variables() {
         let f = crate::testing::Fixture::new();
-        let mut request = f.request(thinkrail_core::BackendKind::Pi, None, false, crate::testing::secret_routing());
-        let Launch::External { executable, .. } = &request.profile.input.launch;
+        let request = f.request(thinkrail_core::BackendKind::Pi, None, false, crate::testing::secret_routing());
+        let Launch::External { executable, .. } = &request.launch;
         std::fs::write(executable, b"").unwrap();
-        request.profile.input.env_refs = vec![thinkrail_core::EnvRef {
-            name: "THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(),
-            source: EnvSource::Launch,
-            reference: "PATH".into(),
-        }];
         let host_env = routing_env(&request.routing).collect();
-        let spec = LaunchSpec { profile: &request.profile, host_args: Vec::new(), cwd: f.cwd(), config_var: "PI_CODING_AGENT_DIR", host_env };
+        let spec = LaunchSpec {
+            launch: &request.launch,
+            host_args: Vec::new(),
+            cwd: f.cwd(),
+            config_root: request.config_root.as_deref(),
+            config_var: "PI_CODING_AGENT_DIR",
+            host_env,
+        };
         let command = command(&spec).unwrap();
         let envs: Vec<_> = command.get_envs().map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned))).collect();
         for (name, value) in crate::testing::routing_vars(&request.routing) {

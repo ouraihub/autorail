@@ -1,10 +1,11 @@
-//! TODO / review tools for Agents and the stdio MCP server that exposes them.
+//! TODO / review / spec tools for Agents and the stdio MCP server that exposes them.
 //!
-//! `tools` is the tool core (`HostTools`), `bridge` the host's authenticated named pipe
-//! (`ToolBridge`), `mcp` the `mcp-host` subcommand that pi and DSH launch.
+//! `tools` is the tool core (`HostTools`), `spec` the `spec_*` spec-graph tools, `bridge` the host's
+//! authenticated named pipe (`ToolBridge`), `mcp` the `mcp-host` subcommand that pi and DSH launch.
 
 mod bridge;
 mod mcp;
+mod spec;
 mod tools;
 #[cfg(test)]
 mod tests;

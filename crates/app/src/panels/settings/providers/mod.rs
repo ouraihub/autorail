@@ -252,7 +252,7 @@ impl Render for ProvidersPage {
 }
 
 /// Small bordered square with a provider's or model's initial (Aether avatar).
-fn avatar(name: &str, cx: &App) -> impl IntoElement {
+pub(in crate::panels::settings) fn avatar(name: &str, cx: &App) -> impl IntoElement {
     let r = ThinkrailTheme::global(cx).roles;
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     div().size(px(24.)).flex_none().rounded(radius::MD).bg(r.primary_subtle).flex().items_center().justify_center()

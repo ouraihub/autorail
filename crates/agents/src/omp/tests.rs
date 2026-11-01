@@ -1,7 +1,7 @@
 use std::fs;
 
 use serde_json::{Value, json};
-use thinkrail_core::{BackendKind, EngineRouting, ErrorKind};
+use thinkrail_core::{BackendKind, EngineRouting};
 
 use super::{launch_spec, stopped_request};
 use crate::{
@@ -67,21 +67,25 @@ fn finished_errored_or_unanswered_turns_are_left_alone() {
     assert_eq!(stopped_request(&done, None), None);
 }
 
-/// Expected values recorded from the adapter before routing existed. Host tools travel over RPC,
-/// so they never change the launch.
+/// Every launch loads the workflow: rules in the extension, the bundled skills directory in the
+/// overlay. Host tools travel over RPC, so they never change the launch.
 #[test]
-fn empty_routing_keeps_the_pre_routing_launch() {
+fn every_launch_loads_the_workflow_extension_and_skills() {
     let f = Fixture::new();
+    let (extension, overlay) = (f.support_arg("omp-thinkrail.ts"), f.support_arg("omp-thinkrail.yml"));
     for (resume, host_tools) in [(None, false), (None, true), (Some("s.jsonl"), true)] {
         let request = f.request(BackendKind::Omp, resume, host_tools, EngineRouting::default());
         let spec = launch_spec(&request).unwrap();
-        let mut expected = vec!["--mode", "rpc-ui", "--approval-mode", "always-ask"];
+        let mut expected = vec!["--mode", "rpc-ui", "--approval-mode", "always-ask", "-e", extension.as_str(), "--config", overlay.as_str()];
         expected.extend(resume.map(|key| ["--session", key]).into_iter().flatten());
         assert_eq!(spec.host_args, expected);
         assert!(spec.host_env.is_empty());
         assert_eq!((spec.cwd, spec.config_var), (f.cwd(), "PI_CODING_AGENT_DIR"));
     }
-    assert!(!f.support().exists());
+    let skills = f.support_arg("skills");
+    assert_eq!(fs::read_to_string(&overlay).unwrap(), format!("skills:\n  customDirectories:\n    - {}\n", serde_json::to_string(&skills).unwrap()));
+    assert!(fs::read_to_string(&extension).unwrap().contains("<pi-spec-graph>"));
+    assert!(f.support().join("skills").join("starting-a-new-project").join("SKILL.md").is_file());
     assert!(!f.config().join("mcp.json").exists(), "no MCP servers: the user's mcp.json is not created");
 }
 
@@ -91,7 +95,6 @@ fn routing_env_is_the_whole_launch_environment() {
     let routing = secret_routing();
     let request = f.request(BackendKind::Omp, None, true, routing.clone());
     let spec = launch_spec(&request).unwrap();
-    assert_eq!(spec.host_args, ["--mode", "rpc-ui", "--approval-mode", "always-ask"]);
     assert_eq!(spec.host_env, routing_vars(&routing));
     f.assert_no_secret_written();
 }
@@ -109,8 +112,8 @@ fn routing_adds_the_extension_overlay_and_mcp_entries() {
         ["--mode", "rpc-ui", "--approval-mode", "always-ask", "-e", extension.as_str(), "--config", overlay.as_str()]
     );
     assert_eq!(spec.host_env, routing_vars(&routing));
-    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::omp_extension(&routing).unwrap());
-    assert_eq!(fs::read_to_string(&overlay).unwrap(), projection_engine::omp_overlay(&routing).unwrap());
+    assert_eq!(fs::read_to_string(&extension).unwrap(), projection_engine::omp_extension(&routing));
+    assert_eq!(fs::read_to_string(&overlay).unwrap(), projection_engine::omp_overlay(&routing, &f.support().join("skills")));
     let mcp: Value = serde_json::from_str(&fs::read_to_string(f.config().join("mcp.json")).unwrap()).unwrap();
     let mut names: Vec<&String> = mcp["mcpServers"].as_object().unwrap().keys().collect();
     names.sort();
@@ -122,16 +125,17 @@ fn routing_adds_the_extension_overlay_and_mcp_entries() {
     let resumed = EngineRouting { default_model: None, mcp: Vec::new(), ..routing };
     let request = f.request(BackendKind::Omp, Some("s.jsonl"), false, resumed);
     let spec = launch_spec(&request).unwrap();
-    assert_eq!(spec.host_args[4..], ["-e", extension.as_str(), "--session", "s.jsonl"]);
+    assert_eq!(spec.host_args[4..], ["-e", extension.as_str(), "--config", overlay.as_str(), "--session", "s.jsonl"]);
     let mcp: Value = serde_json::from_str(&fs::read_to_string(f.config().join("mcp.json")).unwrap()).unwrap();
     assert_eq!(mcp, json!({"mcpServers": {"mine": {"command": "x"}}}), "stale thinkrail- entries are removed");
 }
 
+/// Without a config root `mcp.json` goes to OMP's own default dir; resolved, never written here.
 #[test]
-fn mcp_without_a_config_root_is_refused() {
-    let f = Fixture::new();
-    let mut request = f.request(BackendKind::Omp, None, false, sample_routing());
-    request.profile.input.config_root = None;
-    let error = launch_spec(&request).err().unwrap();
-    assert_eq!(error.kind(), Some(ErrorKind::Invalid));
+fn mcp_without_a_config_root_targets_the_omp_default_dir() {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).unwrap();
+    let dir = crate::process::config_dir(None, ".omp/agent").unwrap();
+    assert_eq!(dir, std::path::PathBuf::from(home).join(".omp/agent"));
+    let root = std::path::Path::new("C:/isolated");
+    assert_eq!(crate::process::config_dir(Some(root), ".omp/agent").unwrap(), root);
 }

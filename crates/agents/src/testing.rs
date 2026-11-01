@@ -7,7 +7,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 use thinkrail_core::{
     BackendKind, DefaultModel, EngineRouting, EnvBinding, Error, HostToolAccess, HostToolHandler, HostToolResult,
-    HostToolSpec, Launch, PlanScope, Profile, ProfileInput, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
+    HostToolSpec, Launch, PlanScope, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
     ProjectedProvider, Protocol, Result, Secret, StartSession, ThinkingLevel,
 };
 
@@ -66,18 +66,6 @@ impl Fixture {
         host_tools: bool,
         routing: EngineRouting,
     ) -> StartSession {
-        let profile = Profile {
-            id: "profile".into(),
-            config_revision: 1,
-            input: ProfileInput {
-                backend_id: backend,
-                label: "profile".into(),
-                enabled: true,
-                config_root: Some(self.config()),
-                launch: Launch::External { executable: self.root.path().join("engine.exe"), args: vec!["cli.js".into()] },
-                env_refs: Vec::new(),
-            },
-        };
         let host_tools = host_tools.then(|| HostToolAccess {
             executable: self.exe(),
             pipe: "pipe-1".into(),
@@ -87,7 +75,9 @@ impl Fixture {
         StartSession {
             chat: "chat".into(),
             workspace: "w".into(),
-            profile,
+            backend,
+            launch: Launch::External { executable: self.root.path().join("engine.exe"), args: vec!["cli.js".into()] },
+            config_root: Some(self.config()),
             cwd: self.cwd(),
             resume: resume.map(Into::into),
             host_tools,
@@ -96,14 +86,22 @@ impl Fixture {
         }
     }
 
-    /// Fails if any file under the support directory contains a placeholder secret.
+    /// Fails if any file under the support directory (staged skills included) contains a
+    /// placeholder secret.
     pub(crate) fn assert_no_secret_written(&self) {
-        let Ok(entries) = fs::read_dir(self.support()) else { return };
-        for entry in entries {
-            let path = entry.unwrap().path();
-            let text = fs::read_to_string(&path).unwrap();
-            for secret in SECRETS {
-                assert!(!text.contains(secret), "{} contains {secret}", path.display());
+        let mut dirs = vec![self.support()];
+        while let Some(dir) = dirs.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else { continue };
+            for entry in entries {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                let text = fs::read_to_string(&path).unwrap();
+                for secret in SECRETS {
+                    assert!(!text.contains(secret), "{} contains {secret}", path.display());
+                }
             }
         }
     }

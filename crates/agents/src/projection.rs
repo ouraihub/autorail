@@ -11,7 +11,7 @@ use std::{
 };
 
 use thinkrail_core::{
-    BackendKind, Capabilities, ChatId, ContentBlock, Interaction, Message, ModelInfo, NativeSessionKey, ProfileId,
+    BackendKind, Capabilities, ChatId, ContentBlock, Interaction, Message, ModelInfo, NativeSessionKey,
     SessionError, SessionEvent, SessionPhase, SessionSink, SessionSnapshot, ToolStatus,
 };
 
@@ -29,8 +29,6 @@ fn next_revision() -> u64 {
 pub(crate) struct Identity {
     pub chat: ChatId,
     pub backend: BackendKind,
-    pub profile_id: ProfileId,
-    pub config_revision: u64,
     pub cwd: PathBuf,
     pub capabilities: Capabilities,
 }
@@ -49,8 +47,6 @@ impl Projection {
         let snapshot = SessionSnapshot {
             id: identity.chat,
             backend: identity.backend,
-            profile_id: identity.profile_id,
-            config_revision: identity.config_revision,
             native_session_key: None,
             cwd: identity.cwd,
             phase: SessionPhase::Idle,

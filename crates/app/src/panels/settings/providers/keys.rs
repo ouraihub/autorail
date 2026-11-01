@@ -103,8 +103,12 @@ impl Render for KeysDialog {
                 .child(IconButton::new(format!("key-edit-{}", key.id), gpui_kit::assets::IconName::Pencil).tooltip(s::KEY_EDIT)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.editing = Some(edit.id.clone());
+                        this.error = None;
                         this.label.update(cx, |i, cx| i.set_value(edit.label.clone().unwrap_or_default(), window, cx));
-                        this.value.update(cx, |i, cx| i.set_value("", window, cx));
+                        this.value.update(cx, |i, cx| {
+                            i.set_value("", window, cx);
+                            i.focus(window, cx);
+                        });
                         cx.notify();
                     })))
                 .child(IconButton::new(format!("key-delete-{}", key.id), gpui_kit::assets::IconName::Trash).tooltip(s::KEY_DELETE)

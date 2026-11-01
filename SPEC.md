@@ -1,17 +1,17 @@
 # ThinkRail Native
 
-A Rust/GPUI desktop workbench with in-process Rust application services. The user selects pi, OMP or DSH through explicit configuration profiles; chats keep their original profile/revision binding. Each external engine owns its model loop, native history and tools.
+A Rust/GPUI desktop workbench with in-process Rust application services. The user picks pi, OMP or DSH as the default Agent on the 编码搭档 page (installed by the app or found on `PATH`); each chat stays bound to the backend it was created with. Each external engine owns its model loop, native history and tools.
 
 ## Modules
 
 A Cargo workspace of single-purpose crates. `core` holds the contracts; service crates implement its traits and depend on `core`; the app holds trait objects and is the only place concrete services are built (`crates/app/src/services.rs`).
 
 - `core`: domain types, service traits, error model and session events. No I/O, no UI.
-- `workspace` / `profiles` / `plan-review` / `terminal`: projects, worktrees, Git and contained file reads; revisioned Agent profiles and chat bindings; plans and anchored review comments; real PTYs.
-- `settings-store`: one Turso database for global provider endpoints/models/keys, model preferences and global/project MCP configuration. Provider writes are revisioned; secret values are never serialized into engine support files.
+- `workspace` / `plan-review` / `terminal`: projects, worktrees, Git and contained file reads; plans and anchored review comments; real PTYs.
+- `settings-store`: one Turso database for global provider endpoints/models/keys, model preferences (including the default Agent), chat bindings and global/project MCP configuration. Provider writes are revisioned; secret values are never serialized into engine support files.
 - `routing`: prepares typed engine projections, read-only launch signatures, the authenticated loopback gateway and provider probes. Depends on `core` only; stores are injected through traits.
-- `agents`: official pi / OMP JSONL and DSH ACP subprocess adapters, one `AgentRuntime` per backend. Node/Bun may run the selected external engine; neither runs application business services.
-- `host-tools`: the TODO / review tool core over `plan-review`'s plan semantics, the host's authenticated named pipe, and the stdio MCP server behind `thinkrail-native mcp-host`. pi and DSH reach it through that subcommand, OMP in-process through `set_host_tools`.
+- `agents`: official pi / OMP JSONL and DSH ACP subprocess adapters, one `AgentRuntime` per backend. Node/Bun may run the selected external engine; neither runs application business services. Every launch stages the original ThinkRail workflow skills (`crates/agents/skills`, from `pi-thinkrail-workflow`, `spec-graph` and `pi-todos`) and loads them through the engine's own skill path (pi `--skill`, OMP `skills.customDirectories`, DSH `skill-filesystem.customSkillDirs`), plus the original `WORKFLOW_RULE` / `SPEC_RULE` system-prompt sections. The engine expands skill commands itself: `/skill:<name>` for pi and OMP, `/<name>` for DSH.
+- `host-tools`: the TODO / review and `spec_*` tool core over `plan-review`'s plan semantics and the workspace's spec files, the host's authenticated named pipe, and the stdio MCP server behind `thinkrail-native mcp-host`. pi and DSH reach it through that subcommand, OMP in-process through `set_host_tools`.
 - `ui`: visual tokens taken from the original ThinkRail themes, bundled fonts and stateless components. No services.
 - `app`: composition root, logging and the GPUI panels. Panels talk to services only through `AppState` and background jobs.
 
@@ -74,7 +74,7 @@ The implementation MUST finish with no stale duplicate path, compatibility copy,
 
 The host is the only writer of application metadata. Engine native history is not converted into application state or rewritten across engines. Client layout belongs to each window. A new default never changes an existing chat's backend.
 
-Settings are global across engine profiles; effective MCP configuration is project-scoped. Default model preferences apply only to new sessions. Configuration changes dispose idle engines (or defer until idle), preserve their native binding and restart only on the next send. Per-chat support files and gateway tokens are cleaned up after disposal, before another launch can use the same support directory. DSH user routes are merged without rewriting user YAML; OMP merges only host-owned `thinkrail-` entries in `mcp.json`.
+Settings are global across engines; effective MCP configuration is project-scoped. Default model preferences and the default Agent apply only to new chats. Configuration changes dispose idle engines (or defer until idle), preserve their native binding and restart only on the next send. Engines use their own default config directories; per-chat support files and gateway tokens are cleaned up after disposal, before another launch can use the same support directory. DSH user routes are merged without rewriting user YAML; OMP merges only host-owned `thinkrail-` entries in `mcp.json`.
 
 Source application services are ported only when used by a reachable feature. No browser application, legacy desktop carrier, website or unrelated publishing pipeline is copied into this project. Migration is based on observable behavior, not retained file count.
 

@@ -14,7 +14,7 @@ gpui_kit::assets::icon_assets!(
         Circle, CircleCheck, CircleX, CircleQuestionMark, Check, Ban, LoaderCircle, TriangleAlert, CircleAlert, Copy,
         PanelLeft, Brain, Wrench, Clock, Undo2, Pencil, Trash, Eye, Search, Play, Pause, Minus, Bot, User,
         Ellipsis, RefreshCw, SquarePen, Columns2, Rows2, ShieldCheck, ShieldAlert, Plug, KeyRound, Star, TextWrap,
-        GitPullRequest, Settings2, SlidersHorizontal, ChevronsUpDown, ChevronsDownUp, EyeOff, ExternalLink
+        GitPullRequest, Settings2, SlidersHorizontal, ChevronsUpDown, ChevronsDownUp, EyeOff, ExternalLink, Sparkles
     ]
 );
 

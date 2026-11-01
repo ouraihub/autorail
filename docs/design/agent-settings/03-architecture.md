@@ -60,7 +60,7 @@ flowchart TB
 | 网关会话令牌 | `routing` 进程内存 | 只在对应引擎子进程的环境变量里 |
 | 某次启动用的路由 `EngineRouting` | 启动时由 `ModelRouter::prepare` 生成 | `ChatPanel` 记住其签名，用来判断是否需要重启 |
 | 引擎内的当前模型、力度 | 引擎自身（会话级，不写回配置） | `SessionSnapshot.model` |
-| 档案、聊天绑定、引擎原生会话 | 不变（多 Agent 设计包 03 §3） | 不变 |
+| 默认 Agent、聊天绑定、引擎原生会话 | `model_prefs.default_agent`、`chat_bindings`（`thinkrail.db`）；引擎原生存储。Agent 档案已取消（[07](07-default-agent.md)） | 不变 |
 
 数据库位置：`<exe 目录>/data/thinkrail.db`；指定 `--data-dir` 时为 `<data-dir>/thinkrail.db`。其余 JSON 数据和日志位置不变（02 §3.1）。
 

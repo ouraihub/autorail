@@ -1,0 +1,116 @@
+[
+ {
+  "name": "spec_grep",
+  "description": "Search the project's spec-graph: regex or substring match within spec files (files whose frontmatter carries `id` + `type`), optionally narrowed by metadata (type / tag / parent / depends-on). Returns size-bounded pages of path:line matches; follow the returned offset only if needed. Oversized text is capped at 2,000 lines / 50 KiB with full output in a temporary file. Read a matched file's body with the normal read tool.",
+  "inputSchema": {
+   "type": "object",
+   "required": ["pattern"],
+   "properties": {
+    "pattern": {"type": "string", "description": "Regex or substring to search for within spec files."},
+    "regex": {"type": "boolean", "description": "Treat pattern as a regular expression (default: substring)."},
+    "ignoreCase": {"type": "boolean", "description": "Case-insensitive match (default: true)."},
+    "type": {"type": "string", "description": "Only search specs with this frontmatter type."},
+    "tag": {"type": "string", "description": "Only search specs carrying this tag."},
+    "parent": {"type": "string", "description": "Only search specs whose parent is this id."},
+    "dependsOn": {"type": "string", "description": "Only search specs that depend-on this id."},
+    "limit": {"type": "integer", "minimum": 1, "description": "Matches per page (default/max: 200; the byte limit may return fewer)."},
+    "offset": {"type": "integer", "minimum": 0, "description": "Zero-based match offset (default: 0). Continue with the offset given in the result and the same filters; restart after source changes."}
+   }
+  }
+ },
+ {
+  "name": "spec_get",
+  "description": "Get one spec node by id: its frontmatter, path, and resolved links (forward + reverse edges across parent/depends-on/references/implements). Returns no prose body — read the file at the returned path with the read tool.",
+  "inputSchema": {
+   "type": "object",
+   "required": ["id"],
+   "properties": {
+    "id": {"type": "string", "description": "The spec id to look up."}
+   }
+  }
+ },
+ {
+  "name": "spec_graph",
+  "description": "Return a bounded slice of the spec-graph rooted at a node: `subtree` (down the parent tree), `ancestors` (up to the tree root), or `neighbors` (across a chosen edge and its reverse). Bounded by `depth` (default 1).",
+  "inputSchema": {
+   "type": "object",
+   "required": ["root", "direction"],
+   "properties": {
+    "root": {"type": "string", "description": "Id of the node to start from."},
+    "direction": {"type": "string", "enum": ["subtree", "ancestors", "neighbors"], "description": "subtree = down the parent tree; ancestors = up the parent chain; neighbors = across an edge and its reverse."},
+    "depth": {"type": "number", "description": "How many hops to expand (default: 1)."},
+    "edge": {"type": "string", "enum": ["parent", "depends-on", "references", "implements"], "description": "For direction=neighbors: which edge kind to traverse (default: depends-on)."}
+   }
+  }
+ },
+ {
+  "name": "spec_create",
+  "description": "Create a new spec file with scaffolded frontmatter (id, type, title, an optional status, and any links) and a heading-only body stub chosen by type. Fails if the file already exists, the id is already in use, or the path is not an indexable root-relative .md path. Edit prose afterward with the write/edit tools.",
+  "inputSchema": {
+   "type": "object",
+   "required": ["path", "id", "type", "title"],
+   "properties": {
+    "path": {"type": "string", "description": "Root-relative path for the new spec file, ending in .md (e.g. src/foo/SPEC.md). Must stay inside the project root."},
+    "id": {"type": "string", "description": "Unique spec id."},
+    "type": {"type": "string", "enum": ["goal-and-requirements", "architecture-design", "module-design", "submodule-design", "task-spec"], "description": "Spec type: goal-and-requirements | architecture-design | module-design | submodule-design | task-spec."},
+    "title": {"type": "string", "description": "Human-readable title."},
+    "status": {"type": "string", "enum": ["draft", "active", "stale", "done", "deprecated"], "description": "Lifecycle status: draft | active | stale | done | deprecated."},
+    "parent": {"type": "string", "description": "Parent id (the tree edge)."},
+    "dependsOn": {"type": "array", "items": {"type": "string"}, "description": "depends-on link ids."},
+    "references": {"type": "array", "items": {"type": "string"}, "description": "references link ids."},
+    "implements": {"type": "array", "items": {"type": "string"}, "description": "implements link ids."},
+    "covers": {"type": "array", "items": {"type": "string"}, "description": "covers ids."},
+    "tags": {"type": "array", "items": {"type": "string"}, "description": "tags."}
+   }
+  }
+ },
+ {
+  "name": "spec_update",
+  "description": "Edit a spec's frontmatter only (never its prose): set/overwrite scalar fields, remove fields, and add/remove entries in the list fields (depends-on/references/implements/covers/tags). Comments and any non-dialect fields are preserved. Prose is edited with the write/edit tools.",
+  "inputSchema": {
+   "type": "object",
+   "required": ["id"],
+   "properties": {
+    "id": {"type": "string", "description": "Id of the spec to update."},
+    "set": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Scalar frontmatter fields to set/overwrite (e.g. title, status, parent). For list fields (depends-on/references/implements/covers/tags) use addList/removeList."},
+    "remove": {"type": "array", "items": {"type": "string"}, "description": "Frontmatter field names to remove entirely."},
+    "addList": {
+     "type": "object",
+     "properties": {
+      "depends-on": {"type": "array", "items": {"type": "string"}},
+      "references": {"type": "array", "items": {"type": "string"}},
+      "implements": {"type": "array", "items": {"type": "string"}},
+      "covers": {"type": "array", "items": {"type": "string"}},
+      "tags": {"type": "array", "items": {"type": "string"}}
+     }
+    },
+    "removeList": {
+     "type": "object",
+     "properties": {
+      "depends-on": {"type": "array", "items": {"type": "string"}},
+      "references": {"type": "array", "items": {"type": "string"}},
+      "implements": {"type": "array", "items": {"type": "string"}},
+      "covers": {"type": "array", "items": {"type": "string"}},
+      "tags": {"type": "array", "items": {"type": "string"}}
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "spec_delete",
+  "description": "Delete a spec file by id. Other specs may still reference it afterward — run spec_validate to find dangling links.",
+  "inputSchema": {
+   "type": "object",
+   "required": ["id"],
+   "properties": {
+    "id": {"type": "string", "description": "Id of the spec to delete."}
+   }
+  }
+ },
+ {
+  "name": "spec_validate",
+  "description": "Validate the spec-graph: report dangling parent/depends-on/references/implements links, duplicate ids, and parent cycles.",
+  "inputSchema": {"type": "object", "properties": {}}
+ }
+]

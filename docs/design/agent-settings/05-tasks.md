@@ -214,6 +214,24 @@ flowchart LR
   - 发现并修复两个问题：在密码框按回车会关闭设置对话框；同步模型时在更新中读取页面导致 panic。
 - **未验证**：剪贴板复制内容、删除服务商、删除线路、改名、切换接入方式没有在窗口里操作；也没有接真实中转。
 
+### T16 app：编码搭档页（安装与每个引擎的服务商）
+
+- **读**：04 §7.10；Cherry Studio `src/renderer/pages/code/`。
+- **改**：`core::engine_setup`、`ModelPrefs.engine_providers` / `set_engine_provider`、`agents::install::ManagedEngines`、`routing::router::plan`、`panels/settings/coding.rs`、`strings/settings_coding.rs`。
+- **状态**：🟡。2026-11-01：
+  - `cargo test --workspace` 全部通过，新增 `engine_choice_picks_gateway_official_or_one_provider`，覆盖统一网关强制走网关、官方不投影、单个服务商保留直连、其他引擎不受影响、服务商删除后报 `Invalid`。
+  - `install::tests::installs_all_engines`（忽略的联网测试）在临时目录里装完三个引擎，用时 144 秒，`--version` 依次输出 `1.4.0`、`omp/18.14.2`、`0.2.1-rc.5`。
+  - 真实窗口（隔离 `--data-dir`）：
+    - OMP 在 `PATH` 上找到，路径 `…\.bun\bin\omp.exe`，显示“系统”。
+    - Pi 显示“未安装”；点“安装”后显示“安装中…”和提示，装完显示“内置 · 版本 1.4.0”。
+    - “设为默认”生成档案“Pi（编码搭档）”，并设为默认。
+    - “Pi 官方”点“启用”后显示“已启用”，底部链接跳到模型服务页。
+  - 用这次托管安装的 node 和 pi 跑 `smoke::pi_rpc_handshake`，通过。
+- **未验证**：
+  - 窗口里的 OMP、DSH 托管安装，以及它们在聊天里的真实对话（OMP 18.14.2 的握手也还没在聊天里复测）。
+  - 安装失败时的显示和“重试”。
+  - 统一网关、单个服务商在真实中转上的对话。
+
 ### T13 app：MCP 页
 
 - **读**：01 §1.5；02 §5；04 §7.8。

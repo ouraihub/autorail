@@ -15,7 +15,7 @@ use thinkrail_core::{
     Access, BackendKind, ChatId, Endpoint, EngineRouting, EnvValue, ErrorKind, Header, McpScope, McpServerInput,
     McpService, McpTransport, ModelPrefService, ModelRef, ModelRouter, ProbeTarget, ProjectId, ProjectedMcpTransport,
     Protocol, Provider, ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe, ModelType,
-    ProviderService, Result, RouteRequest, Secret, ThinkingLevel,
+    ProviderService, Result, RouteRequest, Secret, ThinkingLevel, EngineProvider,
 };
 use thinkrail_settings_store::SqliteSettingsStore;
 
@@ -866,4 +866,37 @@ fn gateway_refuses_requests_after_the_last_key_is_disabled() {
     set_key_enabled(&fx, &provider, 0, false);
     assert_eq!(post(&url, &[("x-api-key", token.expose())]).0, 502);
     assert!(up.seen().is_empty());
+}
+
+#[test]
+fn engine_choice_picks_gateway_official_or_one_provider() {
+    let fx = fixture();
+    let relay = create(&fx, input("Relay", Access::Direct), &KEYS[..1]);
+    let other = create(&fx, input("Other", Access::Direct), &KEYS[1..2]);
+    let router = router(&fx, Arc::new(FakeGateway::default()));
+    let pi = request(BackendKind::Pi, true);
+    let names = |routing: &EngineRouting| {
+        let mut names: Vec<_> = routing.providers.iter().map(|p| p.display_name.clone()).collect();
+        names.dedup();
+        names
+    };
+
+    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Gateway).unwrap();
+    let routing = router.prepare(&pi).unwrap();
+    assert_eq!(names(&routing), ["Relay", "Other"]);
+    assert!(routing.providers.iter().all(|p| p.base_url.starts_with("http://gateway.test/")), "统一网关 forces the gateway");
+
+    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Official).unwrap();
+    assert!(router.prepare(&pi).unwrap().providers.is_empty(), "官方 projects nothing");
+    assert!(router.catalog(BackendKind::Pi).unwrap().is_empty());
+
+    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Provider(other.id.clone())).unwrap();
+    let routing = router.prepare(&pi).unwrap();
+    assert_eq!(names(&routing), ["Other"]);
+    assert!(routing.providers.iter().all(|p| p.base_url.starts_with("https://relay.example")), "the provider keeps direct access");
+    assert_eq!(names(&router.prepare(&request(BackendKind::Omp, true)).unwrap()), ["Relay", "Other"], "other engines keep no choice");
+
+    ProviderService::delete(&*fx.store, &other.id, other.revision).unwrap();
+    kind(router.prepare(&pi), ErrorKind::Invalid);
+    assert_eq!(relay.input.name, "Relay");
 }

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use thinkrail_core::{
-    Access, BackendKind, ChatId, DefaultModel, EngineRouting, EnvBinding, EnvValue, Error, McpService, McpTransport,
+    Access, BackendKind, ChatId, DefaultModel, EngineProvider, EngineRouting, EnvBinding, EnvValue, Error, McpService, McpTransport,
     ModelChoice, ModelPrefService, ModelPrefs, ModelRouter, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
     ProjectedProvider, Protocol, Provider, ProviderModel, ProviderService, Result, RouteRequest, Secret,
 };
@@ -58,7 +58,7 @@ fn supports(backend: BackendKind, protocol: Protocol) -> bool {
 }
 
 fn no_enabled_key(provider: &Provider) -> Error {
-    Error::invalid(format!("提供方 {} 没有启用的 API 密钥，请在设置 → 提供方中启用一个。", provider.input.name))
+    Error::invalid(format!("提供方 {} 没有启用的 API 密钥，请在设置 → 模型服务中启用一个。", provider.input.name))
 }
 
 /// One (provider, protocol) pair that has models for the engine (04 §4.3 step 2).
@@ -83,12 +83,27 @@ fn project_model(model: &ProviderModel) -> ProjectedModel {
     }
 }
 
-/// Steps 1–3 of 04 §4.3: enabled providers × supported endpoints × enabled models.
-fn plan(providers: &[Provider], backend: BackendKind) -> Vec<PlannedRoute<'_>> {
+/// Steps 1–3 of 04 §4.3: the providers the engine's 编码搭档 choice allows × supported endpoints
+/// × enabled models. No choice and 统一网关 take every enabled provider (统一网关 forces the
+/// gateway); 官方 projects none; one provider keeps its own access mode and must be enabled.
+fn plan<'a>(providers: &'a [Provider], backend: BackendKind, choice: Option<&EngineProvider>) -> Result<Vec<PlannedRoute<'a>>> {
+    let chosen: Vec<&Provider> = match choice {
+        Some(EngineProvider::Official) => Vec::new(),
+        None | Some(EngineProvider::Gateway) => providers.iter().filter(|p| p.input.enabled).collect(),
+        Some(EngineProvider::Provider(id)) => match providers.iter().find(|p| &p.id == id && p.input.enabled) {
+            Some(provider) => vec![provider],
+            None => return Err(Error::invalid(format!(
+                "{} 在编码搭档中选择的服务商已删除或停用，请在设置 → 编码搭档中重新选择。",
+                backend.label()
+            ))),
+        },
+    };
+    let forced_gateway = choice == Some(&EngineProvider::Gateway);
     let mut routes = Vec::new();
-    for provider in providers.iter().filter(|p| p.input.enabled) {
+    for provider in chosen {
         // DSH cannot reference header values from the environment (04 §6.4).
-        let gateway = provider.input.access == Access::Gateway
+        let gateway = forced_gateway
+            || provider.input.access == Access::Gateway
             || (backend == BackendKind::Dsh && !provider.input.headers.is_empty());
         for endpoint in &provider.input.endpoints {
             if !supports(backend, endpoint.protocol) {
@@ -114,7 +129,7 @@ fn plan(providers: &[Provider], backend: BackendKind) -> Vec<PlannedRoute<'_>> {
             });
         }
     }
-    routes
+    Ok(routes)
 }
 
 /// The route a model is reached through: its first protocol that has a planned route.
@@ -253,9 +268,10 @@ impl Router {
 
     fn build(&self, request: &RouteRequest, mode: Mode) -> Result<EngineRouting> {
         let providers = self.providers.providers()?;
-        let routes = plan(&providers, request.backend);
+        let prefs = self.prefs.prefs()?;
+        let routes = plan(&providers, request.backend, prefs.engine_provider(request.backend))?;
         let default_model = if request.new_session {
-            default_model(&routes, &providers, &self.prefs.prefs()?)
+            default_model(&routes, &providers, &prefs)
         } else {
             None
         };
@@ -382,7 +398,7 @@ impl ModelRouter for Router {
     fn catalog(&self, backend: BackendKind) -> Result<Vec<ModelChoice>> {
         let providers = self.providers.providers()?;
         let prefs = self.prefs.prefs()?;
-        let routes = plan(&providers, backend);
+        let routes = plan(&providers, backend, prefs.engine_provider(backend))?;
         let mut out = Vec::new();
         for provider in providers.iter().filter(|p| p.input.enabled) {
             for model in provider.input.models.iter().filter(|m| usable(m)) {

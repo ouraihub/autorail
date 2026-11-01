@@ -285,3 +285,26 @@ pub(crate) fn commits(root: &Path, limit: usize) -> Result<Vec<Commit>> {
 pub(crate) fn null_device() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
+
+/// `git init -b main`, stage everything and an initial commit (empty when the folder is), so
+/// HEAD exists and worktrees work. A failure removes the new `.git`. When the user has no Git
+/// identity, the commit is signed `ThinkRail <thinkrail@localhost>` (original ThinkRail).
+pub(crate) fn bootstrap(root: &Path) -> Result<()> {
+    ok(root, &["init", "-q", "-b", "main"])?;
+    let committed = (|| {
+        ok(root, &["add", "-A"])?;
+        let mut args: Vec<&str> = Vec::new();
+        if run(root, &["config", "user.name"], &[1])?.stdout.trim().is_empty() {
+            args.extend(["-c", "user.name=ThinkRail"]);
+        }
+        if run(root, &["config", "user.email"], &[1])?.stdout.trim().is_empty() {
+            args.extend(["-c", "user.email=thinkrail@localhost"]);
+        }
+        args.extend(["commit", "-q", "--allow-empty", "--no-verify", "-m", "Initial commit"]);
+        ok(root, &args).map(|_| ())
+    })();
+    if committed.is_err() {
+        let _ = fs::remove_dir_all(root.join(".git"));
+    }
+    committed
+}
