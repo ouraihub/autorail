@@ -1,8 +1,7 @@
-//! ThinkRail Native desktop app: composition root, logging and GPUI views.
+//! ThinkRail Native desktop app: composition root and GPUI views; logging is `thinkrail-observability`.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod logging;
 mod panels;
 mod services;
 mod state;
@@ -63,12 +62,12 @@ fn main() {
         Ok(args) => args,
         Err(error) => fail(&format!("{error:#}")),
     };
-    let _log = match logging::init(&args.data_dir) {
-        Ok(guard) => guard,
+    let log = match thinkrail_observability::init(&args.data_dir) {
+        Ok(handle) => std::sync::Arc::new(handle),
         Err(error) => fail(&format!("{error:#}")),
     };
     info!(version = env!("CARGO_PKG_VERSION"), "app starting");
-    let (services, channels) = match services::build(&args.data_dir, &args.db_path) {
+    let (services, channels) = match services::build(&args.data_dir, &args.db_path, log.clone()) {
         Ok(built) => built,
         Err(error) => {
             error!(error = %format!("{error:#}"), "startup failed");

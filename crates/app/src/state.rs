@@ -9,17 +9,28 @@ use crate::services::Services;
 
 /// Runs blocking service work on the background executor and hands the result back to the view.
 /// The view decides what a late result means (e.g. by comparing the workspace it was issued for).
+///
+/// Each call is one `op{id at}` span (native-multi-agent 06 §2): the job, the completion and
+/// everything they log carry it, and the span closes with `op done ms=… ok=…`. `at` is the
+/// caller's source line.
+#[track_caller]
 pub fn run<V: 'static, T: Send + 'static>(
     cx: &mut Context<V>,
     job: impl FnOnce() -> Result<T> + Send + 'static,
     done: impl FnOnce(&mut V, Result<T>, &mut Context<V>) + 'static,
 ) {
-    let task = cx.background_executor().spawn(async move { job() });
+    let span = thinkrail_observability::op(std::panic::Location::caller());
+    let started = std::time::Instant::now();
+    let job_span = span.clone();
+    let task = cx.background_executor().spawn(async move { job_span.in_scope(job) });
     cx.spawn(async move |this, cx| {
         let result = task.await;
+        let _entered = span.enter();
+        let ok = result.is_ok();
         if this.update(cx, |view, cx| done(view, result, cx)).is_err() {
             debug!("view closed before its background job finished");
         }
+        thinkrail_observability::finish(started, ok);
     })
     .detach();
 }

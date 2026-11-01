@@ -13,7 +13,8 @@ A Cargo workspace of single-purpose crates. `core` holds the contracts; service 
 - `agents`: official pi / OMP JSONL and DSH ACP subprocess adapters, one `AgentRuntime` per backend. Node/Bun may run the selected external engine; neither runs application business services. Every launch stages the original ThinkRail workflow skills (`crates/agents/skills`, from `pi-thinkrail-workflow`, `spec-graph` and `pi-todos`) and loads them through the engine's own skill path (pi `--skill`, OMP `skills.customDirectories`, DSH `skill-filesystem.customSkillDirs`), plus the original `WORKFLOW_RULE` / `SPEC_RULE` system-prompt sections. The engine expands skill commands itself: `/skill:<name>` for pi and OMP, `/<name>` for DSH.
 - `host-tools`: the TODO / review and `spec_*` tool core over `plan-review`'s plan semantics and the workspace's spec files, the host's authenticated named pipe, and the stdio MCP server behind `thinkrail-native mcp-host`. pi and DSH reach it through that subcommand, OMP in-process through `set_host_tools`.
 - `ui`: visual tokens taken from the original ThinkRail themes, bundled fonts and stateless components. No services.
-- `app`: composition root, logging and the GPUI panels. Panels talk to services only through `AppState` and background jobs.
+- `observability`: the tracing subscriber, daily Beijing-time log files, the runtime log level, the per-action `op{id at}` span and the bounded tail the 后台日志 page reads.
+- `app`: composition root and the GPUI panels. Panels talk to services only through `AppState` and background jobs; `state::run` opens one `op` span per action.
 
 Service crates never depend on each other, except `host-tools` → `plan-review` for the shared plan operations. Engine adapters never call each other. Design detail, decisions and the acceptance matrix live in `docs/design/native-multi-agent`.
 

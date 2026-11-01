@@ -9,7 +9,7 @@ gpui_kit::assets::icon_assets!(
     Extra,
     [
         Folder, FolderOpen, FolderGit2, GitBranch, GitCompare, GitCommitHorizontal, Plus, X, ChevronRight,
-        ChevronDown, ChevronUp, Settings, SquareTerminal, RotateCcwClock, File, FileText, Files, FileDiff, FilePlus,
+        ChevronDown, ChevronUp, Settings, SquareTerminal, RotateCcwClock, File, FileText, Files, FileDiff, FilePlus, ScrollText,
         FileMinus, MessageSquare, MessageCirclePlus, List, ListTree, ListChecks, SendHorizontal, ArrowUp, Square,
         Circle, CircleCheck, CircleX, CircleQuestionMark, Check, Ban, LoaderCircle, TriangleAlert, CircleAlert, Copy,
         PanelLeft, Brain, Wrench, Clock, Undo2, Pencil, Trash, Eye, Search, Play, Pause, Minus, Bot, User,

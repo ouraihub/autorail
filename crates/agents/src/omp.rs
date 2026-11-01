@@ -294,10 +294,8 @@ impl OmpSession {
         let spawned = thread::Builder::new().name("omp-host-tool".into()).spawn(move || {
             let reply = match handler.call(&scope, &name, arguments) {
                 Ok(result) => tool_result(&id, &result.text, result.is_error),
-                Err(error) => {
-                    warn!(code = error.code(), tool = %name, "host tool failed");
-                    tool_result(&id, &error.to_string(), true)
-                }
+                // The handler logs the failure with its chat and duration.
+                Err(error) => tool_result(&id, &error.to_string(), true),
             };
             if cancelled.lock().remove(&id) {
                 debug!(tool = %name, "host tool result dropped: call was cancelled");

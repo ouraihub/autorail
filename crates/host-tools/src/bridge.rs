@@ -167,10 +167,8 @@ pub(crate) fn handle(line: &str, scope: &PlanScope, handler: &dyn HostToolHandle
             };
             match handler.call(scope, name, request["arguments"].clone()) {
                 Ok(result) => json!({"id": id, "result": result}),
-                Err(error) => {
-                    warn!(code = error.code(), tool = name, "host tool failed");
-                    json!({"id": id, "error": {"code": error.code(), "message": error.to_string()}})
-                }
+                // The handler logs the failure with its chat and duration.
+                Err(error) => json!({"id": id, "error": {"code": error.code(), "message": error.to_string()}}),
             }
         }
         _ => json!({"id": id, "error": {"code": "PROTOCOL", "message": "unknown method"}}),

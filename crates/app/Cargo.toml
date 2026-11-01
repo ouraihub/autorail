@@ -17,6 +17,7 @@ thinkrail-plan-review.workspace = true
 thinkrail-terminal.workspace = true
 thinkrail-agents.workspace = true
 thinkrail-host-tools.workspace = true
+thinkrail-observability.workspace = true
 thinkrail-ui.workspace = true
 thinkrail-settings-store.workspace = true
 thinkrail-routing.workspace = true
@@ -25,8 +26,6 @@ anyhow.workspace = true
 async-channel.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-tracing-appender.workspace = true
-tracing-subscriber.workspace = true
 vt100.workspace = true
 
 [lints]

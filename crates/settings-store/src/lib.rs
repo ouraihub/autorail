@@ -1,7 +1,9 @@
-//! The settings database `thinkrail.db` (agent-settings 04 §3, 07): providers with their keys,
-//! MCP servers, model preferences (incl. the default Agent) and chat bindings. Implements
-//! `ProviderService`, `McpService`, `ModelPrefService` and `ChatBindingService` on one Turso file.
+//! The settings database `thinkrail.db` (agent-settings 04 §3, 07; native-multi-agent 06):
+//! providers with their keys, MCP servers, model preferences (incl. the default Agent), chat
+//! bindings and host preferences. Implements `ProviderService`, `McpService`, `ModelPrefService`,
+//! `ChatBindingService` and `AppPrefService` on one Turso file.
 
+mod app_prefs;
 mod bindings;
 mod db;
 mod mask;

@@ -10,18 +10,19 @@ use anyhow::Context as _;
 use thinkrail_agents::{DshRuntime, ManagedEngines, OmpRuntime, PiRuntime};
 use serde_json::Value;
 use thinkrail_core::{
-    AgentRuntime, BackendKind, ChatBindingService, ChatId, Error, HostToolAccess, HostToolHandler, HostToolResult,
-    HostToolSpec, EngineSetup, McpService, ModelPrefService, ModelRouter, PlanReviewService, PlanScope, ProviderProbe,
-    ProviderService, Readiness, SessionEvent, SessionSink, TerminalEvent, TerminalService, TerminalSink, WorkspaceId,
-    WorkspaceRoots, WorkspaceService,
+    AgentRuntime, AppPrefService, BackendKind, ChatBindingService, ChatId, Error, ErrorCode as _, HostToolAccess,
+    HostToolHandler, HostToolResult, HostToolSpec, EngineSetup, McpService, ModelPrefService, ModelRouter,
+    PlanReviewService, PlanScope, ProviderProbe, ProviderService, Readiness, SessionEvent, SessionSink, TerminalEvent,
+    TerminalService, TerminalSink, WorkspaceId, WorkspaceRoots, WorkspaceService,
 };
+use thinkrail_observability::LogHandle;
 use thinkrail_host_tools::{HostTools, ToolBridge};
 use thinkrail_plan_review::JsonPlanReviewStore;
 use thinkrail_routing::{Gateway, Probe, Router};
 use thinkrail_settings_store::SqliteSettingsStore;
 use thinkrail_terminal::PtyTerminalService;
 use thinkrail_workspace::GitWorkspaceService;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// PTY output waits here when the UI falls behind (backpressure on the reader thread).
 const TERMINAL_QUEUE: usize = 256;
@@ -47,6 +48,10 @@ pub struct Services {
     pub probe: Arc<dyn ProviderProbe>,
     /// 编码搭档: managed / system engine installs.
     pub engines: Arc<dyn EngineSetup>,
+    /// Host preferences (log page switch, log level).
+    pub app_prefs: Arc<dyn AppPrefService>,
+    /// The installed logger: level switching and the log page's read-back.
+    pub log: Arc<LogHandle>,
     runtimes: [Arc<dyn AgentRuntime>; 3],
     /// `None` when the bridge could not start: chats then run without host tools.
     host_tools: Option<Arc<HostToolsHub>>,
@@ -147,8 +152,16 @@ impl HostToolHandler for NotifyingTools {
         self.inner.specs()
     }
 
+    /// Every engine's tool calls pass here (MCP bridge and OMP in-process): one line per call,
+    /// tool name, chat, duration and outcome only — never arguments or results (04 §3).
     fn call(&self, scope: &PlanScope, name: &str, arguments: Value) -> thinkrail_core::Result<HostToolResult> {
+        let started = std::time::Instant::now();
         let result = self.inner.call(scope, name, arguments);
+        let ms = started.elapsed().as_millis();
+        match &result {
+            Ok(reply) => info!(chat = %scope.chat, tool = name, ms, is_error = reply.is_error, "host tool called"),
+            Err(error) => warn!(chat = %scope.chat, tool = name, ms, code = error.code(), "host tool failed"),
+        }
         if self.changed.try_send(scope.clone()).is_err() {
             debug!("plan change dropped: UI is gone");
         }
@@ -176,7 +189,7 @@ impl TerminalSink for TerminalChannel {
     }
 }
 
-pub fn build(data_dir: &Path, db_path: &Path) -> anyhow::Result<(Services, Channels)> {
+pub fn build(data_dir: &Path, db_path: &Path, log: Arc<LogHandle>) -> anyhow::Result<(Services, Channels)> {
     std::fs::create_dir_all(data_dir).with_context(|| format!("无法创建数据目录 {}", data_dir.display()))?;
     let workspace = Arc::new(GitWorkspaceService::open(data_dir).context("无法打开工作区数据")?);
     let roots: Arc<dyn WorkspaceRoots> = workspace.clone();
@@ -187,6 +200,16 @@ pub fn build(data_dir: &Path, db_path: &Path) -> anyhow::Result<(Services, Chann
     let mcp: Arc<dyn McpService> = settings.clone();
     let prefs: Arc<dyn ModelPrefService> = settings.clone();
     let bindings: Arc<dyn ChatBindingService> = settings.clone();
+    let app_prefs: Arc<dyn AppPrefService> = settings.clone();
+    // Logging started at `info` before the database existed; now apply the stored level.
+    match app_prefs.app_prefs() {
+        Ok(stored) => {
+            if let Err(error) = log.set_level(stored.log_level) {
+                warn!(error = %format!("{error:#}"), "stored log level not applied");
+            }
+        }
+        Err(error) => warn!(code = error.code(), "app preferences not read; logging stays at info"),
+    }
     let gateway = Gateway::new(providers.clone());
     let router: Arc<dyn ModelRouter> = Arc::new(Router::new(providers.clone(), mcp.clone(), prefs.clone(), gateway));
     let probe: Arc<dyn ProviderProbe> = Arc::new(Probe::new(providers.clone()));
@@ -206,6 +229,8 @@ pub fn build(data_dir: &Path, db_path: &Path) -> anyhow::Result<(Services, Chann
         router,
         probe,
         engines: Arc::new(ManagedEngines::new(data_dir)),
+        app_prefs,
+        log,
         runtimes: [Arc::new(PiRuntime::new()), Arc::new(OmpRuntime::new()), Arc::new(DshRuntime::new())],
         host_tools,
         engine_support_dir: data_dir.join("engines"),

@@ -7530,6 +7530,7 @@ dependencies = [
  "thinkrail-agents",
  "thinkrail-core",
  "thinkrail-host-tools",
+ "thinkrail-observability",
  "thinkrail-plan-review",
  "thinkrail-routing",
  "thinkrail-settings-store",
@@ -7537,10 +7538,21 @@ dependencies = [
  "thinkrail-ui",
  "thinkrail-workspace",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "url",
  "vt100",
+]
+
+[[package]]
+name = "thinkrail-observability"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tempfile",
+ "thinkrail-core",
+ "time",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -8049,6 +8061,7 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
  "tracing-log",

@@ -73,9 +73,9 @@
 ## 3. 日志规范
 
 - **库**：`tracing`。`services` 只使用宏（`info!`、`warn!` 等），不安装 subscriber。
-- **初始化**：`app::logging::init(data_dir)`，在第一个窗口打开之前执行。
-  - 输出到 `<data>/logs/thinkrail-native.YYYY-MM-DD.log`，按日滚动，使用 `tracing-appender` 的非阻塞 writer，`WorkerGuard` 在 `main` 中持有到进程退出。
-  - 默认级别 `info`，可用环境变量 `THINKRAIL_LOG` 覆盖（`EnvFilter` 语法，例如 `thinkrail_agents=debug`）。
+- **初始化**：`thinkrail_observability::init(data_dir)`，在第一个窗口打开之前执行；返回的 `LogHandle` 一直持有到进程退出，退出时它负责把缓冲的日志写完。调用链、级别切换和日志页见 [06 日志与调用链](06-logging.md)。
+  - 输出到 `<data>/logs/thinkrail-native.YYYY-MM-DD.log`，按日滚动，只保留 14 个文件。写入使用 `tracing-appender` 的非阻塞 writer，时间戳是北京时间（`+08:00`）。
+  - 默认级别 `info`。设置页可切换为"调试"，对应 `info,thinkrail=debug`，并存进 `app_prefs`。设置了环境变量 `THINKRAIL_LOG`（`EnvFilter` 语法，例如 `thinkrail_agents=debug`）时，以环境变量为准。
   - debug 构建同时输出到 stderr。
 - **级别**：
 
@@ -87,7 +87,7 @@
   | `debug` | 协议帧的类型和大小、锁等待、请求耗时 |
   | `trace` | 不使用（不记录帧内容） |
 
-- **结构化字段**：统一使用 `chat`、`workspace`、`backend`、`runtime`、`code`、`elapsed_ms`。span 覆盖一次服务调用，例如 `#[instrument(skip_all, fields(workspace = %id))]`。
+- **结构化字段**：统一使用 `chat`、`workspace`、`backend`、`runtime`、`code`，耗时用 `ms`。一次界面操作对应一个 `op{id at}` span，由 `state::run` 统一创建（06 §2），调用方不用自己建 span。
 - **禁止记录**：凭据、环境变量值、prompt 和消息正文、工具参数和结果、文件内容、终端输出。路径只在 `debug` 级别记录。
 - **`print!` / `eprint!`**：clippy 中 deny / warn，只有日志初始化之前的启动失败可以写 stderr。
 

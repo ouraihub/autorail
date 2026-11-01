@@ -38,6 +38,8 @@ pub(crate) struct Projection {
     sizes: Vec<usize>,
     total: usize,
     running: bool,
+    /// When the current turn started; `None` while idle.
+    turn_started: Option<std::time::Instant>,
     closed: bool,
     sink: Arc<dyn SessionSink>,
 }
@@ -58,7 +60,7 @@ impl Projection {
             last_error: None,
             revision: next_revision(),
         };
-        Self { snapshot, sizes: Vec::new(), total: 0, running: false, closed: false, sink }
+        Self { snapshot, sizes: Vec::new(), total: 0, running: false, turn_started: None, closed: false, sink }
     }
 
     pub(crate) fn snapshot(&self) -> SessionSnapshot {
@@ -99,6 +101,12 @@ impl Projection {
     pub(crate) fn set_running(&mut self, running: bool) {
         if self.running != running {
             self.running = running;
+            if running {
+                tracing::info!(chat = %self.snapshot.id, "agent turn started");
+                self.turn_started = Some(std::time::Instant::now());
+            } else if let Some(started) = self.turn_started.take() {
+                tracing::info!(chat = %self.snapshot.id, ms = started.elapsed().as_millis() as u64, "agent turn ended");
+            }
             self.publish();
         }
     }
@@ -110,6 +118,9 @@ impl Projection {
         }
         self.closed = true;
         self.running = false;
+        if let Some(started) = self.turn_started.take() {
+            tracing::warn!(chat = %self.snapshot.id, ms = started.elapsed().as_millis() as u64, "agent turn cut off: engine closed");
+        }
         self.snapshot.interactions.clear();
         if let Some(error) = error {
             self.error(error);

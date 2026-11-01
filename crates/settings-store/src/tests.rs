@@ -563,6 +563,7 @@ fn migration_creates_tables_and_reopens_durably() {
     assert_eq!(
         tables,
         [
+            "app_prefs",
             "chat_bindings",
             "hidden_models",
             "mcp_overrides",

@@ -8,6 +8,7 @@ pub mod files;
 pub mod projects;
 pub mod settings;
 pub mod settings_coding;
+pub mod settings_logs;
 pub mod settings_models;
 pub mod settings_providers;
 pub mod settings_mcp;
