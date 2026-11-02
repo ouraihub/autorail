@@ -17,11 +17,11 @@ mod projection;
 mod projection_engine;
 mod rpc;
 mod session;
-mod workflow;
-#[cfg(test)]
-mod testing;
 #[cfg(test)]
 mod smoke;
+#[cfg(test)]
+mod testing;
+mod workflow;
 
 pub use dsh::DshRuntime;
 pub use install::ManagedEngines;

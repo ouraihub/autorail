@@ -11,9 +11,10 @@ use std::{
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorKind, Interaction,
-    InteractionAnswer, InteractionKind, InteractionOption, IoContext, Message, ModelInfo, NativeSessionKey, Result, Role,
-    SessionSink, SessionSnapshot, StartSession, ThinkingLevel, ToolStatus,
+    AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorKind,
+    Interaction, InteractionAnswer, InteractionKind, InteractionOption, IoContext, Message,
+    ModelInfo, NativeSessionKey, Result, Role, SessionSink, SessionSnapshot, StartSession,
+    ThinkingLevel, ToolStatus,
 };
 use tracing::{debug, info};
 
@@ -29,8 +30,14 @@ use crate::{
 };
 
 const CLOSE: Duration = Duration::from_secs(10);
-const CAPABILITIES: Capabilities =
-    Capabilities { resume: false, history_replay: false, token_deltas: false, questions: false, tool_permissions: false, model_switch: true };
+const CAPABILITIES: Capabilities = Capabilities {
+    resume: false,
+    history_replay: false,
+    token_deltas: false,
+    questions: false,
+    tool_permissions: false,
+    model_switch: true,
+};
 const MODEL_OPTION: &str = "model";
 const METHOD_NOT_FOUND: i64 = -32601;
 
@@ -55,7 +62,11 @@ impl AgentRuntime for DshRuntime {
         CAPABILITIES
     }
 
-    fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
+    fn start(
+        &self,
+        request: StartSession,
+        sink: Arc<dyn SessionSink>,
+    ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Dsh)?;
         let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
@@ -67,9 +78,12 @@ impl AgentRuntime for DshRuntime {
             permissions: Mutex::new(HashMap::new()),
         });
         let reader = dsh.clone();
-        session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| reader.on_frame(frame))?;
+        session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| {
+            reader.on_frame(frame)
+        })?;
         let deadline = Instant::now() + HANDSHAKE;
-        dsh.handshake(&request, deadline).map_err(|error| live.fail_start(error, None))?;
+        dsh.handshake(&request, deadline)
+            .map_err(|error| live.fail_start(error, None))?;
         info!(chat = %request.chat, backend = "dsh", "agent session started");
         Ok(dsh)
     }
@@ -82,9 +96,14 @@ fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     let mut host_args = vec!["--profile".to_owned(), "acp".to_owned()];
     let mut host_env: Vec<_> = process::routing_env(&request.routing).collect();
     let skills = workflow::stage_skills(&request.support_dir)?;
-    let patch = projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing, &skills)?;
+    let patch =
+        projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing, &skills)?;
     let patch = preserve_user_routes(&home, patch, &mut host_env)?;
-    let path = host::write_support(&request.support_dir, projection_engine::DSH_PATCH_FILE, &patch)?;
+    let path = host::write_support(
+        &request.support_dir,
+        projection_engine::DSH_PATCH_FILE,
+        &patch,
+    )?;
     host_args.extend(["--patch".to_owned(), path.display().to_string()]);
     Ok(LaunchSpec {
         launch: &request.launch,
@@ -97,8 +116,11 @@ fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     })
 }
 
-
-fn preserve_user_routes(home: &Path, patch: String, env: &mut Vec<(String, std::ffi::OsString)>) -> Result<String> {
+fn preserve_user_routes(
+    home: &Path,
+    patch: String,
+    env: &mut Vec<(String, std::ffi::OsString)>,
+) -> Result<String> {
     use serde_yaml_ng::Value as Yaml;
     if !patch.contains("- id: llm-pi-ai\n") {
         return Ok(patch);
@@ -107,17 +129,27 @@ fn preserve_user_routes(home: &Path, patch: String, env: &mut Vec<(String, std::
         let text = if text.trim_start().starts_with("%") {
             text.to_owned()
         } else {
-            format!("%TAG !! !\n---\n{}", text.trim_start().strip_prefix("---").unwrap_or(text))
+            format!(
+                "%TAG !! !\n---\n{}",
+                text.trim_start().strip_prefix("---").unwrap_or(text)
+            )
         };
         serde_yaml_ng::from_str::<Yaml>(&text)
             .map_err(|_| Error::invalid("DSH 覆盖层不是有效的 YAML，请检查 cordis.patch.yml"))
     };
     let mut original = serde_json::Map::new();
-    for path in [home.join("profiles/acp/cordis.patch.yml"), home.join("cordis.patch.yml")] {
+    for path in [
+        home.join("profiles/acp/cordis.patch.yml"),
+        home.join("cordis.patch.yml"),
+    ] {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return Err(Error::invalid("无法读取 DSH 用户覆盖层，请检查配置目录权限")),
+            Err(_) => {
+                return Err(Error::invalid(
+                    "无法读取 DSH 用户覆盖层，请检查配置目录权限",
+                ));
+            }
         };
         let parsed = parse(&text)?;
         if let Some(entries) = parsed.as_sequence() {
@@ -129,9 +161,14 @@ fn preserve_user_routes(home: &Path, patch: String, env: &mut Vec<(String, std::
                         Yaml::Null => serde_json::Map::new(),
                         Yaml::Tagged(_) => {
                             let value = yaml_expressions(config)?;
-                            serde_json::Map::from_iter([("__jsExpr".into(), value["__jsExpr"].clone())])
+                            serde_json::Map::from_iter([(
+                                "__jsExpr".into(),
+                                value["__jsExpr"].clone(),
+                            )])
                         }
-                        _ => yaml_expressions(config)?.as_object().cloned()
+                        _ => yaml_expressions(config)?
+                            .as_object()
+                            .cloned()
                             .ok_or_else(|| Error::invalid("DSH 提供方 config 必须是对象"))?,
                     };
                 }
@@ -143,9 +180,13 @@ fn preserve_user_routes(home: &Path, patch: String, env: &mut Vec<(String, std::
     }
     let projected = parse(&patch)?;
     let mut output = Vec::new();
-    for entry in projected.as_sequence().ok_or_else(|| Error::protocol("DSH 投影不是列表"))? {
+    for entry in projected
+        .as_sequence()
+        .ok_or_else(|| Error::protocol("DSH 投影不是列表"))?
+    {
         if entry["id"].as_str() == Some("llm-pi-ai") {
-            let projected = serde_json::to_value(&entry["config"]).map_err(|_| Error::protocol("无法编码 DSH 提供方投影"))?;
+            let projected = serde_json::to_value(&entry["config"])
+                .map_err(|_| Error::protocol("无法编码 DSH 提供方投影"))?;
             let value = serde_json::to_string(&json!({"base": original, "projected": projected}))
                 .map_err(|_| Error::protocol("无法编码 DSH 合并配置"))?;
             env.push(("THINKRAIL_DSH_MERGED_CONFIG".into(), value.into()));
@@ -156,7 +197,10 @@ fn preserve_user_routes(home: &Path, patch: String, env: &mut Vec<(String, std::
                 "const base = visit(raw.base); return { ...base, providers: { ...base.providers, ...raw.projected.providers } }; ",
                 "})(JSON.parse(process.env.THINKRAIL_DSH_MERGED_CONFIG))\n").to_owned());
         } else {
-            output.push(serde_yaml_ng::to_string(&vec![entry]).map_err(|_| Error::protocol("无法编码 DSH 覆盖层"))?);
+            output.push(
+                serde_yaml_ng::to_string(&vec![entry])
+                    .map_err(|_| Error::protocol("无法编码 DSH 覆盖层"))?,
+            );
         }
     }
     Ok(output.concat())
@@ -166,15 +210,30 @@ fn yaml_expressions(value: &serde_yaml_ng::Value) -> Result<Value> {
     use serde_yaml_ng::Value as Yaml;
     match value {
         Yaml::Tagged(tagged) if tagged.tag == "tag:yaml.org,2002:js" || tagged.tag == "!js" => {
-            let expression = tagged.value.as_str().ok_or_else(|| Error::invalid("DSH !!js 表达式必须是字符串"))?;
+            let expression = tagged
+                .value
+                .as_str()
+                .ok_or_else(|| Error::invalid("DSH !!js 表达式必须是字符串"))?;
             Ok(json!({"__jsExpr": expression}))
         }
-        Yaml::Tagged(_) => Err(Error::invalid("DSH 提供方使用了不支持的 YAML 标签，请使用普通值或 !!js")),
-        Yaml::Sequence(items) => items.iter().map(yaml_expressions).collect::<Result<Vec<_>>>().map(Value::Array),
-        Yaml::Mapping(items) => items.iter().map(|(key, value)| {
-            let key = key.as_str().ok_or_else(|| Error::invalid("DSH 提供方字段名必须是字符串"))?;
-            Ok((key.to_owned(), yaml_expressions(value)?))
-        }).collect::<Result<serde_json::Map<_, _>>>().map(Value::Object),
+        Yaml::Tagged(_) => Err(Error::invalid(
+            "DSH 提供方使用了不支持的 YAML 标签，请使用普通值或 !!js",
+        )),
+        Yaml::Sequence(items) => items
+            .iter()
+            .map(yaml_expressions)
+            .collect::<Result<Vec<_>>>()
+            .map(Value::Array),
+        Yaml::Mapping(items) => items
+            .iter()
+            .map(|(key, value)| {
+                let key = key
+                    .as_str()
+                    .ok_or_else(|| Error::invalid("DSH 提供方字段名必须是字符串"))?;
+                Ok((key.to_owned(), yaml_expressions(value)?))
+            })
+            .collect::<Result<serde_json::Map<_, _>>>()
+            .map(Value::Object),
         _ => serde_json::to_value(value).map_err(|_| Error::invalid("无法编码 DSH 配置值")),
     }
 }
@@ -213,7 +272,8 @@ fn mcp_executable(command: &str) -> Result<PathBuf> {
         return Ok(process::plain_path(path));
     }
     if path.components().count() == 1 {
-        let extensions = std::env::var_os("PATHEXT").unwrap_or_else(|| ".EXE;.CMD;.BAT;.COM".into());
+        let extensions =
+            std::env::var_os("PATHEXT").unwrap_or_else(|| ".EXE;.CMD;.BAT;.COM".into());
         let extensions = extensions.to_string_lossy();
         if let Some(search) = std::env::var_os("PATH") {
             for directory in std::env::split_paths(&search) {
@@ -236,15 +296,28 @@ fn mcp_executable(command: &str) -> Result<PathBuf> {
             }
         }
     }
-    Err(Error::invalid(format!("找不到 MCP 命令 {command}，请填写可执行文件的绝对路径，或将它加入 PATH")))
+    Err(Error::invalid(format!(
+        "找不到 MCP 命令 {command}，请填写可执行文件的绝对路径，或将它加入 PATH"
+    )))
 }
 
 /// DSH fails session creation when one of its MCP servers cannot start; point at the settings.
 fn mcp_hint(error: Error, request: &StartSession) -> Error {
     match error {
         Error::Domain { kind, context } if !request.routing.mcp.is_empty() => {
-            let names: Vec<&str> = request.routing.mcp.iter().map(|s| s.name.as_str()).collect();
-            Error::new(kind, format!("{context}；若是 MCP 服务器（{}）无法启动，请检查 设置 → MCP 服务器", names.join("、")))
+            let names: Vec<&str> = request
+                .routing
+                .mcp
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            Error::new(
+                kind,
+                format!(
+                    "{context}；若是 MCP 服务器（{}）无法启动，请检查 设置 → MCP 服务器",
+                    names.join("、")
+                ),
+            )
         }
         error => error,
     }
@@ -266,7 +339,10 @@ impl DshSession {
             session::left(deadline),
         )?;
         if init["protocolVersion"] != 1 {
-            return Err(Error::protocol(format!("DSH 返回了不支持的 ACP 协议版本 {}", init["protocolVersion"])));
+            return Err(Error::protocol(format!(
+                "DSH 返回了不支持的 ACP 协议版本 {}",
+                init["protocolVersion"]
+            )));
         }
         let sessions = &init["agentCapabilities"]["sessionCapabilities"];
         let resume = sessions.get("resume").is_some();
@@ -276,10 +352,15 @@ impl DshSession {
             Some(_) if !resume => return Err(Error::invalid("这个 DSH 版本不支持恢复会话")),
             Some(key) => {
                 let reply = self.call("session/resume", params, session::left(deadline));
-                (key.as_str().to_owned(), reply.map_err(|e| mcp_hint(e, request))?)
+                (
+                    key.as_str().to_owned(),
+                    reply.map_err(|e| mcp_hint(e, request))?,
+                )
             }
             None => {
-                let reply = self.call("session/new", params, session::left(deadline)).map_err(|e| mcp_hint(e, request))?;
+                let reply = self
+                    .call("session/new", params, session::left(deadline))
+                    .map_err(|e| mcp_hint(e, request))?;
                 let key = reply["sessionId"]
                     .as_str()
                     .filter(|s| !s.is_empty())
@@ -290,15 +371,29 @@ impl DshSession {
         };
         key.clone_into(&mut self.key.lock());
         let mut reply = reply;
-        let mut options = reply.get_mut("configOptions").map(Value::take).unwrap_or_default();
+        let mut options = reply
+            .get_mut("configOptions")
+            .map(Value::take)
+            .unwrap_or_default();
         // `routing.default_model` is only given for a new session (DSH starts at the `acp` entry's
         // model); its level is applied right after `session/new`.
-        if let Some(level) = request.routing.default_model.as_ref().and_then(|m| m.effort) {
-            options = self.set_option(effort_option(&key, &options, level)?, session::left(deadline))?;
+        if let Some(level) = request
+            .routing
+            .default_model
+            .as_ref()
+            .and_then(|m| m.effort)
+        {
+            options = self.set_option(
+                effort_option(&key, &options, level)?,
+                session::left(deadline),
+            )?;
         }
         let mut p = self.live.state.lock();
         p.set_key(NativeSessionKey::from(key));
-        p.set_capabilities(Capabilities { resume, ..CAPABILITIES });
+        p.set_capabilities(Capabilities {
+            resume,
+            ..CAPABILITIES
+        });
         p.set_model(model(&options));
         p.publish();
         Ok(())
@@ -306,17 +401,26 @@ impl DshSession {
 
     fn call(&self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
         let id = new_id();
-        self.live.request(id.clone(), &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}), timeout)
+        self.live.request(
+            id.clone(),
+            &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
+            timeout,
+        )
     }
 
     fn notify(&self, method: &str, params: Value) -> Result<()> {
-        self.live.process.send(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
+        self.live
+            .process
+            .send(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }
 
     /// `session/set_config_option`; DSH answers with the complete resulting `configOptions`.
     fn set_option(&self, params: Value, timeout: Duration) -> Result<Value> {
         let mut reply = self.call("session/set_config_option", params, timeout)?;
-        Ok(reply.get_mut("configOptions").map(Value::take).unwrap_or_default())
+        Ok(reply
+            .get_mut("configOptions")
+            .map(Value::take)
+            .unwrap_or_default())
     }
 
     fn on_frame(&self, frame: Value) -> Result<()> {
@@ -357,7 +461,9 @@ impl DshSession {
             _ => {
                 if let Some(id) = request_id {
                     let error = json!({"code": METHOD_NOT_FOUND, "message": format!("method not found: {method}")});
-                    self.live.process.send(&json!({"jsonrpc": "2.0", "id": id, "error": error}))?;
+                    self.live
+                        .process
+                        .send(&json!({"jsonrpc": "2.0", "id": id, "error": error}))?;
                 }
                 debug!(method, "unhandled ACP method");
             }
@@ -372,19 +478,28 @@ impl DshSession {
     fn on_permission(&self, id: Value, params: &Value) -> Result<()> {
         if params["sessionId"] != *self.key.lock() {
             let cancelled = json!({"outcome": {"outcome": "cancelled"}});
-            return self.live.process.send(&json!({"jsonrpc": "2.0", "id": id, "result": cancelled}));
+            return self
+                .live
+                .process
+                .send(&json!({"jsonrpc": "2.0", "id": id, "result": cancelled}));
         }
         let options = params["options"]
             .as_array()
             .filter(|o| !o.is_empty())
             .ok_or_else(|| Error::protocol("权限请求缺少 options"))?
             .iter()
-            .map(|o| InteractionOption { id: str_of(&o["optionId"]), label: str_of(&o["name"]) })
+            .map(|o| InteractionOption {
+                id: str_of(&o["optionId"]),
+                label: str_of(&o["name"]),
+            })
             .collect();
-        let tool_call_id = params["toolCall"]["toolCallId"].as_str().unwrap_or_default();
+        let tool_call_id = params["toolCall"]["toolCallId"]
+            .as_str()
+            .unwrap_or_default();
         let title = {
             let p = self.live.state.lock();
-            p.tool_owner(tool_call_id).and_then(|owner| tool_name(&p.snapshot(), &owner, tool_call_id))
+            p.tool_owner(tool_call_id)
+                .and_then(|owner| tool_name(&p.snapshot(), &owner, tool_call_id))
         }
         .unwrap_or_default();
         let interaction = Interaction {
@@ -395,13 +510,17 @@ impl DshSession {
             options,
             detail: params.clone(),
         };
-        self.permissions.lock().insert(interaction.request_id.clone(), id);
+        self.permissions
+            .lock()
+            .insert(interaction.request_id.clone(), id);
         self.live.state.lock().add_interaction(interaction);
         Ok(())
     }
 
     fn reply_permission(&self, rpc_id: Value, outcome: Value) -> Result<()> {
-        self.live.process.send(&json!({"jsonrpc": "2.0", "id": rpc_id, "result": {"outcome": outcome}}))
+        self.live
+            .process
+            .send(&json!({"jsonrpc": "2.0", "id": rpc_id, "result": {"outcome": outcome}}))
     }
 
     /// ACP: a client cancelling a turn answers its open permission requests `cancelled` first.
@@ -446,8 +565,14 @@ impl AgentSession for DshSession {
         )?;
         {
             let mut p = self.live.state.lock();
-            let content = vec![ContentBlock::Text { text: text.to_owned() }];
-            p.upsert(Message { id: format!("user-{id}"), role: Role::User, content });
+            let content = vec![ContentBlock::Text {
+                text: text.to_owned(),
+            }];
+            p.upsert(Message {
+                id: format!("user-{id}"),
+                role: Role::User,
+                content,
+            });
             p.set_running(true);
         }
         let key = self.key.lock().clone();
@@ -510,7 +635,12 @@ impl AgentSession for DshSession {
     }
 
     /// Switches the model, then the effort the new model offers; the snapshot follows each reply.
-    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()> {
+    fn set_model(
+        &self,
+        provider: &str,
+        model_id: &str,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<()> {
         self.live.ensure_idle()?;
         let key = self.key.lock().clone();
         let options = self.set_option(model_option(&key, provider, model_id), COMMAND)?;
@@ -525,16 +655,28 @@ impl AgentSession for DshSession {
 
 fn chunk_block(content: &Value, thought: bool) -> Option<ContentBlock> {
     match content["type"].as_str()? {
-        "text" if thought => Some(ContentBlock::Thinking { text: str_of(&content["text"]) }),
-        "text" => Some(ContentBlock::Text { text: str_of(&content["text"]) }),
-        "image" => Some(ContentBlock::Image { mime_type: str_of(&content["mimeType"]) }),
+        "text" if thought => Some(ContentBlock::Thinking {
+            text: str_of(&content["text"]),
+        }),
+        "text" => Some(ContentBlock::Text {
+            text: str_of(&content["text"]),
+        }),
+        "image" => Some(ContentBlock::Image {
+            mime_type: str_of(&content["mimeType"]),
+        }),
         _ => None,
     }
 }
 
 /// A failed turn shows as a system note in the transcript, like a pi/OMP model error.
 fn turn_failed(p: &mut Projection, note_id: String, error: &Error) {
-    let note = Message { id: note_id, role: Role::System, content: vec![ContentBlock::Text { text: error.to_string() }] };
+    let note = Message {
+        id: note_id,
+        role: Role::System,
+        content: vec![ContentBlock::Text {
+            text: error.to_string(),
+        }],
+    };
     p.upsert(note);
     p.error(session_error(error));
 }
@@ -565,10 +707,20 @@ fn tool_output(items: &[Value]) -> String {
 }
 
 fn tool_name(snapshot: &SessionSnapshot, owner: &str, tool_call_id: &str) -> Option<String> {
-    snapshot.messages.iter().find(|m| m.id == owner)?.content.iter().find_map(|block| match block {
-        ContentBlock::Tool { tool_call_id: id, name, .. } if id == tool_call_id => Some(name.clone()),
-        _ => None,
-    })
+    snapshot
+        .messages
+        .iter()
+        .find(|m| m.id == owner)?
+        .content
+        .iter()
+        .find_map(|block| match block {
+            ContentBlock::Tool {
+                tool_call_id: id,
+                name,
+                ..
+            } if id == tool_call_id => Some(name.clone()),
+            _ => None,
+        })
 }
 
 /// `session/set_config_option` params selecting `provider`/`model_id`. The value is the option's
@@ -581,23 +733,44 @@ fn model_option(session: &str, provider: &str, model_id: &str) -> Value {
 fn effort_option(session: &str, options: &Value, level: ThinkingLevel) -> Result<Value> {
     let id = thought_level(options)
         .and_then(|option| option["id"].as_str())
-        .ok_or_else(|| Error::invalid(format!("DSH 当前模型不支持设置推理力度（{}）", level_name(level))))?;
+        .ok_or_else(|| {
+            Error::invalid(format!(
+                "DSH 当前模型不支持设置推理力度（{}）",
+                level_name(level)
+            ))
+        })?;
     Ok(json!({"sessionId": session, "configId": id, "value": level_name(level)}))
 }
 
 fn thought_level(options: &Value) -> Option<&Value> {
-    options.as_array()?.iter().find(|o| o["category"] == "thought_level")
+    options
+        .as_array()?
+        .iter()
+        .find(|o| o["category"] == "thought_level")
 }
 
 /// The model option's `currentValue` is a JSON-encoded `[provider, model]`; the effort is the
 /// `thought_level` option's `currentValue` (`""` = provider default, recorded as `None`).
 fn model(options: &Value) -> Option<ModelInfo> {
-    let option = options.as_array()?.iter().find(|o| o["category"] == "model")?;
+    let option = options
+        .as_array()?
+        .iter()
+        .find(|o| o["category"] == "model")?;
     let value = option["currentValue"].as_str()?;
-    let effort = thought_level(options).and_then(|o| o["currentValue"].as_str()).and_then(rpc::thinking_level);
+    let effort = thought_level(options)
+        .and_then(|o| o["currentValue"].as_str())
+        .and_then(rpc::thinking_level);
     match serde_json::from_str::<(String, String)>(value) {
-        Ok((provider, id)) => Some(ModelInfo { provider: Some(provider), id, effort }),
-        Err(_) => Some(ModelInfo { provider: None, id: value.to_owned(), effort }),
+        Ok((provider, id)) => Some(ModelInfo {
+            provider: Some(provider),
+            id,
+            effort,
+        }),
+        Err(_) => Some(ModelInfo {
+            provider: None,
+            id: value.to_owned(),
+            effort,
+        }),
     }
 }
 
@@ -610,15 +783,29 @@ fn str_of(value: &Value) -> String {
 fn apply_update(p: &mut Projection, update: &Value) {
     match update["sessionUpdate"].as_str() {
         Some(kind @ ("agent_message_chunk" | "agent_thought_chunk" | "user_message_chunk")) => {
-            let Some(block) = chunk_block(&update["content"], kind == "agent_thought_chunk") else { return };
-            let role = if kind == "user_message_chunk" { Role::User } else { Role::Assistant };
-            let id = update["messageId"].as_str().map_or_else(new_id, str::to_owned);
+            let Some(block) = chunk_block(&update["content"], kind == "agent_thought_chunk") else {
+                return;
+            };
+            let role = if kind == "user_message_chunk" {
+                Role::User
+            } else {
+                Role::Assistant
+            };
+            let id = update["messageId"]
+                .as_str()
+                .map_or_else(new_id, str::to_owned);
             if !p.update(&id, |m| m.content.push(block.clone())) {
-                p.upsert(Message { id, role, content: vec![block] });
+                p.upsert(Message {
+                    id,
+                    role,
+                    content: vec![block],
+                });
             }
         }
         Some("tool_call") => {
-            let Some(tool_call_id) = update["toolCallId"].as_str() else { return };
+            let Some(tool_call_id) = update["toolCallId"].as_str() else {
+                return;
+            };
             let tool = ContentBlock::Tool {
                 tool_call_id: tool_call_id.to_owned(),
                 name: str_of(&update["title"]),
@@ -626,10 +813,16 @@ fn apply_update(p: &mut Projection, update: &Value) {
                 input: update.get("rawInput").cloned(),
                 output: None,
             };
-            p.upsert(Message { id: format!("tool-{tool_call_id}"), role: Role::Assistant, content: vec![tool] });
+            p.upsert(Message {
+                id: format!("tool-{tool_call_id}"),
+                role: Role::Assistant,
+                content: vec![tool],
+            });
         }
         Some("tool_call_update") => {
-            let Some(tool_call_id) = update["toolCallId"].as_str() else { return };
+            let Some(tool_call_id) = update["toolCallId"].as_str() else {
+                return;
+            };
             let status = tool_status(&update["status"]).unwrap_or(ToolStatus::Running);
             let output = update["content"].as_array().map(|items| tool_output(items));
             p.set_tool(tool_call_id, status, output);
@@ -643,7 +836,9 @@ fn apply_update(p: &mut Projection, update: &Value) {
 fn permission_outcome(interaction: &Interaction, answer: &InteractionAnswer) -> Result<Value> {
     match answer {
         InteractionAnswer::Cancel => Ok(json!({"outcome": "cancelled"})),
-        InteractionAnswer::Select { option_id } if interaction.options.iter().any(|o| &o.id == option_id) => {
+        InteractionAnswer::Select { option_id }
+            if interaction.options.iter().any(|o| &o.id == option_id) =>
+        {
             Ok(json!({"outcome": "selected", "optionId": option_id}))
         }
         _ => Err(Error::invalid("权限请求只能选择给出的选项或取消")),

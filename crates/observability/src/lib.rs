@@ -12,7 +12,8 @@ use thinkrail_core::LogLevel;
 use time::{UtcOffset, format_description::well_known::Rfc3339};
 use tracing_appender::{non_blocking::WorkerGuard, rolling};
 use tracing_subscriber::{
-    EnvFilter, Registry, fmt, fmt::time::OffsetTime, layer::SubscriberExt as _, reload, util::SubscriberInitExt as _,
+    EnvFilter, Registry, fmt, fmt::time::OffsetTime, layer::SubscriberExt as _, reload,
+    util::SubscriberInitExt as _,
 };
 
 pub use op::{finish, op};
@@ -49,7 +50,10 @@ pub struct LogHandle {
 
 impl std::fmt::Debug for LogHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LogHandle").field("dir", &self.dir).field("pinned", &self.pinned).finish_non_exhaustive()
+        f.debug_struct("LogHandle")
+            .field("dir", &self.dir)
+            .field("pinned", &self.pinned)
+            .finish_non_exhaustive()
     }
 }
 
@@ -69,7 +73,9 @@ impl LogHandle {
         if self.pinned {
             return Ok(());
         }
-        self.filter.reload(filter(level)).context("无法切换日志级别")?;
+        self.filter
+            .reload(filter(level))
+            .context("无法切换日志级别")?;
         tracing::info!(level = level.as_str(), "log level changed");
         Ok(())
     }
@@ -98,10 +104,24 @@ pub fn init(data_dir: &Path) -> anyhow::Result<LogHandle> {
     let pinned = env.is_some();
     let (level_layer, handle) = reload::Layer::new(env.unwrap_or_else(|| filter(LogLevel::Info)));
     let timer = OffsetTime::new(BEIJING, Rfc3339);
-    let file = fmt::layer().with_writer(writer).with_ansi(false).with_target(true).with_timer(timer.clone());
+    let file = fmt::layer()
+        .with_writer(writer)
+        .with_ansi(false)
+        .with_target(true)
+        .with_timer(timer.clone());
     let registry = tracing_subscriber::registry().with(level_layer).with(file);
     #[cfg(debug_assertions)]
-    let registry = registry.with(fmt::layer().with_writer(std::io::stderr).with_target(true).with_timer(timer));
+    let registry = registry.with(
+        fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_target(true)
+            .with_timer(timer),
+    );
     registry.try_init().context("日志已经初始化")?;
-    Ok(LogHandle { filter: handle, dir, pinned, _guard: guard })
+    Ok(LogHandle {
+        filter: handle,
+        dir,
+        pinned,
+        _guard: guard,
+    })
 }

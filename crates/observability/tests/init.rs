@@ -21,13 +21,25 @@ fn an_operation_s_lines_carry_its_span_in_beijing_time_and_the_level_switches() 
     drop(handle); // flushes the non-blocking writer
 
     let entries = thinkrail_observability::tail(&dir, 100).unwrap();
-    let inside = entries.iter().find(|e| e.message.starts_with("inside")).unwrap();
+    let inside = entries
+        .iter()
+        .find(|e| e.message.starts_with("inside"))
+        .unwrap();
     assert!(inside.time.ends_with("+08:00"), "{}", inside.time);
     assert!(inside.spans.starts_with("op{id="), "{}", inside.spans);
-    assert!(inside.spans.contains(&format!("tests/init.rs:{}}}", at.line())), "{}", inside.spans);
+    assert!(
+        inside
+            .spans
+            .contains(&format!("tests/init.rs:{}}}", at.line())),
+        "{}",
+        inside.spans
+    );
     assert_eq!(inside.target, "init");
     assert_eq!(inside.message, "inside chat=\"c1\"");
     assert!(!entries.iter().any(|e| e.message == "hidden at info"));
     assert!(entries.iter().any(|e| e.message == "shown at debug"));
-    assert!(!entries.iter().any(|e| e.target.starts_with("turso")), "debug raises only thinkrail crates");
+    assert!(
+        !entries.iter().any(|e| e.target.starts_with("turso")),
+        "debug raises only thinkrail crates"
+    );
 }

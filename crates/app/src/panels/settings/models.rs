@@ -5,8 +5,8 @@
 //! changes received during background work are coalesced into a subsequent refresh.
 
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, SharedString, Styled as _, Subscription, Window,
     base::{h_flex, v_flex},
     component::{
         Disableable as _, IndexPath,
@@ -68,8 +68,15 @@ impl VisibilityModel {
 
 fn visibility_models(providers: Vec<Provider>) -> Vec<VisibilityModel> {
     let mut models = Vec::new();
-    for provider in providers.into_iter().filter(|provider| provider.input.enabled) {
-        for model in provider.input.models.into_iter().filter(|model| model.enabled && model.model_type == thinkrail_core::ModelType::Chat) {
+    for provider in providers
+        .into_iter()
+        .filter(|provider| provider.input.enabled)
+    {
+        for model in
+            provider.input.models.into_iter().filter(|model| {
+                model.enabled && model.model_type == thinkrail_core::ModelType::Chat
+            })
+        {
             models.push(VisibilityModel {
                 reference: ModelRef {
                     provider: provider.id.clone(),
@@ -92,8 +99,14 @@ fn model_reference(choice: &ModelChoice) -> ModelRef {
 
 #[derive(Clone)]
 enum PreferenceWrite {
-    Default { model: Option<ModelRef>, effort: Option<ThinkingLevel> },
-    Hidden { model: ModelRef, hidden: bool },
+    Default {
+        model: Option<ModelRef>,
+        effort: Option<ThinkingLevel>,
+    },
+    Hidden {
+        model: ModelRef,
+        hidden: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -131,7 +144,10 @@ impl ModelsPage {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(s::SEARCH));
         let default_model = cx.new(|cx| {
             SelectState::new(
-                SearchableVec::new(vec![SelectOption { title: s::NONE.into(), value: None }]),
+                SearchableVec::new(vec![SelectOption {
+                    title: s::NONE.into(),
+                    value: None,
+                }]),
                 Some(IndexPath::default().row(0)),
                 window,
                 cx,
@@ -139,7 +155,12 @@ impl ModelsPage {
             .searchable(true)
         });
         let default_effort = cx.new(|cx| {
-            SelectState::new(SearchableVec::new(Vec::<SelectOption<ThinkingLevel>>::new()), None, window, cx)
+            SelectState::new(
+                SearchableVec::new(Vec::<SelectOption<ThinkingLevel>>::new()),
+                None,
+                window,
+                cx,
+            )
         });
         let subscriptions = vec![
             cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
@@ -153,18 +174,24 @@ impl ModelsPage {
                     cx.notify();
                 }
             }),
-            cx.subscribe(&default_model, |this, _, event: &SelectEvent<ModelOptions>, cx| {
-                let SelectEvent::Confirm(model) = event;
-                this.select_default(model.clone().flatten(), cx);
-            }),
-            cx.subscribe(&default_effort, |this, _, event: &SelectEvent<EffortOptions>, cx| {
-                let SelectEvent::Confirm(effort) = event;
-                if let Some(choice) = this.selected_model() {
-                    let model = Some(model_reference(choice));
-                    let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
-                    this.write(PreferenceWrite::Default { model, effort }, cx);
-                }
-            }),
+            cx.subscribe(
+                &default_model,
+                |this, _, event: &SelectEvent<ModelOptions>, cx| {
+                    let SelectEvent::Confirm(model) = event;
+                    this.select_default(model.clone().flatten(), cx);
+                },
+            ),
+            cx.subscribe(
+                &default_effort,
+                |this, _, event: &SelectEvent<EffortOptions>, cx| {
+                    let SelectEvent::Confirm(effort) = event;
+                    if let Some(choice) = this.selected_model() {
+                        let model = Some(model_reference(choice));
+                        let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
+                        this.write(PreferenceWrite::Default { model, effort }, cx);
+                    }
+                },
+            ),
         ];
         let mut page = Self {
             state,
@@ -216,7 +243,11 @@ impl ModelsPage {
                         this.all_models = all_models;
                         this.loaded = true;
                         this.selectors_dirty = true;
-                        if this.failure.as_ref().is_some_and(|failure| matches!(&failure.retry, Retry::Load)) {
+                        if this
+                            .failure
+                            .as_ref()
+                            .is_some_and(|failure| matches!(&failure.retry, Retry::Load))
+                        {
                             this.failure = None;
                         }
                     }
@@ -249,7 +280,9 @@ impl ModelsPage {
             let choice = self.catalog.iter().find(|choice| {
                 choice.provider == model.provider && choice.model.id == model.model_id
             })?;
-            self.prefs.default_effort.filter(|effort| choice.model.efforts.contains(effort))
+            self.prefs
+                .default_effort
+                .filter(|effort| choice.model.efforts.contains(effort))
         });
         self.write(PreferenceWrite::Default { model, effort }, cx);
     }
@@ -264,7 +297,9 @@ impl ModelsPage {
             PreferenceWrite::Default { model, effort } => {
                 self.prefs.default_model == *model && self.prefs.default_effort == *effort
             }
-            PreferenceWrite::Hidden { model, hidden } => self.prefs.hidden.contains(model) == *hidden,
+            PreferenceWrite::Hidden { model, hidden } => {
+                self.prefs.hidden.contains(model) == *hidden
+            }
         };
         if unchanged {
             return;
@@ -318,19 +353,31 @@ impl ModelsPage {
             return;
         }
         self.selectors_dirty = false;
-        let mut options = vec![SelectOption { title: s::NONE.into(), value: None }];
+        let mut options = vec![SelectOption {
+            title: s::NONE.into(),
+            value: None,
+        }];
         options.extend(self.catalog.iter().map(|choice| SelectOption {
-            title: s::model_label(&choice.provider_name, &choice.model.name, &choice.model.id).into(),
+            title:
+                s::model_label(&choice.provider_name, &choice.model.name, &choice.model.id).into(),
             value: Some(model_reference(choice)),
         }));
         let selected = self.selected_model();
         let model = selected.map(model_reference);
-        let efforts = selected.map(|choice| choice.model.efforts.as_slice()).unwrap_or_default();
-        let effort = self.prefs.default_effort.filter(|effort| efforts.contains(effort));
-        let effort_options = efforts.iter().map(|effort| SelectOption {
-            title: s::effort_label(*effort).into(),
-            value: *effort,
-        }).collect::<Vec<_>>();
+        let efforts = selected
+            .map(|choice| choice.model.efforts.as_slice())
+            .unwrap_or_default();
+        let effort = self
+            .prefs
+            .default_effort
+            .filter(|effort| efforts.contains(effort));
+        let effort_options = efforts
+            .iter()
+            .map(|effort| SelectOption {
+                title: s::effort_label(*effort).into(),
+                value: *effort,
+            })
+            .collect::<Vec<_>>();
         self.default_model.update(cx, |select, cx| {
             select.set_items(SearchableVec::new(options), window, cx);
             select.set_selected_value(&model, window, cx);
@@ -352,40 +399,75 @@ impl Render for ModelsPage {
         let roles = ThinkrailTheme::global(cx).roles;
         let busy = self.loading || self.saving;
         let disabled = busy || !self.loaded;
-        let effort_disabled = disabled || self.selected_model().is_none_or(|choice| choice.model.efforts.is_empty());
-        let unavailable_default = self.prefs.default_model.is_some() && self.selected_model().is_none();
-        let has_matches = self.all_models.iter().any(|model| model.matches(&self.query));
-        let rows = self.all_models.iter().enumerate().filter(|(_, model)| model.matches(&self.query)).map(|(index, model)| {
-            let hidden = self.prefs.hidden.contains(&model.reference);
-            let reference = model.reference.clone();
-            h_flex()
-                .gap(space::S8)
-                .py(space::S8)
-                .border_b_1()
-                .border_color(roles.border_muted)
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(label(text::UI, model.model.name.clone()))
-                        .child(label(text::METADATA, s::model_label(
-                            &model.provider_name, &model.model.name, &model.model.model_id,
-                        )).text_color(roles.text_subtle))
-                        .child(label(text::METADATA, s::model_details(
-                            model.model.context_window, model.model.reasoning, model.model.vision,
-                        )).text_color(roles.text_subtle)),
-                )
-                .child(
-                    Switch::new(format!("model-visibility-{index}"))
-                        .checked(!hidden)
-                        .color(roles.feedback_success)
-                        .accessibility_label(model.model.name.clone())
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                            this.write(PreferenceWrite::Hidden { model: reference.clone(), hidden: !*checked }, cx);
-                        })),
-                )
-        }).collect::<Vec<_>>();
+        let effort_disabled = disabled
+            || self
+                .selected_model()
+                .is_none_or(|choice| choice.model.efforts.is_empty());
+        let unavailable_default =
+            self.prefs.default_model.is_some() && self.selected_model().is_none();
+        let has_matches = self
+            .all_models
+            .iter()
+            .any(|model| model.matches(&self.query));
+        let rows = self
+            .all_models
+            .iter()
+            .enumerate()
+            .filter(|(_, model)| model.matches(&self.query))
+            .map(|(index, model)| {
+                let hidden = self.prefs.hidden.contains(&model.reference);
+                let reference = model.reference.clone();
+                h_flex()
+                    .gap(space::S8)
+                    .py(space::S8)
+                    .border_b_1()
+                    .border_color(roles.border_muted)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(label(text::UI, model.model.name.clone()))
+                            .child(
+                                label(
+                                    text::METADATA,
+                                    s::model_label(
+                                        &model.provider_name,
+                                        &model.model.name,
+                                        &model.model.model_id,
+                                    ),
+                                )
+                                .text_color(roles.text_subtle),
+                            )
+                            .child(
+                                label(
+                                    text::METADATA,
+                                    s::model_details(
+                                        model.model.context_window,
+                                        model.model.reasoning,
+                                        model.model.vision,
+                                    ),
+                                )
+                                .text_color(roles.text_subtle),
+                            ),
+                    )
+                    .child(
+                        Switch::new(format!("model-visibility-{index}"))
+                            .checked(!hidden)
+                            .color(roles.feedback_success)
+                            .accessibility_label(model.model.name.clone())
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                this.write(
+                                    PreferenceWrite::Hidden {
+                                        model: reference.clone(),
+                                        hidden: !*checked,
+                                    },
+                                    cx,
+                                );
+                            })),
+                    )
+            })
+            .collect::<Vec<_>>();
         let failure = self.failure.as_ref().map(|failure| failure.message.clone());
 
         v_flex()
@@ -400,21 +482,32 @@ impl Render for ModelsPage {
                     .pt(space::S24)
                     .child(label(text::TITLE_SECTION, s::DEFAULT))
                     .child(label(text::TITLE_COMPACT, s::SESSION_MODEL))
-                    .child(Select::new(&self.default_model)
-                        .id("settings-default-model")
-                        .placeholder(s::NONE)
-                        .search_placeholder(s::SEARCH)
-                        .cleanable(true)
-                        .disabled(disabled))
-                    .when(unavailable_default, |view| view.child(
-                        label(text::METADATA, s::UNAVAILABLE_DEFAULT).text_color(roles.text_subtle),
-                    ))
+                    .child(
+                        Select::new(&self.default_model)
+                            .id("settings-default-model")
+                            .placeholder(s::NONE)
+                            .search_placeholder(s::SEARCH)
+                            .cleanable(true)
+                            .disabled(disabled),
+                    )
+                    .when(unavailable_default, |view| {
+                        view.child(
+                            label(text::METADATA, s::UNAVAILABLE_DEFAULT)
+                                .text_color(roles.text_subtle),
+                        )
+                    })
                     .child(label(text::TITLE_COMPACT, s::EFFORT))
-                    .child(Select::new(&self.default_effort)
-                        .id("settings-default-effort")
-                        .placeholder(if effort_disabled { s::NO_EFFORT } else { s::DEFAULT_EFFORT })
-                        .cleanable(true)
-                        .disabled(effort_disabled)),
+                    .child(
+                        Select::new(&self.default_effort)
+                            .id("settings-default-effort")
+                            .placeholder(if effort_disabled {
+                                s::NO_EFFORT
+                            } else {
+                                s::DEFAULT_EFFORT
+                            })
+                            .cleanable(true)
+                            .disabled(effort_disabled),
+                    ),
             )
             .child(
                 v_flex()
@@ -425,42 +518,68 @@ impl Render for ModelsPage {
                     .child(
                         h_flex()
                             .child(label(text::TITLE_SECTION, s::VISIBLE).flex_1())
-                            .child(Button::new("models-expand")
-                                .ghost()
-                                .label(if self.expanded { s::HIDE } else { s::SHOW })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.expanded = !this.expanded;
-                                    cx.notify();
-                                }))),
+                            .child(
+                                Button::new("models-expand")
+                                    .ghost()
+                                    .label(if self.expanded { s::HIDE } else { s::SHOW })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.expanded = !this.expanded;
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .when(self.expanded, |view| {
-                        view.child(Input::new(&self.search))
-                            .children(rows)
-                            .when(self.loaded && !has_matches, |view| view.child(
-                                label(text::METADATA, if self.all_models.is_empty() { s::EMPTY } else { s::NO_MATCHES })
+                        view.child(Input::new(&self.search)).children(rows).when(
+                            self.loaded && !has_matches,
+                            |view| {
+                                view.child(
+                                    label(
+                                        text::METADATA,
+                                        if self.all_models.is_empty() {
+                                            s::EMPTY
+                                        } else {
+                                            s::NO_MATCHES
+                                        },
+                                    )
                                     .text_color(roles.text_subtle),
-                            ))
+                                )
+                            },
+                        )
                     })
-                    .child(label(text::METADATA, s::visibility_summary(self.prefs.hidden.len()))
-                        .text_color(roles.text_subtle)),
+                    .child(
+                        label(
+                            text::METADATA,
+                            s::visibility_summary(self.prefs.hidden.len()),
+                        )
+                        .text_color(roles.text_subtle),
+                    ),
             )
-            .when(busy, |view| view.child(
-                label(text::METADATA, if self.saving { s::SAVING } else { s::LOADING })
+            .when(busy, |view| {
+                view.child(
+                    label(
+                        text::METADATA,
+                        if self.saving { s::SAVING } else { s::LOADING },
+                    )
                     .text_color(roles.text_subtle),
-            ))
-            .when_some(failure, |view, message| view.child(
-                v_flex()
-                    .gap(space::S8)
-                    .child(label(text::METADATA, message).text_color(roles.feedback_error))
-                    .child(Button::new("models-retry")
-                        .ghost()
-                        .label(s::RETRY)
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))),
-            ))
-            .when(self.loaded && self.catalog.is_empty(), |view| view.child(
-                label(text::METADATA, s::EMPTY).text_color(roles.text_subtle),
-            ))
+                )
+            })
+            .when_some(failure, |view, message| {
+                view.child(
+                    v_flex()
+                        .gap(space::S8)
+                        .child(label(text::METADATA, message).text_color(roles.feedback_error))
+                        .child(
+                            Button::new("models-retry")
+                                .ghost()
+                                .label(s::RETRY)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+                        ),
+                )
+            })
+            .when(self.loaded && self.catalog.is_empty(), |view| {
+                view.child(label(text::METADATA, s::EMPTY).text_color(roles.text_subtle))
+            })
     }
 }
 

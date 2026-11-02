@@ -33,5 +33,7 @@ fn create() -> std::result::Result<Runtime, String> {
 }
 
 pub(crate) fn get() -> Result<&'static Runtime> {
-    RUNTIME.as_ref().map_err(|message| Error::new(ErrorKind::BackendUnavailable, message))
+    RUNTIME
+        .as_ref()
+        .map_err(|message| Error::new(ErrorKind::BackendUnavailable, message))
 }

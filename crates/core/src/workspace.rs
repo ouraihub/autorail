@@ -44,7 +44,10 @@ pub struct NewWorkspace {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum EntryKind { Dir, File }
+pub enum EntryKind {
+    Dir,
+    File,
+}
 
 /// A workspace-relative entry; `path` always uses `/` separators.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,12 +61,23 @@ pub struct DirEntry {
 pub enum FileContent {
     Text(String),
     /// Binary or non-UTF-8 content: only its size is exposed, never a lossy decode.
-    Binary { byte_len: u64 },
+    Binary {
+        byte_len: u64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ChangeStatus { Modified, Added, Deleted, Renamed, Copied, Untracked, Conflicted, TypeChanged }
+pub enum ChangeStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Copied,
+    Untracked,
+    Conflicted,
+    TypeChanged,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

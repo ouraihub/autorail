@@ -12,7 +12,11 @@ pub struct PlanScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PlanStatus { Pending, InProgress, Done }
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Done,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -110,11 +114,20 @@ pub trait PlanReviewService: Send + Sync {
     fn plan(&self, scope: &PlanScope) -> Result<Plan>;
     /// Atomic read-modify-write of one chat's plan under the store lock. The closure enforces
     /// tool/UI semantics; the store re-validates the single-`InProgress` invariant before saving.
-    fn update_plan(&self, scope: &PlanScope, change: &mut dyn FnMut(&mut Plan) -> Result<()>) -> Result<Plan>;
+    fn update_plan(
+        &self,
+        scope: &PlanScope,
+        change: &mut dyn FnMut(&mut Plan) -> Result<()>,
+    ) -> Result<Plan>;
 
     fn reviews(&self, scope: &PlanScope) -> Result<Vec<ReviewComment>>;
     fn add_review(&self, scope: &PlanScope, comment: NewReviewComment) -> Result<ReviewComment>;
-    fn update_review(&self, scope: &PlanScope, id: &ReviewId, body: String) -> Result<ReviewComment>;
+    fn update_review(
+        &self,
+        scope: &PlanScope,
+        id: &ReviewId,
+        body: String,
+    ) -> Result<ReviewComment>;
     fn resolve_review(&self, scope: &PlanScope, id: &ReviewId) -> Result<ReviewComment>;
     fn remove_review(&self, scope: &PlanScope, id: &ReviewId) -> Result<()>;
     /// Fails with `Conflict` while any unresolved comment is stale; marks sent comments `Sent`.

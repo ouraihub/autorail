@@ -22,7 +22,9 @@ pub fn run<V: 'static, T: Send + 'static>(
     let span = thinkrail_observability::op(std::panic::Location::caller());
     let started = std::time::Instant::now();
     let job_span = span.clone();
-    let task = cx.background_executor().spawn(async move { job_span.in_scope(job) });
+    let task = cx
+        .background_executor()
+        .spawn(async move { job_span.in_scope(job) });
     cx.spawn(async move |this, cx| {
         let result = task.await;
         let _entered = span.enter();
@@ -44,7 +46,10 @@ pub struct Notice {
 
 impl Notice {
     pub fn from_error(error: &Error) -> Self {
-        Self { code: error.code(), message: error.to_string() }
+        Self {
+            code: error.code(),
+            message: error.to_string(),
+        }
     }
 }
 
@@ -73,7 +78,10 @@ impl EventEmitter<AppEvent> for AppState {}
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AppState").field("project", &self.project).field("workspace", &self.workspace).finish_non_exhaustive()
+        f.debug_struct("AppState")
+            .field("project", &self.project)
+            .field("workspace", &self.workspace)
+            .finish_non_exhaustive()
     }
 }
 
@@ -102,8 +110,13 @@ impl AppState {
         self.projects.iter().find(|p| &p.id == id)
     }
 
-    pub fn workspaces_of<'a>(&'a self, project: &'a ProjectId) -> impl Iterator<Item = &'a Workspace> + 'a {
-        self.workspaces.iter().filter(move |w| &w.project_id == project)
+    pub fn workspaces_of<'a>(
+        &'a self,
+        project: &'a ProjectId,
+    ) -> impl Iterator<Item = &'a Workspace> + 'a {
+        self.workspaces
+            .iter()
+            .filter(move |w| &w.project_id == project)
     }
 
     /// Shows a failure in the notice bar and logs its code (never its message text).
@@ -135,14 +148,23 @@ impl AppState {
                 Ok((projects, workspaces)) => {
                     this.projects = projects;
                     this.workspaces = workspaces;
-                    let project_gone = this.project.as_ref().is_some_and(|id| !this.projects.iter().any(|p| &p.id == id));
+                    let project_gone = this
+                        .project
+                        .as_ref()
+                        .is_some_and(|id| !this.projects.iter().any(|p| &p.id == id));
                     if project_gone || this.project.is_none() {
                         this.project = this.projects.first().map(|p| p.id.clone());
                     }
-                    let workspace_gone =
-                        this.workspace.as_ref().is_some_and(|id| !this.workspaces.iter().any(|w| &w.id == id));
+                    let workspace_gone = this
+                        .workspace
+                        .as_ref()
+                        .is_some_and(|id| !this.workspaces.iter().any(|w| &w.id == id));
                     if workspace_gone || this.workspace.is_none() {
-                        let first = this.project.as_ref().and_then(|p| this.workspaces_of(p).next()).map(|w| w.id.clone());
+                        let first = this
+                            .project
+                            .as_ref()
+                            .and_then(|p| this.workspaces_of(p).next())
+                            .map(|w| w.id.clone());
                         this.set_workspace(first, cx);
                     }
                     cx.emit(AppEvent::Projects);
@@ -154,7 +176,12 @@ impl AppState {
     }
 
     pub fn select_workspace(&mut self, id: WorkspaceId, cx: &mut Context<Self>) {
-        if let Some(project) = self.workspaces.iter().find(|w| w.id == id).map(|w| w.project_id.clone()) {
+        if let Some(project) = self
+            .workspaces
+            .iter()
+            .find(|w| w.id == id)
+            .map(|w| w.project_id.clone())
+        {
             self.project = Some(project);
         }
         self.set_workspace(Some(id), cx);
@@ -170,10 +197,14 @@ impl AppState {
 
     pub fn open_project(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         let workspace = self.services.workspace.clone();
-        run(cx, move || workspace.open_project(&path), |this, result, cx| match result {
-            Ok(project) => this.opened(project, cx),
-            Err(error) => this.report(&error, cx),
-        });
+        run(
+            cx,
+            move || workspace.open_project(&path),
+            |this, result, cx| match result {
+                Ok(project) => this.opened(project, cx),
+                Err(error) => this.report(&error, cx),
+            },
+        );
     }
 
     /// Selects a freshly opened (or initialized) project and reloads the tree.
@@ -185,10 +216,14 @@ impl AppState {
 
     pub fn close_project(&mut self, id: ProjectId, cx: &mut Context<Self>) {
         let workspace = self.services.workspace.clone();
-        run(cx, move || workspace.close_project(&id), |this, result, cx| match result {
-            Ok(()) => this.reload(cx),
-            Err(error) => this.report(&error, cx),
-        });
+        run(
+            cx,
+            move || workspace.close_project(&id),
+            |this, result, cx| match result {
+                Ok(()) => this.reload(cx),
+                Err(error) => this.report(&error, cx),
+            },
+        );
     }
 
     pub fn create_workspace(&mut self, project: ProjectId, cx: &mut Context<Self>) {
@@ -210,9 +245,13 @@ impl AppState {
 
     pub fn remove_workspace(&mut self, id: WorkspaceId, cx: &mut Context<Self>) {
         let workspace = self.services.workspace.clone();
-        run(cx, move || workspace.remove_workspace(&id), |this, result, cx| match result {
-            Ok(()) => this.reload(cx),
-            Err(error) => this.report(&error, cx),
-        });
+        run(
+            cx,
+            move || workspace.remove_workspace(&id),
+            |this, result, cx| match result {
+                Ok(()) => this.reload(cx),
+                Err(error) => this.report(&error, cx),
+            },
+        );
     }
 }

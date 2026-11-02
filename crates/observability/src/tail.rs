@@ -38,8 +38,12 @@ fn newest(dir: &Path) -> io::Result<Option<PathBuf>> {
     let mut newest: Option<PathBuf> = None;
     for entry in entries {
         let path = entry?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-        if name.starts_with(&format!("{}.", crate::FILE_PREFIX)) && name.ends_with(".log")
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if name.starts_with(&format!("{}.", crate::FILE_PREFIX))
+            && name.ends_with(".log")
             && newest.as_ref().is_none_or(|current| path > *current)
         {
             newest = Some(path);
@@ -51,7 +55,9 @@ fn newest(dir: &Path) -> io::Result<Option<PathBuf>> {
 /// Up to `limit` (at most 2000) complete lines, oldest first, from the end of the newest log in
 /// `dir`. No log yet: an empty list.
 pub fn tail(dir: &Path, limit: usize) -> io::Result<Vec<LogEntry>> {
-    let Some(path) = newest(dir)? else { return Ok(Vec::new()) };
+    let Some(path) = newest(dir)? else {
+        return Ok(Vec::new());
+    };
     let mut file = File::open(&path)?;
     let size = file.metadata()?.len();
     let from = size.saturating_sub(TAIL_BYTES);
@@ -67,7 +73,11 @@ pub fn tail(dir: &Path, limit: usize) -> io::Result<Vec<LogEntry>> {
     }
     lines.retain(|line| !line.trim().is_empty());
     let start = lines.len().saturating_sub(limit.min(MAX_LIMIT));
-    Ok(lines[start..].iter().enumerate().map(|(seq, line)| parse(seq, line.trim_end_matches('\r'))).collect())
+    Ok(lines[start..]
+        .iter()
+        .enumerate()
+        .map(|(seq, line)| parse(seq, line.trim_end_matches('\r')))
+        .collect())
 }
 
 /// `<time> <LEVEL> [<span>{fields}:]* <target>: <message>`; anything else is an INFO line with
@@ -101,12 +111,16 @@ fn parse_fixed(seq: usize, line: &str) -> Option<LogEntry> {
         if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             break;
         }
-        let Some(close) = rest[spans_end + open..].find("}:") else { break };
+        let Some(close) = rest[spans_end + open..].find("}:") else {
+            break;
+        };
         spans_end += open + close + 2;
     }
     let spans = rest[..spans_end].trim_end_matches(':');
     let rest = rest[spans_end..].trim_start();
-    let (target, message) = rest.split_once(": ").or_else(|| rest.strip_suffix(':').map(|t| (t, "")))?;
+    let (target, message) = rest
+        .split_once(": ")
+        .or_else(|| rest.strip_suffix(':').map(|t| (t, "")))?;
     if target.contains(' ') {
         return None;
     }

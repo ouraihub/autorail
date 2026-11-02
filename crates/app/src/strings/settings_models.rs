@@ -19,7 +19,8 @@ pub const LOADING: &str = "正在加载模型设置…";
 pub const SAVING: &str = "正在保存模型设置…";
 pub const NO_EFFORT: &str = "无可用力度";
 pub const DEFAULT_EFFORT: &str = "模型默认力度";
-pub const UNAVAILABLE_DEFAULT: &str = "已保存的默认模型当前不可用，将使用首个可用模型。可重新选择或清除默认值。";
+pub const UNAVAILABLE_DEFAULT: &str =
+    "已保存的默认模型当前不可用，将使用首个可用模型。可重新选择或清除默认值。";
 
 pub fn effort_label(effort: ThinkingLevel) -> &'static str {
     match effort {

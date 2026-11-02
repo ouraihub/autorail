@@ -2,8 +2,9 @@
 //! (agent-settings 04 §2.2, §3.2–§3.4).
 
 use thinkrail_core::{
-    Endpoint, Error, Provider, ProviderId, ProviderInput, ProviderKeyId, ProviderKeyInput, ProviderKeySummary,
-    ProviderKeyUpdate, ProviderModel, ProviderService, Result, Secret, SelectedKey,
+    Endpoint, Error, Provider, ProviderId, ProviderInput, ProviderKeyId, ProviderKeyInput,
+    ProviderKeySummary, ProviderKeyUpdate, ProviderModel, ProviderService, Result, Secret,
+    SelectedKey,
 };
 use tracing::info;
 use turso::Row;
@@ -15,7 +16,8 @@ use crate::{
     validate,
 };
 
-const PROVIDER_COLUMNS: &str = "id, name, default_protocol, headers, access, enabled, revision, preset_id";
+const PROVIDER_COLUMNS: &str =
+    "id, name, default_protocol, headers, access, enabled, revision, preset_id";
 
 fn provider_missing() -> Error {
     Error::not_found("提供方不存在，可能已被删除。")
@@ -27,7 +29,12 @@ fn key_missing() -> Error {
 
 /// Current revision of a provider; `NotFound` when it is gone.
 pub(crate) fn revision(conn: &Conn, id: &ProviderId) -> Result<u64> {
-    let row = conn.row("SELECT revision FROM providers WHERE id = ?1", (id.as_str(),))?.ok_or_else(provider_missing)?;
+    let row = conn
+        .row(
+            "SELECT revision FROM providers WHERE id = ?1",
+            (id.as_str(),),
+        )?
+        .ok_or_else(provider_missing)?;
     db::revision(&row, 0)
 }
 
@@ -39,19 +46,33 @@ fn expect(conn: &Conn, id: &ProviderId, expect_revision: u64) -> Result<()> {
 }
 
 fn bump(conn: &Conn, id: &ProviderId) -> Result<()> {
-    conn.execute("UPDATE providers SET revision = revision + 1, updated_at = ?2 WHERE id = ?1", (id.as_str(), db::now()))?;
+    conn.execute(
+        "UPDATE providers SET revision = revision + 1, updated_at = ?2 WHERE id = ?1",
+        (id.as_str(), db::now()),
+    )?;
     Ok(())
 }
 
 fn ensure_unique_name(conn: &Conn, name: &str, except: Option<&ProviderId>) -> Result<()> {
     let except = except.map_or("", ProviderId::as_str);
-    if conn.row("SELECT 1 FROM providers WHERE name = ?1 AND id <> ?2", (name, except))?.is_some() {
+    if conn
+        .row(
+            "SELECT 1 FROM providers WHERE name = ?1 AND id <> ?2",
+            (name, except),
+        )?
+        .is_some()
+    {
         return Err(Error::conflict(format!("已有同名提供方 {name}。")));
     }
     Ok(())
 }
 
-fn ensure_unique_key(conn: &Conn, id: &ProviderId, key: &str, except: Option<&ProviderKeyId>) -> Result<()> {
+fn ensure_unique_key(
+    conn: &Conn,
+    id: &ProviderId,
+    key: &str,
+    except: Option<&ProviderKeyId>,
+) -> Result<()> {
     let except = except.map_or("", ProviderKeyId::as_str);
     let sql = "SELECT 1 FROM provider_keys WHERE provider_id = ?1 AND key = ?2 AND id <> ?3";
     if conn.row(sql, (id.as_str(), key, except))?.is_some() {
@@ -65,7 +86,11 @@ fn write_children(conn: &Conn, id: &ProviderId, input: &ProviderInput) -> Result
     for endpoint in &input.endpoints {
         conn.execute(
             "INSERT INTO provider_endpoints (provider_id, protocol, base_url) VALUES (?1, ?2, ?3)",
-            (id.as_str(), db::to_word(&endpoint.protocol)?, endpoint.base_url.as_str()),
+            (
+                id.as_str(),
+                db::to_word(&endpoint.protocol)?,
+                endpoint.base_url.as_str(),
+            ),
         )?;
     }
     for (sort, model) in input.models.iter().enumerate() {
@@ -95,7 +120,11 @@ fn write_children(conn: &Conn, id: &ProviderId, input: &ProviderInput) -> Result
 
 /// Inserts a validated provider row and its endpoints and models; returns the new id.
 /// `preset_id` is only ever set by preset seeding.
-pub(crate) fn insert(conn: &Conn, input: &ProviderInput, preset_id: Option<&str>) -> Result<ProviderId> {
+pub(crate) fn insert(
+    conn: &Conn,
+    input: &ProviderInput,
+    preset_id: Option<&str>,
+) -> Result<ProviderId> {
     ensure_unique_name(conn, &input.name, None)?;
     let id = ProviderId::generate();
     let sort = conn.int("SELECT COALESCE(MAX(sort), 0) + 1 FROM providers", ())?;
@@ -122,9 +151,17 @@ pub(crate) fn insert(conn: &Conn, input: &ProviderInput, preset_id: Option<&str>
 fn decode(conn: &Conn, row: &Row) -> Result<Provider> {
     let id = ProviderId::from(db::text(row, 0)?);
     let mut endpoints = conn
-        .rows("SELECT protocol, base_url FROM provider_endpoints WHERE provider_id = ?1", (id.as_str(),))?
+        .rows(
+            "SELECT protocol, base_url FROM provider_endpoints WHERE provider_id = ?1",
+            (id.as_str(),),
+        )?
         .iter()
-        .map(|row| Ok(Endpoint { protocol: db::word(row, 0)?, base_url: db::text(row, 1)? }))
+        .map(|row| {
+            Ok(Endpoint {
+                protocol: db::word(row, 0)?,
+                base_url: db::text(row, 1)?,
+            })
+        })
         .collect::<Result<Vec<_>>>()?;
     endpoints.sort_by_key(|endpoint| validate::protocol_rank(endpoint.protocol));
     let models = conn
@@ -181,7 +218,9 @@ fn decode(conn: &Conn, row: &Row) -> Result<Provider> {
 
 fn load(conn: &Conn, id: &ProviderId) -> Result<Provider> {
     let sql = format!("SELECT {PROVIDER_COLUMNS} FROM providers WHERE id = ?1");
-    let row = conn.row(&sql, (id.as_str(),))?.ok_or_else(provider_missing)?;
+    let row = conn
+        .row(&sql, (id.as_str(),))?
+        .ok_or_else(provider_missing)?;
     decode(conn, &row)
 }
 
@@ -206,7 +245,10 @@ impl ProviderService for SqliteSettingsStore {
     fn providers(&self) -> Result<Vec<Provider>> {
         self.read(|conn| {
             let sql = format!("SELECT {PROVIDER_COLUMNS} FROM providers ORDER BY sort, name");
-            conn.rows(&sql, ())?.iter().map(|row| decode(conn, row)).collect()
+            conn.rows(&sql, ())?
+                .iter()
+                .map(|row| decode(conn, row))
+                .collect()
         })
     }
 
@@ -224,7 +266,12 @@ impl ProviderService for SqliteSettingsStore {
         Ok(provider)
     }
 
-    fn update(&self, id: &ProviderId, expect_revision: u64, input: ProviderInput) -> Result<Provider> {
+    fn update(
+        &self,
+        id: &ProviderId,
+        expect_revision: u64,
+        input: ProviderInput,
+    ) -> Result<Provider> {
         let input = validate::provider(input)?;
         let provider = self.write(|conn| {
             expect(conn, id, expect_revision)?;
@@ -259,7 +306,12 @@ impl ProviderService for SqliteSettingsStore {
     fn delete(&self, id: &ProviderId, expect_revision: u64) -> Result<()> {
         self.write(|conn| {
             expect(conn, id, expect_revision)?;
-            let row = conn.row("SELECT preset_id FROM providers WHERE id = ?1", (id.as_str(),))?.ok_or_else(provider_missing)?;
+            let row = conn
+                .row(
+                    "SELECT preset_id FROM providers WHERE id = ?1",
+                    (id.as_str(),),
+                )?
+                .ok_or_else(provider_missing)?;
             if db::optional_text(&row, 0)?.is_some() {
                 return Err(Error::forbidden("内置服务商不能删除，可以停用。"));
             }
@@ -291,20 +343,29 @@ impl ProviderService for SqliteSettingsStore {
         Ok(provider)
     }
 
-    fn update_key(&self, id: &ProviderId, key_id: &ProviderKeyId, key: ProviderKeyUpdate) -> Result<Provider> {
+    fn update_key(
+        &self,
+        id: &ProviderId,
+        key_id: &ProviderKeyId,
+        key: ProviderKeyUpdate,
+    ) -> Result<Provider> {
         let value = key.key.as_ref().map(validate::key).transpose()?;
         let label = validate::label(key.label)?;
         let provider = self.write(|conn| {
             revision(conn, id)?;
             let sql = "SELECT 1 FROM provider_keys WHERE id = ?1 AND provider_id = ?2";
-            conn.row(sql, (key_id.as_str(), id.as_str()))?.ok_or_else(key_missing)?;
+            conn.row(sql, (key_id.as_str(), id.as_str()))?
+                .ok_or_else(key_missing)?;
             conn.execute(
                 "UPDATE provider_keys SET label = ?2, enabled = ?3 WHERE id = ?1",
                 (key_id.as_str(), label.as_deref(), key.enabled),
             )?;
             if let Some(value) = &value {
                 ensure_unique_key(conn, id, value, Some(key_id))?;
-                conn.execute("UPDATE provider_keys SET key = ?2 WHERE id = ?1", (key_id.as_str(), value.as_str()))?;
+                conn.execute(
+                    "UPDATE provider_keys SET key = ?2 WHERE id = ?1",
+                    (key_id.as_str(), value.as_str()),
+                )?;
             }
             bump(conn, id)?;
             load(conn, id)
@@ -329,7 +390,12 @@ impl ProviderService for SqliteSettingsStore {
 
     fn reveal_key(&self, key_id: &ProviderKeyId) -> Result<Secret> {
         self.read(|conn| {
-            let row = conn.row("SELECT key FROM provider_keys WHERE id = ?1", (key_id.as_str(),))?.ok_or_else(key_missing)?;
+            let row = conn
+                .row(
+                    "SELECT key FROM provider_keys WHERE id = ?1",
+                    (key_id.as_str(),),
+                )?
+                .ok_or_else(key_missing)?;
             Ok(Secret::new(db::text(&row, 0)?))
         })
     }

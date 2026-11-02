@@ -7,8 +7,8 @@ use std::{
 
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, InteractionAnswer, NativeSessionKey, Result,
-    SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
+    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, InteractionAnswer,
+    NativeSessionKey, Result, SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
 };
 use tracing::info;
 
@@ -23,8 +23,14 @@ use crate::{
     workflow,
 };
 
-const CAPABILITIES: Capabilities =
-    Capabilities { resume: true, history_replay: true, token_deltas: true, questions: true, tool_permissions: false, model_switch: true };
+const CAPABILITIES: Capabilities = Capabilities {
+    resume: true,
+    history_replay: true,
+    token_deltas: true,
+    questions: true,
+    tool_permissions: false,
+    model_switch: true,
+};
 
 /// Launches pi `--mode rpc` per chat.
 #[derive(Debug, Default)]
@@ -45,18 +51,28 @@ impl AgentRuntime for PiRuntime {
         CAPABILITIES
     }
 
-    fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>> {
+    fn start(
+        &self,
+        request: StartSession,
+        sink: Arc<dyn SessionSink>,
+    ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Pi)?;
         let command = process::command(&launch_spec(&request)?)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Pi);
-        let pi = Arc::new(PiSession { live: live.clone(), dialogs: Dialogs::default() });
+        let pi = Arc::new(PiSession {
+            live: live.clone(),
+            dialogs: Dialogs::default(),
+        });
         let reader = pi.clone();
         let mut stream = Stream::default();
-        session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| reader.on_frame(&mut stream, frame))?;
+        session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| {
+            reader.on_frame(&mut stream, frame)
+        })?;
         let deadline = Instant::now() + HANDSHAKE;
-        pi.handshake(deadline).map_err(|error| live.fail_start(error, None))?;
+        pi.handshake(deadline)
+            .map_err(|error| live.fail_start(error, None))?;
         info!(chat = %request.chat, backend = "pi", "agent session started");
         Ok(pi)
     }
@@ -69,7 +85,11 @@ fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
     let mut host_args = vec!["--mode".to_owned(), "rpc".to_owned()];
     let mut host_env = Vec::new();
     let extension = projection_engine::pi_extension(request.host_tools.is_some(), &request.routing);
-    let path = host::write_support(&request.support_dir, projection_engine::PI_EXTENSION_FILE, &extension)?;
+    let path = host::write_support(
+        &request.support_dir,
+        projection_engine::PI_EXTENSION_FILE,
+        &extension,
+    )?;
     host_args.extend(["-e".to_owned(), path.display().to_string()]);
     let skills = workflow::stage_skills(&request.support_dir)?;
     host_args.extend(["--skill".to_owned(), skills.display().to_string()]);
@@ -102,7 +122,9 @@ impl PiSession {
         let key = state["sessionFile"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| Error::protocol("pi 没有返回会话文件；请从启动参数中删除 --no-session"))?;
+            .ok_or_else(|| {
+                Error::protocol("pi 没有返回会话文件；请从启动参数中删除 --no-session")
+            })?;
         let history = self.call("get_messages", json!({}), session::left(deadline))?;
         let mut p = self.live.state.lock();
         p.set_key(NativeSessionKey::from(key));
@@ -127,7 +149,9 @@ impl PiSession {
     }
 
     fn on_frame(&self, stream: &mut Stream, frame: Value) -> Result<()> {
-        let kind = frame["type"].as_str().ok_or_else(|| Error::protocol("pi 帧缺少 type"))?;
+        let kind = frame["type"]
+            .as_str()
+            .ok_or_else(|| Error::protocol("pi 帧缺少 type"))?;
         match kind {
             "response" => self.on_response(frame),
             "extension_ui_request" => self.on_ui_request(&frame),
@@ -151,12 +175,14 @@ impl PiSession {
                         rpc::tool_event(&mut p, &frame);
                     }
                     "auto_retry_end" if frame["success"] == false => {
-                        let error = engine_error(frame["finalError"].as_str().unwrap_or("自动重试失败"));
+                        let error =
+                            engine_error(frame["finalError"].as_str().unwrap_or("自动重试失败"));
                         p.error(session_error(&error));
                     }
                     "thinking_level_changed" => rpc::model_event(&mut p, &frame),
                     "compaction_end" if frame["errorMessage"].is_string() => {
-                        let error = engine_error(frame["errorMessage"].as_str().unwrap_or_default());
+                        let error =
+                            engine_error(frame["errorMessage"].as_str().unwrap_or_default());
                         p.error(session_error(&error));
                     }
                     _ => {}
@@ -229,8 +255,19 @@ impl AgentSession for PiSession {
         Ok(())
     }
 
-    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()> {
-        rpc::switch_model(&self.live, |kind, fields| self.call(kind, fields, COMMAND), provider, model_id, effort)
+    fn set_model(
+        &self,
+        provider: &str,
+        model_id: &str,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<()> {
+        rpc::switch_model(
+            &self.live,
+            |kind, fields| self.call(kind, fields, COMMAND),
+            provider,
+            model_id,
+            effort,
+        )
     }
 }
 

@@ -6,9 +6,9 @@ use std::{ffi::OsString, fs, path::PathBuf, sync::Arc};
 use serde_json::Value;
 use tempfile::TempDir;
 use thinkrail_core::{
-    BackendKind, DefaultModel, EngineRouting, EnvBinding, Error, HostToolAccess, HostToolHandler, HostToolResult,
-    HostToolSpec, Launch, PlanScope, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
-    ProjectedProvider, Protocol, Result, Secret, StartSession, ThinkingLevel,
+    BackendKind, DefaultModel, EngineRouting, EnvBinding, Error, HostToolAccess, HostToolHandler,
+    HostToolResult, HostToolSpec, Launch, PlanScope, ProjectedMcpServer, ProjectedMcpTransport,
+    ProjectedModel, ProjectedProvider, Protocol, Result, Secret, StartSession, ThinkingLevel,
 };
 
 /// Placeholder secrets of [`secret_routing`]; none may appear in a generated file.
@@ -76,7 +76,10 @@ impl Fixture {
             chat: "chat".into(),
             workspace: "w".into(),
             backend,
-            launch: Launch::External { executable: self.root.path().join("engine.exe"), args: vec!["cli.js".into()] },
+            launch: Launch::External {
+                executable: self.root.path().join("engine.exe"),
+                args: vec!["cli.js".into()],
+            },
             config_root: Some(self.config()),
             cwd: self.cwd(),
             resume: resume.map(Into::into),
@@ -91,7 +94,9 @@ impl Fixture {
     pub(crate) fn assert_no_secret_written(&self) {
         let mut dirs = vec![self.support()];
         while let Some(dir) = dirs.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else { continue };
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in entries {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
@@ -100,7 +105,11 @@ impl Fixture {
                 }
                 let text = fs::read_to_string(&path).unwrap();
                 for secret in SECRETS {
-                    assert!(!text.contains(secret), "{} contains {secret}", path.display());
+                    assert!(
+                        !text.contains(secret),
+                        "{} contains {secret}",
+                        path.display()
+                    );
                 }
             }
         }
@@ -111,7 +120,10 @@ impl Fixture {
 pub(crate) fn secret_routing() -> EngineRouting {
     EngineRouting {
         env: vec![
-            ("THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(), Secret::new(SECRETS[0])),
+            (
+                "THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(),
+                Secret::new(SECRETS[0]),
+            ),
             ("THINKRAIL_HDR_1A2B3C4D_0".into(), Secret::new(SECRETS[1])),
             ("THINKRAIL_MCP_5E6F7A8B_H0".into(), Secret::new(SECRETS[2])),
         ],
@@ -121,7 +133,11 @@ pub(crate) fn secret_routing() -> EngineRouting {
 
 /// `EngineRouting.env` as the launch variables it must become.
 pub(crate) fn routing_vars(routing: &EngineRouting) -> Vec<(String, OsString)> {
-    routing.env.iter().map(|(name, value)| (name.clone(), OsString::from(value.expose()))).collect()
+    routing
+        .env
+        .iter()
+        .map(|(name, value)| (name.clone(), OsString::from(value.expose())))
+        .collect()
 }
 
 /// A full routing: an Anthropic provider with one header and a reasoning, vision model; an OpenAI
@@ -146,7 +162,10 @@ pub(crate) fn sample_routing() -> EngineRouting {
         context_window: 128_000,
         max_tokens: 16_384,
     };
-    let binding = |name: &str, var: &str| EnvBinding { name: name.into(), var: var.into() };
+    let binding = |name: &str, var: &str| EnvBinding {
+        name: name.into(),
+        var: var.into(),
+    };
     EngineRouting {
         providers: vec![
             ProjectedProvider {
@@ -191,11 +210,20 @@ pub(crate) fn sample_routing() -> EngineRouting {
             },
         ],
         env: vec![
-            ("THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(), Secret::new(SECRETS[0])),
+            (
+                "THINKRAIL_PROVIDER_1A2B3C4D_KEY".into(),
+                Secret::new(SECRETS[0]),
+            ),
             ("THINKRAIL_HDR_1A2B3C4D_0".into(), Secret::new(SECRETS[1])),
-            ("THINKRAIL_PROVIDER_9F8E7D6C_KEY".into(), Secret::new("thinkrail-no-key")),
+            (
+                "THINKRAIL_PROVIDER_9F8E7D6C_KEY".into(),
+                Secret::new("thinkrail-no-key"),
+            ),
             ("THINKRAIL_MCP_5E6F7A8B_E0".into(), Secret::new(SECRETS[2])),
-            ("THINKRAIL_MCP_0A0B0C0D_H0".into(), Secret::new(format!("Bearer {}", SECRETS[0]))),
+            (
+                "THINKRAIL_MCP_0A0B0C0D_H0".into(),
+                Secret::new(format!("Bearer {}", SECRETS[0])),
+            ),
         ],
         signature: "sig".into(),
     }
@@ -208,6 +236,8 @@ pub(crate) fn dsh_routing() -> EngineRouting {
     for provider in &mut routing.providers {
         provider.headers.clear();
     }
-    routing.env.retain(|(name, _)| !name.starts_with("THINKRAIL_HDR_"));
+    routing
+        .env
+        .retain(|(name, _)| !name.starts_with("THINKRAIL_HDR_"));
     routing
 }

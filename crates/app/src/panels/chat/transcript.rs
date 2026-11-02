@@ -4,8 +4,8 @@
 use std::{collections::HashSet, rc::Rc};
 
 use gpui_kit::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _, Window,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, Window,
     assets::IconName,
     base::{h_flex, v_flex},
     component::Icon,
@@ -33,7 +33,9 @@ pub fn message(m: &Message, open: &HashSet<String>, toggle: &Toggle, r: &Roles) 
         Role::System => v_flex()
             .gap(space::S4)
             .children(m.content.iter().filter_map(|b| match b {
-                ContentBlock::Text { text: t } => Some(label(text::METADATA, t.clone()).text_color(r.text_muted)),
+                ContentBlock::Text { text: t } => {
+                    Some(label(text::METADATA, t.clone()).text_color(r.text_muted))
+                }
                 _ => None,
             }))
             .into_any_element(),
@@ -73,11 +75,17 @@ fn assistant(m: &Message, open: &HashSet<String>, toggle: &Toggle, r: &Roles) ->
         .children(m.content.iter().enumerate().filter_map(|(index, block)| {
             let key = format!("{}/{index}", m.id);
             Some(match block {
-                ContentBlock::Text { text: t } => label(text::READING, t.clone()).text_color(r.text_default).into_any_element(),
+                ContentBlock::Text { text: t } => label(text::READING, t.clone())
+                    .text_color(r.text_default)
+                    .into_any_element(),
                 ContentBlock::Thinking { text: t } if t.trim().is_empty() => return None,
-                ContentBlock::Thinking { text: t } => thinking(&key, t, open.contains(&key), toggle, r),
+                ContentBlock::Thinking { text: t } => {
+                    thinking(&key, t, open.contains(&key), toggle, r)
+                }
                 ContentBlock::Image { mime_type } => {
-                    label(text::METADATA, format!("[{} {mime_type}]", s::IMAGE)).text_color(r.text_subtle).into_any_element()
+                    label(text::METADATA, format!("[{} {mime_type}]", s::IMAGE))
+                        .text_color(r.text_subtle)
+                        .into_any_element()
                 }
                 ContentBlock::Tool { .. } => tool(&key, block, open.contains(&key), toggle, r),
             })
@@ -85,7 +93,14 @@ fn assistant(m: &Message, open: &HashSet<String>, toggle: &Toggle, r: &Roles) ->
         .into_any_element()
 }
 
-fn disclosure(key: &str, open: bool, icon: IconName, title: String, toggle: &Toggle, r: &Roles) -> impl IntoElement {
+fn disclosure(
+    key: &str,
+    open: bool,
+    icon: IconName,
+    title: String,
+    toggle: &Toggle,
+    r: &Roles,
+) -> impl IntoElement {
     let toggle = toggle.clone();
     let key_owned = key.to_owned();
     h_flex()
@@ -93,7 +108,14 @@ fn disclosure(key: &str, open: bool, icon: IconName, title: String, toggle: &Tog
         .gap(space::S6)
         .cursor_pointer()
         .text_color(r.text_muted)
-        .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size(size::ICON_SMALL))
+        .child(
+            Icon::new(if open {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            })
+            .size(size::ICON_SMALL),
+        )
         .child(Icon::new(icon).size(size::ICON_SMALL))
         .child(label(text::METADATA, title))
         .on_click(move |_, window, cx| toggle(key_owned.clone(), window, cx))
@@ -115,7 +137,14 @@ fn thinking(key: &str, body: &str, open: bool, toggle: &Toggle, r: &Roles) -> An
 }
 
 fn tool(key: &str, block: &ContentBlock, open: bool, toggle: &Toggle, r: &Roles) -> AnyElement {
-    let ContentBlock::Tool { name, status, input, output, .. } = block else {
+    let ContentBlock::Tool {
+        name,
+        status,
+        input,
+        output,
+        ..
+    } = block
+    else {
         return div().into_any_element();
     };
     let (icon, color) = match status {
@@ -123,8 +152,13 @@ fn tool(key: &str, block: &ContentBlock, open: bool, toggle: &Toggle, r: &Roles)
         ToolStatus::Completed => (IconName::CircleCheck, r.feedback_success),
         ToolStatus::Failed => (IconName::CircleX, r.feedback_error),
     };
-    let input = input.as_ref().map(|v| bounded(serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())));
-    let output = output.as_deref().filter(|o| !o.is_empty()).map(|o| bounded(o.to_owned()));
+    let input = input
+        .as_ref()
+        .map(|v| bounded(serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())));
+    let output = output
+        .as_deref()
+        .filter(|o| !o.is_empty())
+        .map(|o| bounded(o.to_owned()));
     v_flex()
         .gap(space::S4)
         .px(space::S8)
@@ -137,11 +171,22 @@ fn tool(key: &str, block: &ContentBlock, open: bool, toggle: &Toggle, r: &Roles)
             h_flex()
                 .gap(space::S6)
                 .child(Icon::new(icon).size(size::ICON_SMALL).text_color(color))
-                .child(div().flex_1().child(disclosure(key, open, IconName::Wrench, name.to_owned(), toggle, r))),
+                .child(div().flex_1().child(disclosure(
+                    key,
+                    open,
+                    IconName::Wrench,
+                    name.to_owned(),
+                    toggle,
+                    r,
+                ))),
         )
         .when(open, |d| {
-            d.when_some(input, |d, input| d.child(code_section(s::TOOL_INPUT, input, r)))
-                .when_some(output, |d, output| d.child(code_section(s::TOOL_OUTPUT, output, r)))
+            d.when_some(input, |d, input| {
+                d.child(code_section(s::TOOL_INPUT, input, r))
+            })
+            .when_some(output, |d, output| {
+                d.child(code_section(s::TOOL_OUTPUT, output, r))
+            })
         })
         .into_any_element()
 }

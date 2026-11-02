@@ -22,8 +22,15 @@ pub struct EnvValue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum McpTransport {
-    Stdio { command: String, args: Vec<String>, env: Vec<EnvValue> },
-    Http { url: String, headers: Vec<EnvValue> },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: Vec<EnvValue>,
+    },
+    Http {
+        url: String,
+        headers: Vec<EnvValue>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +54,11 @@ pub struct McpServer {
 /// `GlobalOverridden`: replaced by a same-named project entry; its `enabled` is always false.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum McpOrigin { Global, Project, GlobalOverridden }
+pub enum McpOrigin {
+    Global,
+    Project,
+    GlobalOverridden,
+}
 
 /// One entry as it applies inside a project; `origin` drives the "from global" label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,8 +74,18 @@ pub trait McpService: Send + Sync {
     /// Global + project entries with project overrides and same-name replacement applied.
     fn effective(&self, project: &ProjectId) -> Result<Vec<EffectiveMcpServer>>;
     fn create(&self, input: McpServerInput) -> Result<McpServer>;
-    fn update(&self, id: &McpServerId, expect_revision: u64, input: McpServerInput) -> Result<McpServer>;
+    fn update(
+        &self,
+        id: &McpServerId,
+        expect_revision: u64,
+        input: McpServerInput,
+    ) -> Result<McpServer>;
     fn delete(&self, id: &McpServerId, expect_revision: u64) -> Result<()>;
     /// A project's enable/disable of a global entry; None clears the override.
-    fn set_override(&self, project: &ProjectId, server: &McpServerId, enabled: Option<bool>) -> Result<()>;
+    fn set_override(
+        &self,
+        project: &ProjectId,
+        server: &McpServerId,
+        enabled: Option<bool>,
+    ) -> Result<()>;
 }

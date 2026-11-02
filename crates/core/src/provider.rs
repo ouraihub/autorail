@@ -9,25 +9,60 @@ use crate::{ProviderId, ProviderKeyId, Result};
 /// Wire protocol of one provider endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Protocol { OpenaiChat, OpenaiResponses, AnthropicMessages }
+pub enum Protocol {
+    OpenaiChat,
+    OpenaiResponses,
+    AnthropicMessages,
+}
 
 /// `Direct`: engines call the upstream themselves; `Gateway`: through the host loopback gateway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Access { Direct, Gateway }
+pub enum Access {
+    Direct,
+    Gateway,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ThinkingLevel { Off, Minimal, Low, Medium, High, Xhigh, Max }
+pub enum ThinkingLevel {
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
 
 /// What a model does (Aether `ModelType`). Only `Chat` models are offered to engines.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
-pub enum ModelType { #[default] Chat, Image, Video, Tts, Stt, Embedding, Rerank, Unknown }
+pub enum ModelType {
+    #[default]
+    Chat,
+    Image,
+    Video,
+    Tts,
+    Stt,
+    Embedding,
+    Rerank,
+    Unknown,
+}
 
 impl ModelType {
-    pub const ALL: [ModelType; 8] =
-        [Self::Chat, Self::Image, Self::Video, Self::Tts, Self::Stt, Self::Embedding, Self::Rerank, Self::Unknown];
+    pub const ALL: [ModelType; 8] = [
+        Self::Chat,
+        Self::Image,
+        Self::Video,
+        Self::Tts,
+        Self::Stt,
+        Self::Embedding,
+        Self::Rerank,
+        Self::Unknown,
+    ];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,12 +138,18 @@ pub struct Provider {
 pub struct Secret(String);
 
 impl Secret {
-    pub fn new(value: impl Into<String>) -> Self { Self(value.into()) }
-    pub fn expose(&self) -> &str { &self.0 }
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
 }
 
 impl fmt::Debug for Secret {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("Secret(***)") }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Secret(***)")
+    }
 }
 
 #[derive(Clone)]
@@ -169,11 +210,21 @@ pub trait ProviderService: Send + Sync {
     fn providers(&self) -> Result<Vec<Provider>>;
     fn provider(&self, id: &ProviderId) -> Result<Provider>;
     fn create(&self, input: ProviderInput) -> Result<Provider>;
-    fn update(&self, id: &ProviderId, expect_revision: u64, input: ProviderInput) -> Result<Provider>;
+    fn update(
+        &self,
+        id: &ProviderId,
+        expect_revision: u64,
+        input: ProviderInput,
+    ) -> Result<Provider>;
     /// Cascades to endpoints, models and keys.
     fn delete(&self, id: &ProviderId, expect_revision: u64) -> Result<()>;
     fn add_key(&self, id: &ProviderId, key: ProviderKeyInput) -> Result<Provider>;
-    fn update_key(&self, id: &ProviderId, key_id: &ProviderKeyId, key: ProviderKeyUpdate) -> Result<Provider>;
+    fn update_key(
+        &self,
+        id: &ProviderId,
+        key_id: &ProviderKeyId,
+        key: ProviderKeyUpdate,
+    ) -> Result<Provider>;
     fn delete_key(&self, id: &ProviderId, key_id: &ProviderKeyId) -> Result<Provider>;
     /// Show / copy: the plaintext of one key; does not advance rotation.
     fn reveal_key(&self, key_id: &ProviderKeyId) -> Result<Secret>;
@@ -207,16 +258,27 @@ pub struct ModelPrefs {
 
 impl ModelPrefs {
     pub fn engine_provider(&self, backend: crate::BackendKind) -> Option<&crate::EngineProvider> {
-        self.engine_providers.iter().find(|(b, _)| *b == backend).map(|(_, p)| p)
+        self.engine_providers
+            .iter()
+            .find(|(b, _)| *b == backend)
+            .map(|(_, p)| p)
     }
 }
 
 pub trait ModelPrefService: Send + Sync {
     fn prefs(&self) -> Result<ModelPrefs>;
-    fn set_default(&self, model: Option<ModelRef>, effort: Option<ThinkingLevel>) -> Result<ModelPrefs>;
+    fn set_default(
+        &self,
+        model: Option<ModelRef>,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<ModelPrefs>;
     fn set_hidden(&self, model: &ModelRef, hidden: bool) -> Result<ModelPrefs>;
     /// 编码搭档: which provider row `backend` uses.
-    fn set_engine_provider(&self, backend: crate::BackendKind, choice: crate::EngineProvider) -> Result<ModelPrefs>;
+    fn set_engine_provider(
+        &self,
+        backend: crate::BackendKind,
+        choice: crate::EngineProvider,
+    ) -> Result<ModelPrefs>;
     fn set_default_agent(&self, backend: Option<crate::BackendKind>) -> Result<ModelPrefs>;
 }
 

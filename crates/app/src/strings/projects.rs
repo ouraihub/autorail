@@ -26,5 +26,8 @@ pub const SETUP_TITLE: &str = "让 Agent 起草规格";
 pub const SETUP_DETAIL: &str = "打开一个聊天，运行「设置项目」技能，从项目目标开始起草规格。";
 
 pub fn init_body(path: &std::path::Path) -> String {
-    format!("{} 还不是 Git 仓库。是否在这里执行 git init（分支 main）并打开为项目？", path.display())
+    format!(
+        "{} 还不是 Git 仓库。是否在这里执行 git init（分支 main）并打开为项目？",
+        path.display()
+    )
 }

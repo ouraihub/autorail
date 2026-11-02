@@ -54,13 +54,18 @@ pub fn parse(text: &str) -> Vec<FileDiff> {
     for raw in text.lines() {
         if raw.starts_with("diff --git ") {
             let path = raw.rsplit(" b/").next().unwrap_or_default().to_owned();
-            files.push(FileDiff { path, ..FileDiff::default() });
+            files.push(FileDiff {
+                path,
+                ..FileDiff::default()
+            });
             continue;
         }
         if files.is_empty() {
             files.push(FileDiff::default());
         }
-        let Some(file) = files.last_mut() else { continue };
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
         if file.hunks.is_empty() {
             if let Some(old) = raw.strip_prefix("--- ") {
                 file.old_path = strip_side(old.trim_end(), "a/");
@@ -88,26 +93,51 @@ pub fn parse(text: &str) -> Vec<FileDiff> {
         }
         if raw.starts_with("@@") {
             lines_numbers = hunk_start(raw).unwrap_or((1, 1));
-            file.hunks.push(Hunk { header: raw.to_owned(), lines: Vec::new() });
+            file.hunks.push(Hunk {
+                header: raw.to_owned(),
+                lines: Vec::new(),
+            });
             continue;
         }
-        let Some(hunk) = file.hunks.last_mut() else { continue };
+        let Some(hunk) = file.hunks.last_mut() else {
+            continue;
+        };
         let (old, new) = &mut lines_numbers;
         let line = match raw.as_bytes().first() {
             Some(b'+') => {
                 *new += 1;
-                Line { kind: Kind::Added, old: None, new: Some(*new - 1), text: raw[1..].to_owned() }
+                Line {
+                    kind: Kind::Added,
+                    old: None,
+                    new: Some(*new - 1),
+                    text: raw[1..].to_owned(),
+                }
             }
             Some(b'-') => {
                 *old += 1;
-                Line { kind: Kind::Removed, old: Some(*old - 1), new: None, text: raw[1..].to_owned() }
+                Line {
+                    kind: Kind::Removed,
+                    old: Some(*old - 1),
+                    new: None,
+                    text: raw[1..].to_owned(),
+                }
             }
-            Some(b'\\') => Line { kind: Kind::Note, old: None, new: None, text: raw.to_owned() },
+            Some(b'\\') => Line {
+                kind: Kind::Note,
+                old: None,
+                new: None,
+                text: raw.to_owned(),
+            },
             _ => {
                 *old += 1;
                 *new += 1;
                 let text = raw.strip_prefix(' ').unwrap_or(raw).to_owned();
-                Line { kind: Kind::Context, old: Some(*old - 1), new: Some(*new - 1), text }
+                Line {
+                    kind: Kind::Context,
+                    old: Some(*old - 1),
+                    new: Some(*new - 1),
+                    text,
+                }
             }
         };
         hunk.lines.push(line);
@@ -148,11 +178,23 @@ deleted file mode 100644
         let files = parse(DIFF);
         assert_eq!(files.len(), 3);
         let lines = &files[0].hunks[0].lines;
-        assert_eq!((lines[0].kind, lines[0].old, lines[0].new), (Kind::Context, Some(10), Some(10)));
-        assert_eq!((lines[1].kind, lines[1].old, lines[1].new), (Kind::Removed, Some(11), None));
-        assert_eq!((lines[2].kind, lines[2].old, lines[2].new), (Kind::Added, None, Some(11)));
+        assert_eq!(
+            (lines[0].kind, lines[0].old, lines[0].new),
+            (Kind::Context, Some(10), Some(10))
+        );
+        assert_eq!(
+            (lines[1].kind, lines[1].old, lines[1].new),
+            (Kind::Removed, Some(11), None)
+        );
+        assert_eq!(
+            (lines[2].kind, lines[2].old, lines[2].new),
+            (Kind::Added, None, Some(11))
+        );
         assert_eq!((lines[3].kind, lines[3].new), (Kind::Added, Some(12)));
-        assert_eq!((lines[4].kind, lines[4].old, lines[4].new), (Kind::Context, Some(12), Some(13)));
+        assert_eq!(
+            (lines[4].kind, lines[4].old, lines[4].new),
+            (Kind::Context, Some(12), Some(13))
+        );
         assert_eq!(lines[5].kind, Kind::Note);
         assert_eq!(files[0].path, "src/a.rs");
     }
@@ -160,7 +202,10 @@ deleted file mode 100644
     #[test]
     fn renames_and_deletions_keep_meaningful_paths() {
         let files = parse(DIFF);
-        assert_eq!((files[1].old_path.as_deref(), files[1].path.as_str()), (Some("old.txt"), "new.txt"));
+        assert_eq!(
+            (files[1].old_path.as_deref(), files[1].path.as_str()),
+            (Some("old.txt"), "new.txt")
+        );
         assert!(files[1].hunks.is_empty());
         assert_eq!(files[2].path, "gone.txt");
         assert_eq!(files[2].hunks[0].lines[0].kind, Kind::Removed);

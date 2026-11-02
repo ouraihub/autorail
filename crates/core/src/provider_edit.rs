@@ -4,16 +4,27 @@
 use crate::{Endpoint, Protocol, ProviderInput};
 
 /// Every protocol, in the order lines are offered.
-pub const LINE_PROTOCOLS: [Protocol; 3] = [Protocol::OpenaiChat, Protocol::AnthropicMessages, Protocol::OpenaiResponses];
+pub const LINE_PROTOCOLS: [Protocol; 3] = [
+    Protocol::OpenaiChat,
+    Protocol::AnthropicMessages,
+    Protocol::OpenaiResponses,
+];
 
 /// Protocols the provider has no line for yet.
 pub fn free_protocols(input: &ProviderInput) -> Vec<Protocol> {
-    LINE_PROTOCOLS.into_iter().filter(|p| !input.endpoints.iter().any(|e| e.protocol == *p)).collect()
+    LINE_PROTOCOLS
+        .into_iter()
+        .filter(|p| !input.endpoints.iter().any(|e| e.protocol == *p))
+        .collect()
 }
 
 /// Adds or replaces the line for `protocol`.
 pub fn set_line(input: &mut ProviderInput, protocol: Protocol, base_url: String) {
-    match input.endpoints.iter_mut().find(|endpoint| endpoint.protocol == protocol) {
+    match input
+        .endpoints
+        .iter_mut()
+        .find(|endpoint| endpoint.protocol == protocol)
+    {
         Some(endpoint) => endpoint.base_url = base_url,
         None => input.endpoints.push(Endpoint { protocol, base_url }),
     }
@@ -28,7 +39,9 @@ pub fn retarget_line(input: &mut ProviderInput, from: Protocol, to: Protocol) ->
     if input.endpoints.iter().any(|e| e.protocol == to) {
         return false;
     }
-    let Some(endpoint) = input.endpoints.iter_mut().find(|e| e.protocol == from) else { return false };
+    let Some(endpoint) = input.endpoints.iter_mut().find(|e| e.protocol == from) else {
+        return false;
+    };
     endpoint.protocol = to;
     for model in &mut input.models {
         for protocol in &mut model.protocols {
@@ -50,7 +63,9 @@ pub fn remove_line(input: &mut ProviderInput, protocol: Protocol) -> bool {
     if input.endpoints.len() <= 1 || !input.endpoints.iter().any(|e| e.protocol == protocol) {
         return false;
     }
-    input.endpoints.retain(|endpoint| endpoint.protocol != protocol);
+    input
+        .endpoints
+        .retain(|endpoint| endpoint.protocol != protocol);
     input.models.retain_mut(|model| {
         model.protocols.retain(|item| *item != protocol);
         !model.protocols.is_empty()
@@ -62,6 +77,13 @@ pub fn remove_line(input: &mut ProviderInput, protocol: Protocol) -> bool {
 }
 
 /// Models served on the line `protocol`, in list order, with their index in `input.models`.
-pub fn line_models(input: &ProviderInput, protocol: Protocol) -> impl Iterator<Item = (usize, &crate::ProviderModel)> {
-    input.models.iter().enumerate().filter(move |(_, model)| model.protocols.contains(&protocol))
+pub fn line_models(
+    input: &ProviderInput,
+    protocol: Protocol,
+) -> impl Iterator<Item = (usize, &crate::ProviderModel)> {
+    input
+        .models
+        .iter()
+        .enumerate()
+        .filter(move |(_, model)| model.protocols.contains(&protocol))
 }

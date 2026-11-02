@@ -76,8 +76,20 @@ pub struct TextStyle {
     pub uppercase: bool,
 }
 
-const fn style(family: Family, size: f32, weight: f32, line_height: f32, uppercase: bool) -> TextStyle {
-    TextStyle { family, size: px(size), weight: FontWeight(weight), line_height, uppercase }
+const fn style(
+    family: Family,
+    size: f32,
+    weight: f32,
+    line_height: f32,
+    uppercase: bool,
+) -> TextStyle {
+    TextStyle {
+        family,
+        size: px(size),
+        weight: FontWeight(weight),
+        line_height,
+        uppercase,
+    }
 }
 
 /// `typography.json` weights (`W_*`) and line heights (`LH_*`).

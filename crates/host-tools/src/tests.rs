@@ -3,8 +3,8 @@ use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use thinkrail_core::{
-    HostToolHandler, HostToolResult, HostToolSpec, NewReviewComment, PlanReviewService, PlanScope, PlanStatus,
-    ReviewState, Result, WorkspaceId, WorkspaceRoots,
+    HostToolHandler, HostToolResult, HostToolSpec, NewReviewComment, PlanReviewService, PlanScope,
+    PlanStatus, Result, ReviewState, WorkspaceId, WorkspaceRoots,
 };
 use thinkrail_plan_review::JsonPlanReviewStore;
 
@@ -31,7 +31,15 @@ fn fixture() -> Fixture {
     let root: Arc<dyn WorkspaceRoots> = Arc::new(Root(work.path().to_path_buf()));
     let store = Arc::new(JsonPlanReviewStore::open(data.path(), root.clone()).unwrap());
     let tools = HostTools::new(store.clone(), root);
-    Fixture { _dirs: (data, work), store, tools, scope: PlanScope { workspace: "w".into(), chat: "c".into() } }
+    Fixture {
+        _dirs: (data, work),
+        store,
+        tools,
+        scope: PlanScope {
+            workspace: "w".into(),
+            chat: "c".into(),
+        },
+    }
 }
 
 impl Fixture {
@@ -47,18 +55,39 @@ impl Fixture {
 
     fn id_of(&self, title: &str) -> String {
         let plan = self.store.plan(&self.scope).unwrap();
-        thinkrail_plan_review::plan_ops::items(&plan).find(|i| i.title == title).unwrap().id.to_string()
+        thinkrail_plan_review::plan_ops::items(&plan)
+            .find(|i| i.title == title)
+            .unwrap()
+            .id
+            .to_string()
     }
 }
 
 #[test]
 fn specs_are_the_original_tools_plus_resolve_comment() {
-    let names: Vec<String> = fixture().tools.specs().into_iter().map(|s| s.name).collect();
+    let names: Vec<String> = fixture()
+        .tools
+        .specs()
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
     assert_eq!(
         names,
         [
-            "todo_list", "todo_add", "todo_update", "todo_promote", "todo_remove", "todo_write", "todo_plan_summary",
-            "spec_grep", "spec_get", "spec_graph", "spec_create", "spec_update", "spec_delete", "spec_validate",
+            "todo_list",
+            "todo_add",
+            "todo_update",
+            "todo_promote",
+            "todo_remove",
+            "todo_write",
+            "todo_plan_summary",
+            "spec_grep",
+            "spec_get",
+            "spec_graph",
+            "spec_create",
+            "spec_update",
+            "spec_delete",
+            "spec_validate",
             "resolve_comment"
         ]
     );
@@ -68,26 +97,58 @@ fn specs_are_the_original_tools_plus_resolve_comment() {
 fn add_list_update_and_completion_semantics() {
     let f = fixture();
     assert_eq!(f.ok("todo_list", json!({})), "The plan is empty.");
-    assert!(f.ok("todo_add", json!({"title": "Write parser", "group": "Parser"})).starts_with("Added: [ ] Write parser — "));
-    f.ok("todo_add", json!({"title": "Test parser", "group": "Parser"}));
+    assert!(
+        f.ok(
+            "todo_add",
+            json!({"title": "Write parser", "group": "Parser"})
+        )
+        .starts_with("Added: [ ] Write parser — ")
+    );
+    f.ok(
+        "todo_add",
+        json!({"title": "Test parser", "group": "Parser"}),
+    );
     let (first, second) = (f.id_of("Write parser"), f.id_of("Test parser"));
     let listed = f.ok("todo_list", json!({}));
     assert!(listed.starts_with("▸ Parser [pending 0/2]"), "{listed}");
     assert!(listed.contains("note: nothing is in_progress"), "{listed}");
 
     f.ok("todo_update", json!({"id": first, "status": "in_progress"}));
-    let switched = f.ok("todo_update", json!({"id": second, "status": "in_progress"}));
-    assert!(switched.contains(&format!("(paused: {first} \"Write parser\" — back to pending)")), "{switched}");
+    let switched = f.ok(
+        "todo_update",
+        json!({"id": second, "status": "in_progress"}),
+    );
+    assert!(
+        switched.contains(&format!(
+            "(paused: {first} \"Write parser\" — back to pending)"
+        )),
+        "{switched}"
+    );
 
     let done = f.ok("todo_update", json!({"id": second, "status": "done", "summary": "s", "verification": "v", "commitSubject": "c"}));
-    assert!(done.contains(&format!("next: {first} \"Write parser\"")), "{done}");
+    assert!(
+        done.contains(&format!("next: {first} \"Write parser\"")),
+        "{done}"
+    );
     let reopened = f.ok("todo_update", json!({"id": second, "status": "pending"}));
     assert!(reopened.starts_with("Updated: [ ] Test parser"));
     let plan = f.store.plan(&f.scope).unwrap();
-    let item = thinkrail_plan_review::plan_ops::items(&plan).find(|i| i.title == "Test parser").unwrap();
-    assert_eq!((item.status, item.summary.as_deref(), item.commit_subject.as_deref()), (PlanStatus::Pending, None, None));
+    let item = thinkrail_plan_review::plan_ops::items(&plan)
+        .find(|i| i.title == "Test parser")
+        .unwrap();
+    assert_eq!(
+        (
+            item.status,
+            item.summary.as_deref(),
+            item.commit_subject.as_deref()
+        ),
+        (PlanStatus::Pending, None, None)
+    );
 
-    assert!(f.ok("todo_list", json!({"status": "done"})).contains("No done TODOs."));
+    assert!(
+        f.ok("todo_list", json!({"status": "done"}))
+            .contains("No done TODOs.")
+    );
 }
 
 #[test]
@@ -96,10 +157,22 @@ fn plan_complete_nudge_and_summary() {
     f.ok("todo_add", json!({"title": "Only step", "group": "Task"}));
     let id = f.id_of("Only step");
     let done = f.ok("todo_update", json!({"id": id, "status": "done"}));
-    assert!(done.contains("plan complete — write a cumulative overall summary"), "{done}");
-    assert_eq!(f.ok("todo_plan_summary", json!({"summary": "## Summary\nx"})), "Plan summary saved.");
-    assert_eq!(f.store.plan(&f.scope).unwrap().summary.as_deref(), Some("## Summary\nx"));
-    assert_eq!(f.ok("todo_plan_summary", json!({"summary": "  "})), "Plan summary cleared.");
+    assert!(
+        done.contains("plan complete — write a cumulative overall summary"),
+        "{done}"
+    );
+    assert_eq!(
+        f.ok("todo_plan_summary", json!({"summary": "## Summary\nx"})),
+        "Plan summary saved."
+    );
+    assert_eq!(
+        f.store.plan(&f.scope).unwrap().summary.as_deref(),
+        Some("## Summary\nx")
+    );
+    assert_eq!(
+        f.ok("todo_plan_summary", json!({"summary": "  "})),
+        "Plan summary cleared."
+    );
 }
 
 #[test]
@@ -108,9 +181,18 @@ fn loose_items_promote_and_cannot_anchor_inserts() {
     f.ok("todo_add", json!({"title": "User idea"}));
     let loose = f.id_of("User idea");
     let anchored = f.call("todo_add", json!({"title": "x", "after": loose}));
-    assert!(anchored.is_error && anchored.text.contains("is a loose item"), "{}", anchored.text);
+    assert!(
+        anchored.is_error && anchored.text.contains("is a loose item"),
+        "{}",
+        anchored.text
+    );
     let promoted = f.ok("todo_promote", json!({"id": loose}));
-    assert!(promoted.starts_with(&format!("Promoted {loose} → group \"User idea\" ({loose}).")), "{promoted}");
+    assert!(
+        promoted.starts_with(&format!(
+            "Promoted {loose} → group \"User idea\" ({loose})."
+        )),
+        "{promoted}"
+    );
     let again = f.call("todo_promote", json!({"id": loose}));
     assert!(again.is_error);
     f.ok("todo_add", json!({"title": "Step", "group": "User idea"}));
@@ -126,18 +208,32 @@ fn write_keeps_user_items_and_remove_reports_missing_ids() {
         .update_plan(&f.scope, &mut |plan| {
             thinkrail_plan_review::plan_ops::add(
                 plan,
-                thinkrail_plan_review::plan_ops::NewItem { title: "Mine".into(), origin: Some(thinkrail_core::Origin::User), ..Default::default() },
+                thinkrail_plan_review::plan_ops::NewItem {
+                    title: "Mine".into(),
+                    origin: Some(thinkrail_core::Origin::User),
+                    ..Default::default()
+                },
             )
             .map(drop)
         })
         .unwrap();
     let wrote = f.ok("todo_write", json!({"groups": [{"title": "Task", "todos": [{"title": "A"}, {"title": "B", "status": "in_progress"}]}]}));
-    assert!(wrote.starts_with("Wrote the plan (3 item(s) total):"), "{wrote}");
+    assert!(
+        wrote.starts_with("Wrote the plan (3 item(s) total):"),
+        "{wrote}"
+    );
     assert!(f.ok("todo_list", json!({})).contains("Mine"));
     let a = f.id_of("A");
-    assert_eq!(f.ok("todo_remove", json!({"id": a})), format!("Removed {a}."));
+    assert_eq!(
+        f.ok("todo_remove", json!({"id": a})),
+        format!("Removed {a}.")
+    );
     let missing = f.call("todo_remove", json!({"id": a}));
-    assert!(missing.is_error && missing.text == format!("No TODO with id \"{a}\"."), "{}", missing.text);
+    assert!(
+        missing.is_error && missing.text == format!("No TODO with id \"{a}\"."),
+        "{}",
+        missing.text
+    );
 }
 
 #[test]
@@ -160,27 +256,74 @@ fn resolve_comment_only_accepts_sent_comments_of_this_chat() {
     let f = fixture();
     let comment = f
         .store
-        .add_review(&f.scope, NewReviewComment { path: "a.txt".into(), line: 1, text_quote: None, body: "rename this".into() })
+        .add_review(
+            &f.scope,
+            NewReviewComment {
+                path: "a.txt".into(),
+                line: 1,
+                text_quote: None,
+                body: "rename this".into(),
+            },
+        )
         .unwrap();
-    let draft = f.call("resolve_comment", json!({"commentId": comment.id.to_string()}));
-    assert!(draft.is_error, "a draft comment cannot be resolved by the Agent");
+    let draft = f.call(
+        "resolve_comment",
+        json!({"commentId": comment.id.to_string()}),
+    );
+    assert!(
+        draft.is_error,
+        "a draft comment cannot be resolved by the Agent"
+    );
     f.store.send_package(&f.scope).unwrap();
-    let other = PlanScope { workspace: "w".into(), chat: "other".into() };
-    assert!(f.tools.call(&other, "resolve_comment", json!({"commentId": comment.id.to_string()})).unwrap().is_error);
-    let resolved = f.ok("resolve_comment", json!({"commentId": comment.id.to_string(), "note": "renamed"}));
-    assert_eq!(resolved, format!("Resolved review comment {} (\"rename this\").", comment.id));
-    assert_eq!(f.store.reviews(&f.scope).unwrap()[0].state, ReviewState::Resolved);
+    let other = PlanScope {
+        workspace: "w".into(),
+        chat: "other".into(),
+    };
+    assert!(
+        f.tools
+            .call(
+                &other,
+                "resolve_comment",
+                json!({"commentId": comment.id.to_string()})
+            )
+            .unwrap()
+            .is_error
+    );
+    let resolved = f.ok(
+        "resolve_comment",
+        json!({"commentId": comment.id.to_string(), "note": "renamed"}),
+    );
+    assert_eq!(
+        resolved,
+        format!("Resolved review comment {} (\"rename this\").", comment.id)
+    );
+    assert_eq!(
+        f.store.reviews(&f.scope).unwrap()[0].state,
+        ReviewState::Resolved
+    );
 }
 
 struct Fake;
 
 impl mcp::Backend for Fake {
     fn list(&mut self) -> std::result::Result<Vec<HostToolSpec>, String> {
-        Ok(vec![HostToolSpec { name: "t".into(), description: "d".into(), input_schema: json!({"type": "object"}) }])
+        Ok(vec![HostToolSpec {
+            name: "t".into(),
+            description: "d".into(),
+            input_schema: json!({"type": "object"}),
+        }])
     }
 
-    fn call(&mut self, name: &str, arguments: Value) -> std::result::Result<HostToolResult, String> {
-        Ok(HostToolResult { text: format!("{name}:{arguments}"), is_error: name == "bad", structured: None })
+    fn call(
+        &mut self,
+        name: &str,
+        arguments: Value,
+    ) -> std::result::Result<HostToolResult, String> {
+        Ok(HostToolResult {
+            text: format!("{name}:{arguments}"),
+            is_error: name == "bad",
+            structured: None,
+        })
     }
 }
 
@@ -201,12 +344,19 @@ fn mcp_negotiates_lists_calls_and_rejects_unknown_methods() {
     .join("\n");
     let mut output = Vec::new();
     mcp::serve(&mut Cursor::new(input), &mut output, &mut Fake).unwrap();
-    let replies: Vec<Value> = String::from_utf8(output).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let replies: Vec<Value> = String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
     assert_eq!(replies.len(), 6, "the notification gets no reply");
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(replies[0]["result"]["capabilities"], json!({"tools": {}}));
     assert_eq!(replies[1]["result"]["protocolVersion"], "2025-11-25");
-    assert_eq!(replies[2]["result"]["tools"][0]["inputSchema"], json!({"type": "object"}));
+    assert_eq!(
+        replies[2]["result"]["tools"][0]["inputSchema"],
+        json!({"type": "object"})
+    );
     assert_eq!(replies[3]["result"]["content"][0]["text"], "bad:{\"x\":1}");
     assert_eq!(replies[3]["result"]["isError"], true);
     assert_eq!(replies[4]["error"]["code"], -32601);
@@ -223,13 +373,24 @@ fn pipe_bridge_scopes_calls_by_token_and_rejects_strangers() {
     let mut client = BridgeClient::connect(bridge.pipe_name(), &token).unwrap();
     let listed = client.request(json!({"method": "list"})).unwrap();
     assert_eq!(listed["result"].as_array().map(Vec::len), Some(15));
-    let added = client.request(json!({"method": "call", "name": "todo_add", "arguments": {"title": "Via pipe"}})).unwrap();
+    let added = client
+        .request(json!({"method": "call", "name": "todo_add", "arguments": {"title": "Via pipe"}}))
+        .unwrap();
     assert_eq!(added["result"]["isError"], false, "{added}");
-    assert!(f.ok("todo_list", json!({})).contains("Via pipe"), "the call landed in the token's scope");
+    assert!(
+        f.ok("todo_list", json!({})).contains("Via pipe"),
+        "the call landed in the token's scope"
+    );
 
     let mut stranger = BridgeClient::connect(bridge.pipe_name(), "not-a-token").unwrap();
-    assert!(stranger.request(json!({"method": "list"})).is_err(), "unknown tokens are disconnected");
+    assert!(
+        stranger.request(json!({"method": "list"})).is_err(),
+        "unknown tokens are disconnected"
+    );
 
     bridge.revoke(&token);
-    assert!(client.request(json!({"method": "list"})).is_err(), "revoked tokens end the connection");
+    assert!(
+        client.request(json!({"method": "list"})).is_err(),
+        "revoked tokens end the connection"
+    );
 }

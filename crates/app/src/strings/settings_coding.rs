@@ -23,8 +23,12 @@ pub const ENABLED: &str = "已启用";
 pub const ALL_PROVIDERS: &str = "未选择：使用全部已启用的服务商，各按自己的接入方式";
 pub const ADD_PROVIDER: &str = "在 设置 → 模型服务 添加服务商";
 
-pub fn official(backend: BackendKind) -> String { format!("{} 官方", name(backend)) }
-pub fn version(version: &str) -> String { format!("版本 {version}") }
+pub fn official(backend: BackendKind) -> String {
+    format!("{} 官方", name(backend))
+}
+pub fn version(version: &str) -> String {
+    format!("版本 {version}")
+}
 
 /// Display name (Cherry's `code.cli_tools.*` where it has one).
 pub fn name(backend: BackendKind) -> &'static str {

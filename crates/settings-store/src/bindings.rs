@@ -38,7 +38,12 @@ impl ChatBindingService for SqliteSettingsStore {
     }
 
     fn unbind(&self, chat: &ChatId) -> Result<()> {
-        self.write(|conn| conn.execute("DELETE FROM chat_bindings WHERE chat_id = ?1", (chat.as_str(),)))?;
+        self.write(|conn| {
+            conn.execute(
+                "DELETE FROM chat_bindings WHERE chat_id = ?1",
+                (chat.as_str(),),
+            )
+        })?;
         Ok(())
     }
 }

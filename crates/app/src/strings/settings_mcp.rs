@@ -2,7 +2,8 @@
 pub const TITLE: &str = "MCP 服务器";
 pub const GLOBAL: &str = "全局";
 pub const PROJECT: &str = "当前项目：";
-pub const DESCRIPTION: &str = "服务器在运行 ThinkRail 的这台机器上运行，并继承其环境。项目里的设置覆盖全局。";
+pub const DESCRIPTION: &str =
+    "服务器在运行 ThinkRail 的这台机器上运行，并继承其环境。项目里的设置覆盖全局。";
 pub const ADD: &str = "添加服务器";
 pub const EDIT: &str = "编辑服务器";
 pub const NAME: &str = "名称";

@@ -107,7 +107,10 @@ pub(crate) fn apply(c: &mut ThemeColor, r: &Roles) {
     c.status_bar = h(r.container_header_bg);
     c.status_bar_border = h(r.border_muted);
 
-    c.scrollbar = h(Rgba { a: 0., ..r.container_workspace_bg });
+    c.scrollbar = h(Rgba {
+        a: 0.,
+        ..r.container_workspace_bg
+    });
     c.scrollbar_thumb = h(r.control_border_active);
     c.scrollbar_thumb_hover = h(r.text_subtle);
     c.skeleton = h(r.control_bg);

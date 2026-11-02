@@ -26,8 +26,16 @@ use crate::{
 /// One row of the tree view: a directory header or a change at `depth`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TreeItem {
-    Dir { path: String, name: String, depth: usize },
-    File { index: usize, name: String, depth: usize },
+    Dir {
+        path: String,
+        name: String,
+        depth: usize,
+    },
+    File {
+        index: usize,
+        name: String,
+        depth: usize,
+    },
 }
 
 /// Groups changes by directory, directories before their files, both sorted by path.
@@ -43,9 +51,17 @@ pub(crate) fn tree(changes: &[Change]) -> Vec<TreeItem> {
         open.truncate(common);
         for (depth, dir) in dirs.iter().enumerate().skip(common) {
             open.push((*dir).to_owned());
-            items.push(TreeItem::Dir { path: dirs[..=depth].join("/"), name: (*dir).to_owned(), depth });
+            items.push(TreeItem::Dir {
+                path: dirs[..=depth].join("/"),
+                name: (*dir).to_owned(),
+                depth,
+            });
         }
-        items.push(TreeItem::File { index, name: name.first().copied().unwrap_or_default().to_owned(), depth: dirs.len() });
+        items.push(TreeItem::File {
+            index,
+            name: name.first().copied().unwrap_or_default().to_owned(),
+            depth: dirs.len(),
+        });
     }
     items
 }
@@ -72,7 +88,12 @@ pub struct ChangesPanel {
 }
 
 impl ChangesPanel {
-    pub fn new(state: Entity<AppState>, files: Entity<FilePanel>, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        state: Entity<AppState>,
+        files: Entity<FilePanel>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscriptions = vec![cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
             let workspace = state.read(cx).workspace.clone();
             if *event == AppEvent::Workspace || workspace != this.workspace {
@@ -82,7 +103,14 @@ impl ChangesPanel {
             }
         })];
         let workspace = state.read(cx).workspace.clone();
-        let mut panel = Self { state, files, workspace, status: None, tree_mode: false, _subscriptions: subscriptions };
+        let mut panel = Self {
+            state,
+            files,
+            workspace,
+            status: None,
+            tree_mode: false,
+            _subscriptions: subscriptions,
+        };
         panel.refresh(cx);
         panel
     }
@@ -94,19 +122,30 @@ impl ChangesPanel {
         };
         let service = self.state.read(cx).services.workspace.clone();
         let target = workspace.clone();
-        run(cx, move || service.git_status(&target), move |this, result, cx| {
-            if this.workspace.as_ref() != Some(&workspace) {
-                return;
-            }
-            match result {
-                Ok(status) => this.status = Some(status),
-                Err(error) => this.state.update(cx, |state, cx| state.report(&error, cx)),
-            }
-            cx.notify();
-        });
+        run(
+            cx,
+            move || service.git_status(&target),
+            move |this, result, cx| {
+                if this.workspace.as_ref() != Some(&workspace) {
+                    return;
+                }
+                match result {
+                    Ok(status) => this.status = Some(status),
+                    Err(error) => this.state.update(cx, |state, cx| state.report(&error, cx)),
+                }
+                cx.notify();
+            },
+        );
     }
 
-    fn change_row(&self, index: usize, change: &Change, name: String, depth: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn change_row(
+        &self,
+        index: usize,
+        change: &Change,
+        name: String,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let r = ThinkrailTheme::global(cx).roles;
         let (mark, color) = status_mark(change.status, &r);
         let counts = match (change.additions, change.deletions) {
@@ -120,10 +159,15 @@ impl ChangesPanel {
                 d.child(label(text::METADATA, format!("+{add}")).text_color(r.feedback_success))
                     .child(label(text::METADATA, format!("−{del}")).text_color(r.feedback_error))
             }))
-            .trailing(label(text::METADATA, mark).w(size::HEADER_CONTROL).text_color(color))
+            .trailing(
+                label(text::METADATA, mark)
+                    .w(size::HEADER_CONTROL)
+                    .text_color(color),
+            )
             .on_click(cx.listener(move |this, _, _, cx| {
                 let path = path.clone();
-                this.files.update(cx, |files, cx| files.open_diff(path, staged, cx));
+                this.files
+                    .update(cx, |files, cx| files.open_diff(path, staged, cx));
             }))
             .into_any_element()
     }
@@ -133,23 +177,39 @@ impl Render for ChangesPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
         let header = PanelHeader::new(s::TITLE)
-            .action(Segment::new("changes-mode", [s::LIST, s::TREE], usize::from(self.tree_mode)).on_select(cx.listener(
-                |this, index: &usize, _, cx| {
+            .action(
+                Segment::new(
+                    "changes-mode",
+                    [s::LIST, s::TREE],
+                    usize::from(self.tree_mode),
+                )
+                .on_select(cx.listener(|this, index: &usize, _, cx| {
                     this.tree_mode = *index == 1;
                     cx.notify();
-                },
-            )))
-            .action(IconButton::new("changes-refresh", IconName::RefreshCw).tooltip(s::REFRESH).on_click(cx.listener(
-                |this, _, _, cx| this.refresh(cx),
-            )));
+                })),
+            )
+            .action(
+                IconButton::new("changes-refresh", IconName::RefreshCw)
+                    .tooltip(s::REFRESH)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+            );
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut branch_line = None;
         if let Some(status) = self.status.clone() {
             let upstream = match &status.upstream {
-                Some(upstream) => format!("{upstream} · {} {} · {} {}", s::AHEAD, status.ahead, s::BEHIND, status.behind),
+                Some(upstream) => format!(
+                    "{upstream} · {} {} · {} {}",
+                    s::AHEAD,
+                    status.ahead,
+                    s::BEHIND,
+                    status.behind
+                ),
                 None => s::NO_UPSTREAM.to_owned(),
             };
-            branch_line = Some(format!("{} · {upstream}", status.branch.clone().unwrap_or_default()));
+            branch_line = Some(format!(
+                "{} · {upstream}",
+                status.branch.clone().unwrap_or_default()
+            ));
             if self.tree_mode {
                 for item in tree(&status.changes) {
                     match item {
@@ -160,7 +220,13 @@ impl Render for ChangesPanel {
                                 .into_any_element(),
                         ),
                         TreeItem::File { index, name, depth } => {
-                            rows.push(self.change_row(index, &status.changes[index], name, depth, cx));
+                            rows.push(self.change_row(
+                                index,
+                                &status.changes[index],
+                                name,
+                                depth,
+                                cx,
+                            ));
                         }
                     }
                 }
@@ -182,7 +248,13 @@ impl Render for ChangesPanel {
             .border_color(r.border_muted)
             .child(header)
             .when_some(branch_line, |d, line| {
-                d.child(label(text::METADATA, line).px(size::PANEL_PADDING).py(space::S4).truncate().text_color(r.text_subtle))
+                d.child(
+                    label(text::METADATA, line)
+                        .px(size::PANEL_PADDING)
+                        .py(space::S4)
+                        .truncate()
+                        .text_color(r.text_subtle),
+                )
             })
             .child(
                 v_flex()
@@ -194,7 +266,11 @@ impl Render for ChangesPanel {
                     .gap(space::S2)
                     .children(rows)
                     .when_some(empty, |d, message| {
-                        d.child(label(text::METADATA, message).p(size::PANEL_PADDING).text_color(r.text_subtle))
+                        d.child(
+                            label(text::METADATA, message)
+                                .p(size::PANEL_PADDING)
+                                .text_color(r.text_subtle),
+                        )
                     }),
             )
             .child(div())
@@ -206,12 +282,24 @@ mod tests {
     use super::*;
 
     fn change(path: &str) -> Change {
-        Change { path: path.into(), original_path: None, status: ChangeStatus::Modified, staged: false, additions: None, deletions: None }
+        Change {
+            path: path.into(),
+            original_path: None,
+            status: ChangeStatus::Modified,
+            staged: false,
+            additions: None,
+            deletions: None,
+        }
     }
 
     #[test]
     fn tree_groups_files_under_shared_directories() {
-        let changes = vec![change("src/b.rs"), change("README.md"), change("src/a/x.rs"), change("src/a.rs")];
+        let changes = vec![
+            change("src/b.rs"),
+            change("README.md"),
+            change("src/a/x.rs"),
+            change("src/a.rs"),
+        ];
         let items = tree(&changes);
         let names: Vec<String> = items
             .iter()
@@ -220,6 +308,16 @@ mod tests {
                 TreeItem::File { name, depth, .. } => format!("{depth}f:{name}"),
             })
             .collect();
-        assert_eq!(names, ["0f:README.md", "0d:src", "1f:a.rs", "1d:a", "2f:x.rs", "1f:b.rs"]);
+        assert_eq!(
+            names,
+            [
+                "0f:README.md",
+                "0d:src",
+                "1f:a.rs",
+                "1d:a",
+                "2f:x.rs",
+                "1f:b.rs"
+            ]
+        );
     }
 }

@@ -12,7 +12,10 @@ const CARRIED_LOOSE_GROUP: &str = "Completed";
 const MAX_TITLE: usize = 500;
 
 pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Collapses whitespace runs so a title is always one line.
@@ -48,11 +51,15 @@ fn item(title: String, status: PlanStatus, origin: Origin, note: Option<String>)
 }
 
 pub fn items(plan: &Plan) -> impl Iterator<Item = &PlanItem> {
-    plan.loose.iter().chain(plan.groups.iter().flat_map(|g| g.items.iter()))
+    plan.loose
+        .iter()
+        .chain(plan.groups.iter().flat_map(|g| g.items.iter()))
 }
 
 fn items_mut(plan: &mut Plan) -> impl Iterator<Item = &mut PlanItem> {
-    plan.loose.iter_mut().chain(plan.groups.iter_mut().flat_map(|g| g.items.iter_mut()))
+    plan.loose
+        .iter_mut()
+        .chain(plan.groups.iter_mut().flat_map(|g| g.items.iter_mut()))
 }
 
 pub fn find<'a>(plan: &'a Plan, id: &PlanItemId) -> Option<&'a PlanItem> {
@@ -60,13 +67,21 @@ pub fn find<'a>(plan: &'a Plan, id: &PlanItemId) -> Option<&'a PlanItem> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GroupStatus { Pending, Active, Done }
+pub enum GroupStatus {
+    Pending,
+    Active,
+    Done,
+}
 
 /// Derived, never stored: all done → Done, any in progress → Active, otherwise Pending.
 pub fn group_status(group: &PlanGroup) -> GroupStatus {
     if !group.items.is_empty() && group.items.iter().all(|i| i.status == PlanStatus::Done) {
         GroupStatus::Done
-    } else if group.items.iter().any(|i| i.status == PlanStatus::InProgress) {
+    } else if group
+        .items
+        .iter()
+        .any(|i| i.status == PlanStatus::InProgress)
+    {
         GroupStatus::Active
     } else {
         GroupStatus::Pending
@@ -110,13 +125,21 @@ pub struct NewItem {
 }
 
 pub fn add(plan: &mut Plan, input: NewItem) -> Result<PlanItem> {
-    let new = item(flatten_title(&input.title)?, PlanStatus::Pending, input.origin.unwrap_or(Origin::Agent), input.note);
+    let new = item(
+        flatten_title(&input.title)?,
+        PlanStatus::Pending,
+        input.origin.unwrap_or(Origin::Agent),
+        input.note,
+    );
     if let Some(after) = &input.after {
         let lane = std::iter::once(&mut plan.loose)
             .chain(plan.groups.iter_mut().map(|g| &mut g.items))
             .find(|lane| lane.iter().any(|i| &i.id == after))
             .ok_or_else(|| Error::not_found(format!("计划项 {after}")))?;
-        let index = lane.iter().position(|i| &i.id == after).map_or(lane.len(), |i| i + 1);
+        let index = lane
+            .iter()
+            .position(|i| &i.id == after)
+            .map_or(lane.len(), |i| i + 1);
         lane.insert(index, new.clone());
         return Ok(new);
     }
@@ -125,7 +148,11 @@ pub fn add(plan: &mut Plan, input: NewItem) -> Result<PlanItem> {
             let index = match plan.groups.iter().position(|g| g.title == title) {
                 Some(index) => index,
                 None => {
-                    plan.groups.push(PlanGroup { id: PlanItemId::generate(), title, items: Vec::new() });
+                    plan.groups.push(PlanGroup {
+                        id: PlanItemId::generate(),
+                        title,
+                        items: Vec::new(),
+                    });
                     plan.groups.len() - 1
                 }
             };
@@ -156,7 +183,9 @@ pub struct Updated {
 
 pub fn update(plan: &mut Plan, id: &PlanItemId, patch: ItemPatch) -> Result<Updated> {
     let title = patch.title.as_deref().map(flatten_title).transpose()?;
-    let target = items_mut(plan).find(|i| &i.id == id).ok_or_else(|| Error::not_found(format!("计划项 {id}")))?;
+    let target = items_mut(plan)
+        .find(|i| &i.id == id)
+        .ok_or_else(|| Error::not_found(format!("计划项 {id}")))?;
     if let Some(title) = title {
         target.title = title;
     }
@@ -184,8 +213,14 @@ pub fn update(plan: &mut Plan, id: &PlanItemId, patch: ItemPatch) -> Result<Upda
         target.commit_subject = non_empty(subject);
     }
     target.updated_at = now_ms();
-    let paused = if becomes_active { keep_one_in_progress(plan, Some(id)) } else { Vec::new() };
-    let item = find(plan, id).cloned().ok_or_else(|| Error::not_found(format!("计划项 {id}")))?;
+    let paused = if becomes_active {
+        keep_one_in_progress(plan, Some(id))
+    } else {
+        Vec::new()
+    };
+    let item = find(plan, id)
+        .cloned()
+        .ok_or_else(|| Error::not_found(format!("计划项 {id}")))?;
     Ok(Updated { item, paused })
 }
 
@@ -215,15 +250,26 @@ pub fn remove_by_user(plan: &mut Plan, id: &PlanItemId) -> Result<()> {
 /// Turns a loose item into an empty group that keeps the item's id.
 pub fn promote(plan: &mut Plan, id: &PlanItemId, title: Option<String>) -> Result<PlanGroup> {
     let Some(index) = plan.loose.iter().position(|i| &i.id == id) else {
-        let grouped = plan.groups.iter().any(|g| g.items.iter().any(|i| &i.id == id));
-        return Err(if grouped { Error::invalid("只能提升松散计划项") } else { Error::not_found(format!("计划项 {id}")) });
+        let grouped = plan
+            .groups
+            .iter()
+            .any(|g| g.items.iter().any(|i| &i.id == id));
+        return Err(if grouped {
+            Error::invalid("只能提升松散计划项")
+        } else {
+            Error::not_found(format!("计划项 {id}"))
+        });
     };
     let title = flatten_title(title.as_deref().unwrap_or(&plan.loose[index].title))?;
     if plan.groups.iter().any(|g| g.title == title) {
         return Err(Error::conflict(format!("已有同名分组 {title}")));
     }
     let item = plan.loose.remove(index);
-    let group = PlanGroup { id: item.id, title, items: Vec::new() };
+    let group = PlanGroup {
+        id: item.id,
+        title,
+        items: Vec::new(),
+    };
     plan.groups.push(group.clone());
     Ok(group)
 }
@@ -258,7 +304,9 @@ pub fn write_groups(plan: &mut Plan, groups: Vec<WriteGroup>) -> Result<()> {
                 .iter()
                 .filter(|g| g.title == title)
                 .flat_map(|g| g.items.iter())
-                .find(|i| i.origin == Origin::Agent && i.title == step && !consumed.contains(&i.id));
+                .find(|i| {
+                    i.origin == Origin::Agent && i.title == step && !consumed.contains(&i.id)
+                });
             items.push(match hit {
                 Some(existing) => {
                     consumed.insert(existing.id.clone());
@@ -269,13 +317,26 @@ pub fn write_groups(plan: &mut Plan, groups: Vec<WriteGroup>) -> Result<()> {
                     }
                     merged
                 }
-                None => item(step, write.status.unwrap_or(PlanStatus::Pending), Origin::Agent, write.note),
+                None => item(
+                    step,
+                    write.status.unwrap_or(PlanStatus::Pending),
+                    Origin::Agent,
+                    write.note,
+                ),
             });
         }
-        fresh.push(PlanGroup { id: PlanItemId::generate(), title, items });
+        fresh.push(PlanGroup {
+            id: PlanItemId::generate(),
+            title,
+            items,
+        });
     }
-    let mut loose: Vec<PlanItem> =
-        current.loose.iter().filter(|i| i.origin == Origin::User || i.status != PlanStatus::Done).cloned().collect();
+    let mut loose: Vec<PlanItem> = current
+        .loose
+        .iter()
+        .filter(|i| i.origin == Origin::User || i.status != PlanStatus::Done)
+        .cloned()
+        .collect();
     let mut carried = Vec::new();
     for old in &current.groups {
         if old.items.is_empty() {
@@ -299,19 +360,35 @@ pub fn write_groups(plan: &mut Plan, groups: Vec<WriteGroup>) -> Result<()> {
             }
         }
         if !done.is_empty() {
-            carried.push(PlanGroup { id: PlanItemId::generate(), title: old.title.clone(), items: done });
+            carried.push(PlanGroup {
+                id: PlanItemId::generate(),
+                title: old.title.clone(),
+                items: done,
+            });
         }
     }
-    let loose_done: Vec<PlanItem> =
-        current.loose.iter().filter(|i| i.origin == Origin::Agent && i.status == PlanStatus::Done).cloned().collect();
+    let loose_done: Vec<PlanItem> = current
+        .loose
+        .iter()
+        .filter(|i| i.origin == Origin::Agent && i.status == PlanStatus::Done)
+        .cloned()
+        .collect();
     if !loose_done.is_empty() {
         match fresh.iter_mut().find(|g| g.title == CARRIED_LOOSE_GROUP) {
             Some(group) => group.items.extend(loose_done),
-            None => carried.push(PlanGroup { id: PlanItemId::generate(), title: CARRIED_LOOSE_GROUP.into(), items: loose_done }),
+            None => carried.push(PlanGroup {
+                id: PlanItemId::generate(),
+                title: CARRIED_LOOSE_GROUP.into(),
+                items: loose_done,
+            }),
         }
     }
     fresh.extend(carried);
-    *plan = Plan { groups: fresh, loose, summary: current.summary };
+    *plan = Plan {
+        groups: fresh,
+        loose,
+        summary: current.summary,
+    };
     keep_one_in_progress(plan, None);
     Ok(())
 }

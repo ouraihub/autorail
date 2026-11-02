@@ -49,7 +49,10 @@ pub(super) fn split_frontmatter(content: &str) -> Option<Split<'_>> {
     for line in lines {
         offset += line.len();
         if line.trim() == FENCE {
-            return Some(Split { fm_text: interior.join("\n"), body: &text[offset..] });
+            return Some(Split {
+                fm_text: interior.join("\n"),
+                body: &text[offset..],
+            });
         }
         let line = line.strip_suffix('\n').unwrap_or(line);
         interior.push(line.strip_suffix('\r').unwrap_or(line));
@@ -63,10 +66,14 @@ pub(super) fn parse_frontmatter(content: &str) -> Option<Frontmatter> {
     if split.fm_text.trim().is_empty() {
         return Some(Frontmatter::new());
     }
-    let Value::Mapping(map) = serde_yaml_ng::from_str::<Value>(&split.fm_text).ok()? else { return None };
+    let Value::Mapping(map) = serde_yaml_ng::from_str::<Value>(&split.fm_text).ok()? else {
+        return None;
+    };
     let mut fm = Frontmatter::new();
     for (key, value) in &map {
-        let Some(key) = scalar_text(key) else { continue };
+        let Some(key) = scalar_text(key) else {
+            continue;
+        };
         let value = match value {
             Value::Sequence(items) => FmValue::List(items.iter().filter_map(scalar_text).collect()),
             other => match scalar_text(other) {
@@ -104,7 +111,9 @@ pub(super) fn list<'a>(fm: &'a Frontmatter, key: &str) -> Vec<&'a str> {
 }
 
 pub(super) fn is_spec(fm: &Frontmatter) -> bool {
-    IDENTITY_FIELDS.iter().all(|field| scalar(fm, field).is_some())
+    IDENTITY_FIELDS
+        .iter()
+        .all(|field| scalar(fm, field).is_some())
 }
 
 /// Canonical new frontmatter in the given field order, lists inline, empty values dropped.
@@ -127,7 +136,11 @@ pub(super) fn serialize_frontmatter(fields: &[(&str, FmValue)]) -> String {
 
 /// One top-level `key: value` line; lists render as an inline flow sequence.
 pub(super) fn field_line(key: &str, value: &FmValue) -> String {
-    let key = if plain_key(key) { key.to_owned() } else { quoted(key) };
+    let key = if plain_key(key) {
+        key.to_owned()
+    } else {
+        quoted(key)
+    };
     match value {
         FmValue::Scalar(s) => format!("{key}: {}", encode(s, false)),
         FmValue::List(items) => {
@@ -140,10 +153,20 @@ pub(super) fn field_line(key: &str, value: &FmValue) -> String {
 /// Plain when the plain spelling reads back as exactly this string, else a double-quoted scalar.
 fn encode(text: &str, in_flow: bool) -> String {
     let plain = !text.is_empty() && !text.contains(['\n', '\r']) && text.trim() == text && {
-        let doc = if in_flow { format!("k: [{text}]") } else { format!("k: {text}") };
-        match serde_yaml_ng::from_str::<Value>(&doc).ok().as_ref().and_then(|v| v.get("k")) {
+        let doc = if in_flow {
+            format!("k: [{text}]")
+        } else {
+            format!("k: {text}")
+        };
+        match serde_yaml_ng::from_str::<Value>(&doc)
+            .ok()
+            .as_ref()
+            .and_then(|v| v.get("k"))
+        {
             Some(Value::String(s)) => !in_flow && s == text,
-            Some(Value::Sequence(items)) => in_flow && matches!(items.as_slice(), [Value::String(s)] if s == text),
+            Some(Value::Sequence(items)) => {
+                in_flow && matches!(items.as_slice(), [Value::String(s)] if s == text)
+            }
             _ => false,
         }
     };

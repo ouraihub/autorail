@@ -27,11 +27,23 @@ pub(crate) fn is_spec_tool(name: &str) -> bool {
 /// Runs one spec tool against `root`; failures are `is_error` results.
 pub(crate) fn call(root: &Path, name: &str, args: &Value) -> HostToolResult {
     match tools::run(root, name, args) {
-        Ok((text, continuation)) => HostToolResult { text: bounded(text, &continuation), is_error: false, structured: None },
+        Ok((text, continuation)) => HostToolResult {
+            text: bounded(text, &continuation),
+            is_error: false,
+            structured: None,
+        },
         Err(message) => {
             let inline = format!("Error: {message}");
-            let text = if fits(&inline) { inline } else { format!("Error:\n{message}") };
-            HostToolResult { text: bounded(text, ""), is_error: true, structured: None }
+            let text = if fits(&inline) {
+                inline
+            } else {
+                format!("Error:\n{message}")
+            };
+            HostToolResult {
+                text: bounded(text, ""),
+                is_error: true,
+                structured: None,
+            }
         }
     }
 }
@@ -59,7 +71,11 @@ fn bounded(mut text: String, continuation: &str) -> String {
             "Full output unavailable: temporary-file capture failed. Narrow a read query; do not repeat a mutation to retrieve its output.".to_owned()
         }
     };
-    let mut footer = format!("\n\n[Output truncated: {} lines, {} bytes total. {notice}]", text.split('\n').count(), text.len());
+    let mut footer = format!(
+        "\n\n[Output truncated: {} lines, {} bytes total. {notice}]",
+        text.split('\n').count(),
+        text.len()
+    );
     if !continuation.is_empty() {
         footer.push('\n');
         footer.push_str(continuation);
@@ -85,7 +101,10 @@ fn bounded(mut text: String, continuation: &str) -> String {
 
 /// An owner-only (`0600`) file in the OS temporary directory, kept after return.
 fn capture(text: &str) -> std::io::Result<std::path::PathBuf> {
-    let mut file = tempfile::Builder::new().prefix("pi-spec-output-").suffix(".txt").tempfile()?;
+    let mut file = tempfile::Builder::new()
+        .prefix("pi-spec-output-")
+        .suffix(".txt")
+        .tempfile()?;
     file.write_all(text.as_bytes())?;
     let (_, path) = file.keep().map_err(|e| e.error)?;
     Ok(path)

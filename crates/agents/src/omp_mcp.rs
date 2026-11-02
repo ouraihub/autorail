@@ -6,7 +6,9 @@
 use std::{fs, io, path::Path};
 
 use serde_json::{Map, Value, json};
-use thinkrail_core::{EnvBinding, Error, ErrorKind, IoContext, ProjectedMcpServer, ProjectedMcpTransport, Result};
+use thinkrail_core::{
+    EnvBinding, Error, ErrorKind, IoContext, ProjectedMcpServer, ProjectedMcpTransport, Result,
+};
 
 use crate::host;
 
@@ -15,7 +17,12 @@ const PREFIX: &str = "thinkrail-";
 const FILE: &str = "mcp.json";
 
 fn references(bindings: &[EnvBinding]) -> Value {
-    Value::Object(bindings.iter().map(|b| (b.name.clone(), Value::from(format!("${{{}}}", b.var)))).collect())
+    Value::Object(
+        bindings
+            .iter()
+            .map(|b| (b.name.clone(), Value::from(format!("${{{}}}", b.var))))
+            .collect(),
+    )
 }
 
 /// The `mcpServers` entry of one projected server.
@@ -24,31 +31,52 @@ fn entry(server: &ProjectedMcpServer) -> Value {
         ProjectedMcpTransport::Stdio { command, args, env } => {
             json!({"type": "stdio", "command": command, "args": args, "env": references(env)})
         }
-        ProjectedMcpTransport::Http { url, headers } => json!({"type": "http", "url": url, "headers": references(headers)}),
+        ProjectedMcpTransport::Http { url, headers } => {
+            json!({"type": "http", "url": url, "headers": references(headers)})
+        }
     }
 }
 
 fn not_json(path: &Path) -> Error {
-    Error::invalid(format!("{} 不是有效的 JSON，ThinkRail 不会覆盖它。", path.display()))
+    Error::invalid(format!(
+        "{} 不是有效的 JSON，ThinkRail 不会覆盖它。",
+        path.display()
+    ))
 }
 
 /// The new text of `path` (currently `current`; `None` = missing) with `servers` as its only
 /// `thinkrail-` entries, or `None` when the content would not change.
-pub(crate) fn merge(path: &Path, current: Option<&str>, servers: &[ProjectedMcpServer]) -> Result<Option<String>> {
+pub(crate) fn merge(
+    path: &Path,
+    current: Option<&str>,
+    servers: &[ProjectedMcpServer],
+) -> Result<Option<String>> {
     let before = match current {
         Some(text) => serde_json::from_str::<Value>(text).map_err(|_| not_json(path))?,
         None => Value::Object(Map::new()),
     };
     let mut after = before.clone();
-    let Value::Object(root) = &mut after else { return Err(not_json(path)) };
+    let Value::Object(root) = &mut after else {
+        return Err(not_json(path));
+    };
     if !root.contains_key("mcpServers") && servers.is_empty() {
         return Ok(None);
     }
-    let Value::Object(entries) = root.entry("mcpServers").or_insert_with(|| Value::Object(Map::new())) else {
-        return Err(Error::invalid(format!("{} 中的 mcpServers 不是对象，ThinkRail 不会覆盖它。", path.display())));
+    let Value::Object(entries) = root
+        .entry("mcpServers")
+        .or_insert_with(|| Value::Object(Map::new()))
+    else {
+        return Err(Error::invalid(format!(
+            "{} 中的 mcpServers 不是对象，ThinkRail 不会覆盖它。",
+            path.display()
+        )));
     };
     entries.retain(|name, _| !name.starts_with(PREFIX));
-    entries.extend(servers.iter().map(|server| (server.name.clone(), entry(server))));
+    entries.extend(
+        servers
+            .iter()
+            .map(|server| (server.name.clone(), entry(server))),
+    );
     if after == before {
         return Ok(None);
     }

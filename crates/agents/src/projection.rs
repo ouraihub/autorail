@@ -11,8 +11,9 @@ use std::{
 };
 
 use thinkrail_core::{
-    BackendKind, Capabilities, ChatId, ContentBlock, Interaction, Message, ModelInfo, NativeSessionKey,
-    SessionError, SessionEvent, SessionPhase, SessionSink, SessionSnapshot, ToolStatus,
+    BackendKind, Capabilities, ChatId, ContentBlock, Interaction, Message, ModelInfo,
+    NativeSessionKey, SessionError, SessionEvent, SessionPhase, SessionSink, SessionSnapshot,
+    ToolStatus,
 };
 
 const MAX_MESSAGES: usize = 2000;
@@ -60,7 +61,15 @@ impl Projection {
             last_error: None,
             revision: next_revision(),
         };
-        Self { snapshot, sizes: Vec::new(), total: 0, running: false, turn_started: None, closed: false, sink }
+        Self {
+            snapshot,
+            sizes: Vec::new(),
+            total: 0,
+            running: false,
+            turn_started: None,
+            closed: false,
+            sink,
+        }
     }
 
     pub(crate) fn snapshot(&self) -> SessionSnapshot {
@@ -129,14 +138,20 @@ impl Projection {
     }
 
     pub(crate) fn add_interaction(&mut self, interaction: Interaction) {
-        self.snapshot.interactions.retain(|i| i.request_id != interaction.request_id);
+        self.snapshot
+            .interactions
+            .retain(|i| i.request_id != interaction.request_id);
         self.snapshot.interactions.push(interaction);
         self.publish();
     }
 
     /// Removes the interaction without publishing; callers publish once the engine has the answer.
     pub(crate) fn take_interaction(&mut self, request_id: &str) -> Option<Interaction> {
-        let index = self.snapshot.interactions.iter().position(|i| i.request_id == request_id)?;
+        let index = self
+            .snapshot
+            .interactions
+            .iter()
+            .position(|i| i.request_id == request_id)?;
         Some(self.snapshot.interactions.remove(index))
     }
 
@@ -151,7 +166,11 @@ impl Projection {
     pub(crate) fn error(&mut self, error: SessionError) {
         self.snapshot.last_error = Some(error.clone());
         let revision = self.bump();
-        self.emit(SessionEvent::Error { chat: self.snapshot.id.clone(), revision, error });
+        self.emit(SessionEvent::Error {
+            chat: self.snapshot.id.clone(),
+            revision,
+            error,
+        });
     }
 
     pub(crate) fn contains(&self, id: &str) -> bool {
@@ -186,7 +205,9 @@ impl Projection {
 
     /// Applies `change` to a message; `false` if no such message.
     pub(crate) fn update(&mut self, id: &str, change: impl FnOnce(&mut Message)) -> bool {
-        let Some(index) = self.position(id) else { return false };
+        let Some(index) = self.position(id) else {
+            return false;
+        };
         let mut message = self.snapshot.messages[index].clone();
         change(&mut message);
         self.upsert(message);
@@ -196,7 +217,9 @@ impl Projection {
     /// Appends streamed text to a text or thinking block. Text beyond the per-message bound is
     /// dropped from the projection only (the engine keeps it).
     pub(crate) fn append(&mut self, id: &str, block: usize, delta: &str) {
-        let Some(index) = self.position(id) else { return };
+        let Some(index) = self.position(id) else {
+            return;
+        };
         if self.sizes[index] + delta.len() > MAX_MESSAGE_BYTES {
             if !self.snapshot.output_truncated {
                 self.snapshot.output_truncated = true;
@@ -205,7 +228,9 @@ impl Projection {
             return;
         }
         let message = &mut self.snapshot.messages[index];
-        let Some(ContentBlock::Text { text } | ContentBlock::Thinking { text }) = message.content.get_mut(block) else {
+        let Some(ContentBlock::Text { text } | ContentBlock::Thinking { text }) =
+            message.content.get_mut(block)
+        else {
             return;
         };
         text.push_str(delta);
@@ -213,7 +238,13 @@ impl Projection {
         self.total += delta.len();
         let revision = self.bump();
         let (chat, message_id) = (self.snapshot.id.clone(), id.to_owned());
-        self.emit(SessionEvent::Delta { chat, revision, message_id, block, text: delta.to_owned() });
+        self.emit(SessionEvent::Delta {
+            chat,
+            revision,
+            message_id,
+            block,
+            text: delta.to_owned(),
+        });
         if self.total > MAX_BYTES {
             self.evict();
             self.publish();
@@ -231,11 +262,23 @@ impl Projection {
     }
 
     /// Sets a tool block's status and (when given) replaces its output.
-    pub(crate) fn set_tool(&mut self, tool_call_id: &str, status: ToolStatus, output: Option<String>) -> bool {
-        let Some(owner) = self.tool_owner(tool_call_id) else { return false };
+    pub(crate) fn set_tool(
+        &mut self,
+        tool_call_id: &str,
+        status: ToolStatus,
+        output: Option<String>,
+    ) -> bool {
+        let Some(owner) = self.tool_owner(tool_call_id) else {
+            return false;
+        };
         self.update(&owner, |message| {
             for block in &mut message.content {
-                if let ContentBlock::Tool { tool_call_id: id, status: s, output: o, .. } = block
+                if let ContentBlock::Tool {
+                    tool_call_id: id,
+                    status: s,
+                    output: o,
+                    ..
+                } = block
                     && id == tool_call_id
                 {
                     *s = status;
@@ -252,7 +295,11 @@ impl Projection {
         let mut changed = false;
         for message in &mut self.snapshot.messages {
             for block in &mut message.content {
-                if let ContentBlock::Tool { status: status @ ToolStatus::Running, .. } = block {
+                if let ContentBlock::Tool {
+                    status: status @ ToolStatus::Running,
+                    ..
+                } = block
+                {
                     *status = ToolStatus::Failed;
                     changed = true;
                 }
@@ -275,7 +322,9 @@ impl Projection {
             SessionPhase::Idle
         };
         self.bump();
-        self.emit(SessionEvent::Snapshot { snapshot: Box::new(self.snapshot.clone()) });
+        self.emit(SessionEvent::Snapshot {
+            snapshot: Box::new(self.snapshot.clone()),
+        });
     }
 
     fn finish_message(&mut self, message: Message) {
@@ -285,7 +334,11 @@ impl Projection {
             return;
         }
         let revision = self.bump();
-        self.emit(SessionEvent::Message { chat: self.snapshot.id.clone(), revision, message });
+        self.emit(SessionEvent::Message {
+            chat: self.snapshot.id.clone(),
+            revision,
+            message,
+        });
     }
 
     fn evict(&mut self) {
@@ -314,12 +367,25 @@ impl Projection {
 
 fn carry_tool_results(old: &Message, new: &mut Message) {
     for block in &mut new.content {
-        let ContentBlock::Tool { tool_call_id, status, output, .. } = block else { continue };
+        let ContentBlock::Tool {
+            tool_call_id,
+            status,
+            output,
+            ..
+        } = block
+        else {
+            continue;
+        };
         if *status != ToolStatus::Running || output.is_some() {
             continue;
         }
         let previous = old.content.iter().find_map(|b| match b {
-            ContentBlock::Tool { tool_call_id: id, status, output, .. } if id == tool_call_id => Some((status, output)),
+            ContentBlock::Tool {
+                tool_call_id: id,
+                status,
+                output,
+                ..
+            } if id == tool_call_id => Some((status, output)),
             _ => None,
         });
         if let Some((old_status, old_output)) = previous {
@@ -337,8 +403,15 @@ fn size_of(message: &Message) -> usize {
             64 + match block {
                 ContentBlock::Text { text } | ContentBlock::Thinking { text } => text.len(),
                 ContentBlock::Image { mime_type } => mime_type.len(),
-                ContentBlock::Tool { name, input, output, .. } => {
-                    name.len() + input.as_ref().map_or(0, |v| v.to_string().len()) + output.as_ref().map_or(0, String::len)
+                ContentBlock::Tool {
+                    name,
+                    input,
+                    output,
+                    ..
+                } => {
+                    name.len()
+                        + input.as_ref().map_or(0, |v| v.to_string().len())
+                        + output.as_ref().map_or(0, String::len)
                 }
             }
         })

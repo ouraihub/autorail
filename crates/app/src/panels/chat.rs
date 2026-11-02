@@ -13,8 +13,9 @@ use std::{
 };
 
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window,
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
@@ -29,9 +30,10 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentSession, BackendKind, ChatBinding, ChatId, Error, Interaction, InteractionAnswer, InteractionKind,
-    ModelChoice, Plan, PlanScope, ProjectId, Readiness, Result, RouteRequest, SessionEvent, SessionPhase, SessionSink, SessionSnapshot,
-    StartSession, ThinkingLevel, WorkspaceId,
+    AgentSession, BackendKind, ChatBinding, ChatId, Error, Interaction, InteractionAnswer,
+    InteractionKind, ModelChoice, Plan, PlanScope, ProjectId, Readiness, Result, RouteRequest,
+    SessionEvent, SessionPhase, SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
+    WorkspaceId,
 };
 use thinkrail_ui::{
     Roles, ThinkrailTheme,
@@ -69,7 +71,10 @@ struct Chat {
 
 impl Chat {
     fn live(&self) -> Option<&Arc<dyn AgentSession>> {
-        let closed = self.snapshot.as_ref().is_some_and(|s| s.phase == SessionPhase::Closed);
+        let closed = self
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.phase == SessionPhase::Closed);
         self.session.as_ref().filter(|_| !closed)
     }
 
@@ -82,15 +87,22 @@ impl Chat {
 
     fn title(&self) -> String {
         let first = self.snapshot.as_ref().and_then(|s| {
-            s.messages.iter().find(|m| m.role == thinkrail_core::Role::User).and_then(|m| {
-                m.content.iter().find_map(|b| match b {
-                    thinkrail_core::ContentBlock::Text { text } => Some(text.lines().next().unwrap_or_default().to_owned()),
-                    _ => None,
+            s.messages
+                .iter()
+                .find(|m| m.role == thinkrail_core::Role::User)
+                .and_then(|m| {
+                    m.content.iter().find_map(|b| match b {
+                        thinkrail_core::ContentBlock::Text { text } => {
+                            Some(text.lines().next().unwrap_or_default().to_owned())
+                        }
+                        _ => None,
+                    })
                 })
-            })
         });
         match first.filter(|t| !t.trim().is_empty()) {
-            Some(text) if text.chars().count() > 24 => format!("{}…", text.chars().take(24).collect::<String>()),
+            Some(text) if text.chars().count() > 24 => {
+                format!("{}…", text.chars().take(24).collect::<String>())
+            }
             Some(text) => text,
             None => format!("{} {}", s::CHAT, self.ordinal),
         }
@@ -99,11 +111,25 @@ impl Chat {
 type RoutingCheck = (ChatId, RouteRequest, Option<String>, Arc<dyn AgentSession>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RoutingAction { Unchanged, Pending, RestartNow }
+enum RoutingAction {
+    Unchanged,
+    Pending,
+    RestartNow,
+}
 
-fn routing_action(old_signature: Option<&str>, new_signature: Option<&str>, phase: SessionPhase) -> RoutingAction {
-    if new_signature.is_some() && old_signature == new_signature { return RoutingAction::Unchanged; }
-    if phase == SessionPhase::Idle { RoutingAction::RestartNow } else { RoutingAction::Pending }
+fn routing_action(
+    old_signature: Option<&str>,
+    new_signature: Option<&str>,
+    phase: SessionPhase,
+) -> RoutingAction {
+    if new_signature.is_some() && old_signature == new_signature {
+        return RoutingAction::Unchanged;
+    }
+    if phase == SessionPhase::Idle {
+        RoutingAction::RestartNow
+    } else {
+        RoutingAction::Pending
+    }
 }
 
 /// What a background start/resume produced.
@@ -134,9 +160,17 @@ pub struct ChatPanel {
 }
 
 impl ChatPanel {
-    pub fn new(state: Entity<AppState>, sink: Arc<dyn SessionSink>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        state: Entity<AppState>,
+        sink: Arc<dyn SessionSink>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let composer = cx.new(|cx| {
-            TextareaState::new(window, cx).rows(3).submit_on_enter(true).placeholder(s::PLACEHOLDER)
+            TextareaState::new(window, cx)
+                .rows(3)
+                .submit_on_enter(true)
+                .placeholder(s::PLACEHOLDER)
         });
         let subscriptions = vec![
             cx.subscribe_in(&state, window, |this, _, event: &AppEvent, window, cx| {
@@ -147,11 +181,15 @@ impl ChatPanel {
                     this.on_routing_changed(cx);
                 }
             }),
-            cx.subscribe_in(&composer, window, |this, _, event: &InputEvent, window, cx| {
-                if let InputEvent::PressEnter { shift: false, .. } = event {
-                    this.send(window, cx);
-                }
-            }),
+            cx.subscribe_in(
+                &composer,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { shift: false, .. } = event {
+                        this.send(window, cx);
+                    }
+                },
+            ),
         ];
         let mut panel = Self {
             state,
@@ -187,75 +225,99 @@ impl ChatPanel {
             return;
         }
         self.workspace = workspace.clone();
-        self.order = self.chats.iter().filter(|(_, c)| Some(&c.workspace) == workspace.as_ref()).map(|(id, _)| id.clone()).collect();
-        self.order.sort_by_key(|id| self.chats.get(id).map_or(0, |c| c.ordinal));
+        self.order = self
+            .chats
+            .iter()
+            .filter(|(_, c)| Some(&c.workspace) == workspace.as_ref())
+            .map(|(id, _)| id.clone())
+            .collect();
+        self.order
+            .sort_by_key(|id| self.chats.get(id).map_or(0, |c| c.ordinal));
         self.active = self.order.first().cloned();
         self.guide = None;
         cx.notify();
         let Some(workspace) = workspace else { return };
         let bindings = self.services(cx).bindings;
         let ws = workspace.clone();
-        run(cx, move || bindings.bindings(&ws), move |this, result, cx| {
-            if this.workspace.as_ref() != Some(&workspace) {
-                return;
-            }
-            match result {
-                Ok(bindings) => {
-                    for binding in bindings {
-                        if this.chats.contains_key(&binding.chat_id) {
-                            continue;
-                        }
-                        let ordinal = this.next_ordinal(&workspace);
-                        let id = binding.chat_id.clone();
-                        this.chats.insert(id.clone(), Chat {
-                            workspace: workspace.clone(),
-                            binding: Some(binding),
-                            session: None,
-                            snapshot: None,
-                            routing_signature: None,
-                            catalog: Vec::new(),
-                            restart_pending: false,
-                            closing: false,
-                            starting: false,
-                            blocked: None,
-                            ordinal,
-                            plan: None,
-                        });
-                        this.load_plan(&id, cx);
-                        this.order.push(id);
-                    }
-                    if this.active.is_none() {
-                        this.active = this.order.first().cloned();
-                    }
-                    cx.notify();
+        run(
+            cx,
+            move || bindings.bindings(&ws),
+            move |this, result, cx| {
+                if this.workspace.as_ref() != Some(&workspace) {
+                    return;
                 }
-                Err(error) => this.report(&error, cx),
-            }
-        });
+                match result {
+                    Ok(bindings) => {
+                        for binding in bindings {
+                            if this.chats.contains_key(&binding.chat_id) {
+                                continue;
+                            }
+                            let ordinal = this.next_ordinal(&workspace);
+                            let id = binding.chat_id.clone();
+                            this.chats.insert(
+                                id.clone(),
+                                Chat {
+                                    workspace: workspace.clone(),
+                                    binding: Some(binding),
+                                    session: None,
+                                    snapshot: None,
+                                    routing_signature: None,
+                                    catalog: Vec::new(),
+                                    restart_pending: false,
+                                    closing: false,
+                                    starting: false,
+                                    blocked: None,
+                                    ordinal,
+                                    plan: None,
+                                },
+                            );
+                            this.load_plan(&id, cx);
+                            this.order.push(id);
+                        }
+                        if this.active.is_none() {
+                            this.active = this.order.first().cloned();
+                        }
+                        cx.notify();
+                    }
+                    Err(error) => this.report(&error, cx),
+                }
+            },
+        );
     }
 
     fn next_ordinal(&self, workspace: &WorkspaceId) -> usize {
-        self.chats.values().filter(|c| &c.workspace == workspace).map(|c| c.ordinal).max().unwrap_or(0) + 1
+        self.chats
+            .values()
+            .filter(|c| &c.workspace == workspace)
+            .map(|c| c.ordinal)
+            .max()
+            .unwrap_or(0)
+            + 1
     }
 
     fn new_chat(&mut self, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.clone() else { return };
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
         let id = ChatId::generate();
         let ordinal = self.next_ordinal(&workspace);
-        self.chats.insert(id.clone(), Chat {
-            workspace,
-            binding: None,
-            session: None,
-            snapshot: None,
-            routing_signature: None,
-            catalog: Vec::new(),
-            restart_pending: false,
-            closing: false,
-            starting: false,
-            blocked: None,
-            ordinal,
-            plan: None,
-        });
+        self.chats.insert(
+            id.clone(),
+            Chat {
+                workspace,
+                binding: None,
+                session: None,
+                snapshot: None,
+                routing_signature: None,
+                catalog: Vec::new(),
+                restart_pending: false,
+                closing: false,
+                starting: false,
+                blocked: None,
+                ordinal,
+                plan: None,
+            },
+        );
         self.order.push(id.clone());
         self.active = Some(id.clone());
         self.start(id, None, cx);
@@ -267,7 +329,9 @@ impl ChatPanel {
     /// which the new chat binds to.
     fn start_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = self.state.read(cx);
-        let ready = state.current_workspace().is_some_and(|w| state.setup_project.as_ref() == Some(&w.project_id));
+        let ready = state
+            .current_workspace()
+            .is_some_and(|w| state.setup_project.as_ref() == Some(&w.project_id));
         if !ready || self.workspace != state.workspace {
             return;
         }
@@ -275,28 +339,44 @@ impl ChatPanel {
         self.new_chat(cx);
         let prefs = self.services(cx).prefs;
         let handle = window.window_handle();
-        run(cx, move || prefs.prefs(), move |this, result, cx| {
-            let Some(backend) = result.ok().and_then(|prefs| prefs.default_agent) else { return };
-            let draft = thinkrail_agents::skill_command(backend, SETUP_SKILL);
-            let composer = this.composer.clone();
-            let _ = handle.update(cx, |_, window, cx| composer.update(cx, |input, cx| {
-                let end = draft.len();
-                input.set_value(draft, window, cx);
-                // The user types the project idea after the command.
-                input.set_selected_range(end..end, cx);
-                input.focus(window, cx);
-            }));
-        });
+        run(
+            cx,
+            move || prefs.prefs(),
+            move |this, result, cx| {
+                let Some(backend) = result.ok().and_then(|prefs| prefs.default_agent) else {
+                    return;
+                };
+                let draft = thinkrail_agents::skill_command(backend, SETUP_SKILL);
+                let composer = this.composer.clone();
+                let _ = handle.update(cx, |_, window, cx| {
+                    composer.update(cx, |input, cx| {
+                        let end = draft.len();
+                        input.set_value(draft, window, cx);
+                        // The user types the project idea after the command.
+                        input.set_selected_range(end..end, cx);
+                        input.focus(window, cx);
+                    })
+                });
+            },
+        );
     }
 
     /// Starts (new chat) or resumes (bound chat) the engine, then sends `prompt` if given.
     fn start(&mut self, id: ChatId, prompt: Option<String>, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.get_mut(&id) else { return };
+        let Some(chat) = self.chats.get_mut(&id) else {
+            return;
+        };
         if chat.starting || chat.closing {
             return;
         }
         let services = self.state.read(cx).services.clone();
-        let Some((cwd, project)) = self.state.read(cx).workspaces.iter().find(|w| w.id == chat.workspace).map(|w| (w.worktree_path.clone(), w.project_id.clone()))
+        let Some((cwd, project)) = self
+            .state
+            .read(cx)
+            .workspaces
+            .iter()
+            .find(|w| w.id == chat.workspace)
+            .map(|w| (w.worktree_path.clone(), w.project_id.clone()))
         else {
             return;
         };
@@ -318,7 +398,13 @@ impl ChatPanel {
             move |this, result, cx| {
                 let Some(chat) = this.chats.get_mut(&id) else {
                     if let Ok(Ok(started)) = result {
-                        dispose_engine(&this.services(cx), id.clone(), Some(started.session), true, cx);
+                        dispose_engine(
+                            &this.services(cx),
+                            id.clone(),
+                            Some(started.session),
+                            true,
+                            cx,
+                        );
                     }
                     return;
                 };
@@ -334,7 +420,9 @@ impl ChatPanel {
                         chat.catalog = Vec::new();
                         chat.restart_pending = false;
                         chat.closing = false;
-                        if let Some(error) = started.prompt_error { this.report(&error, cx); }
+                        if let Some(error) = started.prompt_error {
+                            this.report(&error, cx);
+                        }
                         this.refresh_catalog(&id, cx);
                         this.on_routing_changed(cx);
                     }
@@ -371,47 +459,71 @@ impl ChatPanel {
         if text.is_empty() {
             return;
         }
-        let Some(id) = self.active.clone() else { return };
-        let Some(chat) = self.chats.get(&id) else { return };
+        let Some(id) = self.active.clone() else {
+            return;
+        };
+        let Some(chat) = self.chats.get(&id) else {
+            return;
+        };
         if chat.blocked.is_some() || chat.starting || chat.closing {
             return;
         }
-        self.composer.update(cx, |input, cx| input.set_value("", window, cx));
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
         match chat.live().cloned() {
-            Some(session) => run(cx, move || session.prompt(&text), |this, result, cx| {
-                if let Err(error) = result {
-                    this.report(&error, cx);
-                }
-            }),
+            Some(session) => run(
+                cx,
+                move || session.prompt(&text),
+                |this, result, cx| {
+                    if let Err(error) = result {
+                        this.report(&error, cx);
+                    }
+                },
+            ),
             None => self.start(id, Some(text), cx),
         }
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {
-        let Some(session) = self.active.as_ref().and_then(|id| self.chats.get(id)).and_then(|c| c.live().cloned()) else {
+        let Some(session) = self
+            .active
+            .as_ref()
+            .and_then(|id| self.chats.get(id))
+            .and_then(|c| c.live().cloned())
+        else {
             return;
         };
-        run(cx, move || session.stop(), |this, result, cx| {
-            if let Err(error) = result {
-                this.report(&error, cx);
-            }
-        });
+        run(
+            cx,
+            move || session.stop(),
+            |this, result, cx| {
+                if let Err(error) = result {
+                    this.report(&error, cx);
+                }
+            },
+        );
     }
 
     /// Closes a chat tab: disposes its engine and drops its binding, so it does not come back on
     /// the next start. The engine's own transcript stays where the engine keeps it.
     fn close_chat(&mut self, id: &ChatId, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.remove(id) else { return };
+        let Some(chat) = self.chats.remove(id) else {
+            return;
+        };
         let index = self.order.iter().position(|c| c == id);
         self.order.retain(|c| c != id);
         if self.active.as_ref() == Some(id) {
-            self.active = index.and_then(|i| self.order.get(i.min(self.order.len().saturating_sub(1)))).cloned();
+            self.active = index
+                .and_then(|i| self.order.get(i.min(self.order.len().saturating_sub(1))))
+                .cloned();
             self.scroll.scroll_to_bottom();
         }
         if let Some(snapshot) = &chat.snapshot {
             for interaction in &snapshot.interactions {
-                self.answers.retain(|key, _| !key.starts_with(&interaction.request_id));
-                self.picks.retain(|key, _| !key.starts_with(&interaction.request_id));
+                self.answers
+                    .retain(|key, _| !key.starts_with(&interaction.request_id));
+                self.picks
+                    .retain(|key, _| !key.starts_with(&interaction.request_id));
             }
         }
         cx.notify();
@@ -419,16 +531,25 @@ impl ChatPanel {
     }
 
     fn respond(&mut self, request_id: String, answer: InteractionAnswer, cx: &mut Context<Self>) {
-        let Some(session) = self.active.as_ref().and_then(|id| self.chats.get(id)).and_then(|c| c.live().cloned()) else {
+        let Some(session) = self
+            .active
+            .as_ref()
+            .and_then(|id| self.chats.get(id))
+            .and_then(|c| c.live().cloned())
+        else {
             return;
         };
         self.answers.retain(|key, _| !key.starts_with(&request_id));
         self.picks.retain(|key, _| !key.starts_with(&request_id));
-        run(cx, move || session.respond(&request_id, answer), |this, result, cx| {
-            if let Err(error) = result {
-                this.report(&error, cx);
-            }
-        });
+        run(
+            cx,
+            move || session.respond(&request_id, answer),
+            |this, result, cx| {
+                if let Err(error) = result {
+                    this.report(&error, cx);
+                }
+            },
+        );
     }
 
     /// A host tool call may have changed this chat's plan.
@@ -439,19 +560,28 @@ impl ChatPanel {
     }
 
     fn load_plan(&mut self, id: &ChatId, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.get(id) else { return };
-        let scope = PlanScope { workspace: chat.workspace.clone(), chat: id.clone() };
+        let Some(chat) = self.chats.get(id) else {
+            return;
+        };
+        let scope = PlanScope {
+            workspace: chat.workspace.clone(),
+            chat: id.clone(),
+        };
         let plans = self.services(cx).plans;
         let id = id.clone();
-        run(cx, move || plans.plan(&scope), move |this, result, cx| match result {
-            Ok(plan) => {
-                if let Some(chat) = this.chats.get_mut(&id) {
-                    chat.plan = Some(plan);
-                    cx.notify();
+        run(
+            cx,
+            move || plans.plan(&scope),
+            move |this, result, cx| match result {
+                Ok(plan) => {
+                    if let Some(chat) = this.chats.get_mut(&id) {
+                        chat.plan = Some(plan);
+                        cx.notify();
+                    }
                 }
-            }
-            Err(error) => this.report(&error, cx),
-        });
+                Err(error) => this.report(&error, cx),
+            },
+        );
     }
 
     pub fn on_session_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
@@ -479,7 +609,13 @@ impl ChatPanel {
     /// the signature of an existing native session.
     fn on_routing_changed(&mut self, cx: &mut Context<Self>) {
         let services = self.services(cx);
-        let project_ids: HashMap<WorkspaceId, ProjectId> = self.state.read(cx).workspaces.iter().map(|w| (w.id.clone(), w.project_id.clone())).collect();
+        let project_ids: HashMap<WorkspaceId, ProjectId> = self
+            .state
+            .read(cx)
+            .workspaces
+            .iter()
+            .map(|w| (w.id.clone(), w.project_id.clone()))
+            .collect();
         let requests: Vec<RoutingCheck> = self
             .chats
             .iter()
@@ -489,7 +625,12 @@ impl ChatPanel {
                 let session = chat.live()?.clone();
                 Some((
                     id.clone(),
-                    RouteRequest { chat: id.clone(), project, backend, new_session: false },
+                    RouteRequest {
+                        chat: id.clone(),
+                        project,
+                        backend,
+                        new_session: false,
+                    },
                     chat.routing_signature.clone(),
                     session,
                 ))
@@ -498,49 +639,76 @@ impl ChatPanel {
         for (id, request, old_signature, session) in requests {
             self.refresh_catalog(&id, cx);
             let router = services.router.clone();
-            run(cx, move || router.signature(&request), move |this, result, cx| {
-                let services = this.services(cx);
-                let Some(chat) = this.chats.get_mut(&id) else { return };
-                if !chat.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session)) { return; }
-                let signature = match result {
-                    Ok(signature) => signature,
-                    Err(error) => {
-                        chat.restart_pending = true;
-                        if chat.phase() == SessionPhase::Idle {
+            run(
+                cx,
+                move || router.signature(&request),
+                move |this, result, cx| {
+                    let services = this.services(cx);
+                    let Some(chat) = this.chats.get_mut(&id) else {
+                        return;
+                    };
+                    if !chat
+                        .session
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &session))
+                    {
+                        return;
+                    }
+                    let signature = match result {
+                        Ok(signature) => signature,
+                        Err(error) => {
+                            chat.restart_pending = true;
+                            if chat.phase() == SessionPhase::Idle {
+                                chat.closing = true;
+                                let current = chat.session.take();
+                                dispose_engine(&services, id.clone(), current, false, cx);
+                            }
+                            this.report(&error, cx);
+                            return;
+                        }
+                    };
+                    match routing_action(
+                        old_signature.as_deref(),
+                        Some(signature.as_str()),
+                        chat.phase(),
+                    ) {
+                        RoutingAction::Unchanged => (),
+                        RoutingAction::Pending => {
+                            chat.restart_pending = true;
+                            cx.notify();
+                        }
+                        RoutingAction::RestartNow => {
+                            let current_matches = chat
+                                .session
+                                .as_ref()
+                                .is_some_and(|current| Arc::ptr_eq(current, &session));
+                            if !current_matches {
+                                return;
+                            }
+                            chat.restart_pending = false;
                             chat.closing = true;
                             let current = chat.session.take();
                             dispose_engine(&services, id.clone(), current, false, cx);
                         }
-                        this.report(&error, cx);
-                        return;
                     }
-                };
-                match routing_action(old_signature.as_deref(), Some(signature.as_str()), chat.phase()) {
-                    RoutingAction::Unchanged => (),
-                    RoutingAction::Pending => {
-                        chat.restart_pending = true;
-                        cx.notify();
-                    }
-                    RoutingAction::RestartNow => {
-                        let current_matches = chat.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &session));
-                        if !current_matches { return; }
-                        chat.restart_pending = false;
-                        chat.closing = true;
-                        let current = chat.session.take();
-                        dispose_engine(&services, id.clone(), current, false, cx);
-                    }
-                }
-            });
+                },
+            );
         }
     }
 
     fn refresh_catalog(&mut self, id: &ChatId, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.get(id) else { return };
-        let Some(backend) = chat.binding.as_ref().map(|b| b.backend) else { return };
+        let Some(chat) = self.chats.get(id) else {
+            return;
+        };
+        let Some(backend) = chat.binding.as_ref().map(|b| b.backend) else {
+            return;
+        };
         let router = self.services(cx).router;
         let id = id.clone();
-        run(cx, move || router.catalog(backend), move |this, result, cx| {
-            match result {
+        run(
+            cx,
+            move || router.catalog(backend),
+            move |this, result, cx| match result {
                 Ok(catalog) => {
                     if let Some(chat) = this.chats.get_mut(&id) {
                         chat.catalog = catalog;
@@ -548,77 +716,218 @@ impl ChatPanel {
                     }
                 }
                 Err(error) => this.report(&error, cx),
-            }
-        });
+            },
+        );
     }
 
-    fn set_model(&mut self, id: ChatId, choice: ModelChoice, effort: Option<ThinkingLevel>, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.get(&id) else { return };
-        let Some(session) = chat.live().cloned() else { return };
-        if !chat.snapshot.as_ref().is_some_and(|snapshot| snapshot.capabilities.model_switch)
-            || chat.closing || chat.phase() != SessionPhase::Idle { return; }
+    fn set_model(
+        &mut self,
+        id: ChatId,
+        choice: ModelChoice,
+        effort: Option<ThinkingLevel>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(chat) = self.chats.get(&id) else {
+            return;
+        };
+        let Some(session) = chat.live().cloned() else {
+            return;
+        };
+        if !chat
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.capabilities.model_switch)
+            || chat.closing
+            || chat.phase() != SessionPhase::Idle
+        {
+            return;
+        }
         let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
-        run(cx, move || session.set_model(&choice.route, &choice.model.id, effort), |this, result, cx| {
-            if let Err(error) = result { this.report(&error, cx); }
-        });
+        run(
+            cx,
+            move || session.set_model(&choice.route, &choice.model.id, effort),
+            |this, result, cx| {
+                if let Err(error) = result {
+                    this.report(&error, cx);
+                }
+            },
+        );
     }
 
     fn set_effort(&mut self, id: ChatId, effort: ThinkingLevel, cx: &mut Context<Self>) {
-        let Some(chat) = self.chats.get(&id) else { return };
-        let Some(session) = chat.live().cloned() else { return };
-        let Some(model) = chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) else { return };
+        let Some(chat) = self.chats.get(&id) else {
+            return;
+        };
+        let Some(session) = chat.live().cloned() else {
+            return;
+        };
+        let Some(model) = chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) else {
+            return;
+        };
         let provider = model.provider.clone().unwrap_or_default();
         let model_id = model.id.clone();
-        let Some(choice) = chat.catalog.iter().find(|choice| choice.route == provider && choice.model.id == model_id) else { return };
-        if !chat.snapshot.as_ref().is_some_and(|snapshot| snapshot.capabilities.model_switch)
-            || chat.closing || chat.phase() != SessionPhase::Idle
-            || !choice.model.efforts.contains(&effort) { return; }
-        run(cx, move || session.set_model(&provider, &model_id, Some(effort)), |this, result, cx| {
-            if let Err(error) = result { this.report(&error, cx); }
-        });
+        let Some(choice) = chat
+            .catalog
+            .iter()
+            .find(|choice| choice.route == provider && choice.model.id == model_id)
+        else {
+            return;
+        };
+        if !chat
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.capabilities.model_switch)
+            || chat.closing
+            || chat.phase() != SessionPhase::Idle
+            || !choice.model.efforts.contains(&effort)
+        {
+            return;
+        }
+        run(
+            cx,
+            move || session.set_model(&provider, &model_id, Some(effort)),
+            |this, result, cx| {
+                if let Err(error) = result {
+                    this.report(&error, cx);
+                }
+            },
+        );
     }
 
-    fn header(&self, chat: &Chat, phase: SessionPhase, r: Roles, cx: &mut Context<Self>) -> AnyElement {
-        let backend = chat.binding.as_ref().map(|b| b.backend).or(chat.snapshot.as_ref().map(|s| s.backend));
-        let backend_label = backend.map(|b| match b { BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE), _ => b.label().to_owned() });
+    fn header(
+        &self,
+        chat: &Chat,
+        phase: SessionPhase,
+        r: Roles,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let backend = chat
+            .binding
+            .as_ref()
+            .map(|b| b.backend)
+            .or(chat.snapshot.as_ref().map(|s| s.backend));
+        let backend_label = backend.map(|b| match b {
+            BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE),
+            _ => b.label().to_owned(),
+        });
         let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
-        let current_label = current.map_or_else(|| s::NO_MODEL.to_owned(), |m| m.provider.as_ref().map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id)));
-        let current_choice = current.and_then(|model| chat.catalog.iter().find(|choice| choice.route == model.provider.as_deref().unwrap_or_default() && choice.model.id == model.id));
+        let current_label = current.map_or_else(
+            || s::NO_MODEL.to_owned(),
+            |m| {
+                m.provider
+                    .as_ref()
+                    .map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id))
+            },
+        );
+        let current_choice = current.and_then(|model| {
+            chat.catalog.iter().find(|choice| {
+                choice.route == model.provider.as_deref().unwrap_or_default()
+                    && choice.model.id == model.id
+            })
+        });
         let current_effort = current.and_then(|model| model.effort);
-        let selectable = chat.snapshot.as_ref().is_some_and(|s| s.capabilities.model_switch) && chat.live().is_some() && !chat.closing && phase == SessionPhase::Idle;
-        let Some(id) = chat.binding.as_ref().map(|b| b.chat_id.clone()) else { return empty(s::NO_MODEL, &r) };
+        let selectable = chat
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.capabilities.model_switch)
+            && chat.live().is_some()
+            && !chat.closing
+            && phase == SessionPhase::Idle;
+        let Some(id) = chat.binding.as_ref().map(|b| b.chat_id.clone()) else {
+            return empty(s::NO_MODEL, &r);
+        };
         let choices = chat.catalog.clone();
-        let efforts = current_choice.map(|choice| choice.model.efforts.clone()).unwrap_or_default();
+        let efforts = current_choice
+            .map(|choice| choice.model.efforts.clone())
+            .unwrap_or_default();
         let model_entity = cx.entity();
         let effort_entity = cx.entity();
         let model_id = id.clone();
         let effort_id = id;
-        let model_menu = Button::new("chat-model").ghost().h(size::HEADER_CONTROL).label(current_label).icon(IconName::ChevronDown).disabled(!selectable).dropdown_menu(move |menu, _, _| {
-            choices.iter().cloned().fold(menu, |menu, choice| {
-                let id = model_id.clone();
-                let effort = choice.model.efforts.iter().copied().find(|effort| Some(*effort) == current_effort).or_else(|| choice.model.efforts.first().copied());
-                let model_entity = model_entity.clone();
-                menu.item(PopupMenuItem::new(format!("{} · {}", choice.provider_name, choice.model.name)).on_click(move |_, _, cx| {
-                    model_entity.update(cx, |this, cx| this.set_model(id.clone(), choice.clone(), effort, cx));
-                }))
-            })
-        });
-        let effort_menu = Button::new("chat-effort").ghost().h(size::HEADER_CONTROL).label(current_effort.map(s::effort_label).unwrap_or(s::EFFORT_DEFAULT)).icon(IconName::ChevronDown).disabled(!selectable || efforts.is_empty()).dropdown_menu(move |menu, _, _| {
-            efforts.iter().copied().fold(menu, |menu, effort| {
-                let id = effort_id.clone();
-                let effort_entity = effort_entity.clone();
-                menu.item(PopupMenuItem::new(s::effort_label(effort)).on_click(move |_, _, cx| {
-                    effort_entity.update(cx, |this, cx| this.set_effort(id.clone(), effort, cx));
-                }))
-            })
-        });
-        let (status, phase_label) = match phase { SessionPhase::Idle => (Status::Success, s::PHASE_IDLE), SessionPhase::Running => (Status::Info, s::PHASE_RUNNING), SessionPhase::Waiting => (Status::Warning, s::PHASE_WAITING), SessionPhase::Closed => (Status::Idle, s::PHASE_CLOSED) };
-        h_flex().h(size::PANEL_HEADER).flex_none().px(size::PANEL_PADDING).gap(space::S8).border_b_1().border_color(r.border_muted)
+        let model_menu = Button::new("chat-model")
+            .ghost()
+            .h(size::HEADER_CONTROL)
+            .label(current_label)
+            .icon(IconName::ChevronDown)
+            .disabled(!selectable)
+            .dropdown_menu(move |menu, _, _| {
+                choices.iter().cloned().fold(menu, |menu, choice| {
+                    let id = model_id.clone();
+                    let effort = choice
+                        .model
+                        .efforts
+                        .iter()
+                        .copied()
+                        .find(|effort| Some(*effort) == current_effort)
+                        .or_else(|| choice.model.efforts.first().copied());
+                    let model_entity = model_entity.clone();
+                    menu.item(
+                        PopupMenuItem::new(format!(
+                            "{} · {}",
+                            choice.provider_name, choice.model.name
+                        ))
+                        .on_click(move |_, _, cx| {
+                            model_entity.update(cx, |this, cx| {
+                                this.set_model(id.clone(), choice.clone(), effort, cx)
+                            });
+                        }),
+                    )
+                })
+            });
+        let effort_menu = Button::new("chat-effort")
+            .ghost()
+            .h(size::HEADER_CONTROL)
+            .label(
+                current_effort
+                    .map(s::effort_label)
+                    .unwrap_or(s::EFFORT_DEFAULT),
+            )
+            .icon(IconName::ChevronDown)
+            .disabled(!selectable || efforts.is_empty())
+            .dropdown_menu(move |menu, _, _| {
+                efforts.iter().copied().fold(menu, |menu, effort| {
+                    let id = effort_id.clone();
+                    let effort_entity = effort_entity.clone();
+                    menu.item(PopupMenuItem::new(s::effort_label(effort)).on_click(
+                        move |_, _, cx| {
+                            effort_entity
+                                .update(cx, |this, cx| this.set_effort(id.clone(), effort, cx));
+                        },
+                    ))
+                })
+            });
+        let (status, phase_label) = match phase {
+            SessionPhase::Idle => (Status::Success, s::PHASE_IDLE),
+            SessionPhase::Running => (Status::Info, s::PHASE_RUNNING),
+            SessionPhase::Waiting => (Status::Warning, s::PHASE_WAITING),
+            SessionPhase::Closed => (Status::Idle, s::PHASE_CLOSED),
+        };
+        h_flex()
+            .h(size::PANEL_HEADER)
+            .flex_none()
+            .px(size::PANEL_PADDING)
+            .gap(space::S8)
+            .border_b_1()
+            .border_color(r.border_muted)
             .children(backend_label.map(|b| label(text::LABEL_PILL, b).text_color(r.primary)))
-            .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(model_menu))
-            .child(effort_menu).child(StatusDot::new(status).label(phase_label)).into_any_element()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .child(model_menu),
+            )
+            .child(effort_menu)
+            .child(StatusDot::new(status).label(phase_label))
+            .into_any_element()
     }
-    fn answer_input(&mut self, key: &str, placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Entity<InputState> {
+    fn answer_input(
+        &mut self,
+        key: &str,
+        placeholder: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
         if let Some(input) = self.answers.get(key) {
             return input.clone();
         }
@@ -655,9 +964,27 @@ fn start_engine(input: StartInput) -> Result<std::result::Result<Started, Readin
     launch_engine(input, backend, launch).map(Ok)
 }
 
-fn launch_engine(input: StartInput, backend: BackendKind, launch: thinkrail_core::Launch) -> Result<Started> {
-    let StartInput { services, chat, workspace, project, cwd, binding, sink, prompt } = input;
-    let route_request = RouteRequest { chat: chat.clone(), project, backend, new_session: binding.is_none() };
+fn launch_engine(
+    input: StartInput,
+    backend: BackendKind,
+    launch: thinkrail_core::Launch,
+) -> Result<Started> {
+    let StartInput {
+        services,
+        chat,
+        workspace,
+        project,
+        cwd,
+        binding,
+        sink,
+        prompt,
+    } = input;
+    let route_request = RouteRequest {
+        chat: chat.clone(),
+        project,
+        backend,
+        new_session: binding.is_none(),
+    };
     let routing = match services.router.prepare(&route_request) {
         Ok(routing) => routing,
         Err(error) => {
@@ -665,7 +992,10 @@ fn launch_engine(input: StartInput, backend: BackendKind, launch: thinkrail_core
             return Err(error);
         }
     };
-    let routing_signature = match services.router.signature(&RouteRequest { new_session: false, ..route_request.clone() }) {
+    let routing_signature = match services.router.signature(&RouteRequest {
+        new_session: false,
+        ..route_request.clone()
+    }) {
         Ok(signature) => signature,
         Err(error) => {
             services.router.release(&chat);
@@ -728,7 +1058,12 @@ fn launch_engine(input: StartInput, backend: BackendKind, launch: thinkrail_core
         }
     };
     let prompt_error = prompt.and_then(|text| session.prompt(&text).err());
-    Ok(Started { session, binding, routing_signature, prompt_error })
+    Ok(Started {
+        session,
+        binding,
+        routing_signature,
+        prompt_error,
+    })
 }
 
 /// Disposes an engine, revokes routing and removes generated files. `unbind` only when closing.
@@ -743,26 +1078,32 @@ fn dispose_engine(
     let router = services.router.clone();
     let support = services.clone();
     let callback_chat = chat.clone();
-    run(cx, move || {
-        if let Some(session) = session && let Err(error) = session.dispose() {
-            debug!(code = %error, "dispose of a closed chat failed");
-        }
-        router.release(&chat);
-        let cleanup = support.remove_support_dir(&chat);
-        if unbind {
-            bindings.unbind(&chat)?;
-        }
-        info!(chat = %chat, "chat engine disposed");
-        cleanup
-    }, move |this, result, cx| {
-        if let Some(chat) = this.chats.get_mut(&callback_chat) {
-            chat.closing = false;
-        }
-        if let Err(error) = result {
-            this.report(&error, cx);
-        }
-        cx.notify();
-    });
+    run(
+        cx,
+        move || {
+            if let Some(session) = session
+                && let Err(error) = session.dispose()
+            {
+                debug!(code = %error, "dispose of a closed chat failed");
+            }
+            router.release(&chat);
+            let cleanup = support.remove_support_dir(&chat);
+            if unbind {
+                bindings.unbind(&chat)?;
+            }
+            info!(chat = %chat, "chat engine disposed");
+            cleanup
+        },
+        move |this, result, cx| {
+            if let Some(chat) = this.chats.get_mut(&callback_chat) {
+                chat.closing = false;
+            }
+            if let Err(error) = result {
+                this.report(&error, cx);
+            }
+            cx.notify();
+        },
+    );
 }
 impl Render for ChatPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -770,8 +1111,14 @@ impl Render for ChatPanel {
         let strip = self.tab_strip(cx).into_any_element();
         let body: AnyElement = match (self.workspace.is_some(), self.active.clone()) {
             (false, _) => empty(s::NO_WORKSPACE, &r),
-            (true, None) => match self.guide.and_then(|readiness| agent_guide::row("chat-guide", self.state.clone(), readiness, cx)) {
-                Some(guide) => div().size_full().p(space::S16).child(guide).into_any_element(),
+            (true, None) => match self.guide.and_then(|readiness| {
+                agent_guide::row("chat-guide", self.state.clone(), readiness, cx)
+            }) {
+                Some(guide) => div()
+                    .size_full()
+                    .p(space::S16)
+                    .child(guide)
+                    .into_any_element(),
                 None => empty(s::NO_CHATS, &r),
             },
             (true, Some(id)) => self.chat_body(&id, r, window, cx),
@@ -787,14 +1134,20 @@ impl Render for ChatPanel {
 }
 
 fn empty(message: &'static str, r: &Roles) -> AnyElement {
-    div().size_full().p(space::S16).child(label(text::METADATA, message).text_color(r.text_subtle)).into_any_element()
+    div()
+        .size_full()
+        .p(space::S16)
+        .child(label(text::METADATA, message).text_color(r.text_subtle))
+        .into_any_element()
 }
 
 impl ChatPanel {
     fn tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut strip = TabStrip::new();
         for id in &self.order {
-            let Some(chat) = self.chats.get(id) else { continue };
+            let Some(chat) = self.chats.get(id) else {
+                continue;
+            };
             let (select, close) = (id.clone(), id.clone());
             strip = strip.tab(
                 Tab::new(format!("chat-tab-{id}"), chat.title())
@@ -816,13 +1169,27 @@ impl ChatPanel {
         )
     }
 
-    fn chat_body(&mut self, id: &ChatId, r: Roles, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(chat) = self.chats.get(id) else { return empty(s::NO_CHATS, &r) };
+    fn chat_body(
+        &mut self,
+        id: &ChatId,
+        r: Roles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(chat) = self.chats.get(id) else {
+            return empty(s::NO_CHATS, &r);
+        };
         let phase = chat.phase();
         let header = self.header(chat, phase, r, cx).into_any_element();
         let snapshot = chat.snapshot.clone();
-        let (starting, blocked, bound) = (chat.starting || chat.closing, chat.blocked, chat.binding.is_some());
-        let guide = blocked.and_then(|readiness| agent_guide::row("chat-blocked", self.state.clone(), readiness, cx));
+        let (starting, blocked, bound) = (
+            chat.starting || chat.closing,
+            chat.blocked,
+            chat.binding.is_some(),
+        );
+        let guide = blocked.and_then(|readiness| {
+            agent_guide::row("chat-blocked", self.state.clone(), readiness, cx)
+        });
         let entity = cx.entity().downgrade();
         let toggle: transcript::Toggle = Rc::new(move |key, _, cx| {
             if let Some(panel) = entity.upgrade() {
@@ -836,12 +1203,19 @@ impl ChatPanel {
         });
         let messages: Vec<AnyElement> = snapshot
             .as_ref()
-            .map(|s| s.messages.iter().map(|m| transcript::message(m, &self.open, &toggle, &r)).collect())
+            .map(|s| {
+                s.messages
+                    .iter()
+                    .map(|m| transcript::message(m, &self.open, &toggle, &r))
+                    .collect()
+            })
             .unwrap_or_default();
         let truncated = snapshot.as_ref().is_some_and(|s| s.output_truncated);
         let plan_key = format!("plan/{id}");
-        let plan_strip =
-            chat.plan.as_ref().and_then(|p| plan::strip(&plan_key, p, self.open.contains(&plan_key), &toggle, &r));
+        let plan_strip = chat
+            .plan
+            .as_ref()
+            .and_then(|p| plan::strip(&plan_key, p, self.open.contains(&plan_key), &toggle, &r));
         let interactions: Vec<AnyElement> = snapshot
             .as_ref()
             .map(|s| s.interactions.clone())
@@ -872,41 +1246,61 @@ impl ChatPanel {
                     .px(size::CHAT_GUTTER + space::S8)
                     .py(space::S12)
                     .gap(space::S16)
-                    .when(truncated, |d| d.child(label(text::METADATA, s::TRUNCATED).text_color(r.text_subtle)))
+                    .when(truncated, |d| {
+                        d.child(label(text::METADATA, s::TRUNCATED).text_color(r.text_subtle))
+                    })
                     .children(messages)
                     .children(interactions)
-                    .when_some(status_line, |d, line| d.child(label(text::METADATA, line).text_color(r.text_subtle)))
+                    .when_some(status_line, |d, line| {
+                        d.child(label(text::METADATA, line).text_color(r.text_subtle))
+                    })
                     .children(guide),
             )
             .child(self.composer_box(phase, starting || blocked.is_some(), cx))
             .into_any_element()
     }
 
-    fn composer_box(&self, phase: SessionPhase, disabled: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn composer_box(
+        &self,
+        phase: SessionPhase,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
         let busy = matches!(phase, SessionPhase::Running | SessionPhase::Waiting);
         let action = if busy {
-            IconButton::new("chat-stop", IconName::Square).tooltip(s::STOP).on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
+            IconButton::new("chat-stop", IconName::Square)
+                .tooltip(s::STOP)
+                .on_click(cx.listener(|this, _, _, cx| this.stop(cx)))
         } else {
             IconButton::new("chat-send", IconName::ArrowUp)
                 .tooltip(s::SEND)
                 .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
-        div().p(size::CHAT_GUTTER).border_t_1().border_color(r.border_muted).child(
-            v_flex()
-                .gap(space::S6)
-                .p(space::S8)
-                .rounded(radius::LG)
-                .border_1()
-                .border_color(r.control_border_default)
-                .bg(r.control_bg)
-                .child(Textarea::new(&self.composer).appearance(false))
-                .child(h_flex().justify_end().child(action)),
-        )
+        div()
+            .p(size::CHAT_GUTTER)
+            .border_t_1()
+            .border_color(r.border_muted)
+            .child(
+                v_flex()
+                    .gap(space::S6)
+                    .p(space::S8)
+                    .rounded(radius::LG)
+                    .border_1()
+                    .border_color(r.control_border_default)
+                    .bg(r.control_bg)
+                    .child(Textarea::new(&self.composer).appearance(false))
+                    .child(h_flex().justify_end().child(action)),
+            )
     }
 
-    fn interaction_card(&mut self, interaction: Interaction, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn interaction_card(
+        &mut self,
+        interaction: Interaction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let r = ThinkrailTheme::global(cx).roles;
         let id = interaction.request_id.clone();
         let cancel_id = id.clone();
@@ -929,7 +1323,11 @@ impl ChatPanel {
                             .label(text_label)
                             .when(confirmed, |b| b.primary())
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.respond(rid.clone(), InteractionAnswer::Confirm { confirmed }, cx)
+                                this.respond(
+                                    rid.clone(),
+                                    InteractionAnswer::Confirm { confirmed },
+                                    cx,
+                                )
                             }))
                             .into_any_element(),
                     );
@@ -942,7 +1340,13 @@ impl ChatPanel {
                         Button::new(format!("select-{id}-{}", option.id))
                             .label(option.label.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.respond(rid.clone(), InteractionAnswer::Select { option_id: option_id.clone() }, cx)
+                                this.respond(
+                                    rid.clone(),
+                                    InteractionAnswer::Select {
+                                        option_id: option_id.clone(),
+                                    },
+                                    cx,
+                                )
                             }))
                             .into_any_element(),
                     );
@@ -969,7 +1373,10 @@ impl ChatPanel {
                 );
             }
             InteractionKind::Ask => {
-                let questions = interaction.detail["questions"].as_array().cloned().unwrap_or_default();
+                let questions = interaction.detail["questions"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 for question in &questions {
                     body.push(self.question(&id, question, window, cx));
                 }
@@ -990,7 +1397,9 @@ impl ChatPanel {
             Button::new(format!("cancel-{id}"))
                 .label(s::CANCEL)
                 .ghost()
-                .on_click(cx.listener(move |this, _, _, cx| this.respond(cancel_id.clone(), InteractionAnswer::Cancel, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.respond(cancel_id.clone(), InteractionAnswer::Cancel, cx)
+                }))
                 .into_any_element(),
         );
         v_flex()
@@ -1011,7 +1420,13 @@ impl ChatPanel {
             .into_any_element()
     }
 
-    fn question(&mut self, request: &str, question: &Value, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn question(
+        &mut self,
+        request: &str,
+        question: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let r = ThinkrailTheme::global(cx).roles;
         let qid = question["id"].as_str().unwrap_or_default().to_owned();
         let key = format!("{request}/{qid}");
@@ -1044,7 +1459,10 @@ impl ChatPanel {
             })
             .collect();
         let other = self.answer_input(&key, s::OTHER, window, cx);
-        let title = question["header"].as_str().map(|h| format!("{h} · ")).unwrap_or_default()
+        let title = question["header"]
+            .as_str()
+            .map(|h| format!("{h} · "))
+            .unwrap_or_default()
             + question["question"].as_str().unwrap_or_default();
         v_flex()
             .gap(space::S6)
@@ -1071,24 +1489,32 @@ impl ChatPanel {
     }
 }
 
-
 #[cfg(test)]
 mod routing_tests {
-    use super::{routing_action, RoutingAction};
+    use super::{RoutingAction, routing_action};
     use thinkrail_core::SessionPhase;
 
     #[test]
     fn unchanged_signature_keeps_running_session() {
-        assert_eq!(routing_action(Some("same"), Some("same"), SessionPhase::Running), RoutingAction::Unchanged);
+        assert_eq!(
+            routing_action(Some("same"), Some("same"), SessionPhase::Running),
+            RoutingAction::Unchanged
+        );
     }
 
     #[test]
     fn changed_idle_session_restarts_now() {
-        assert_eq!(routing_action(Some("old"), Some("new"), SessionPhase::Idle), RoutingAction::RestartNow);
+        assert_eq!(
+            routing_action(Some("old"), Some("new"), SessionPhase::Idle),
+            RoutingAction::RestartNow
+        );
     }
 
     #[test]
     fn changed_running_session_waits_until_idle() {
-        assert_eq!(routing_action(Some("old"), Some("new"), SessionPhase::Running), RoutingAction::Pending);
+        assert_eq!(
+            routing_action(Some("old"), Some("new"), SessionPhase::Running),
+            RoutingAction::Pending
+        );
     }
 }

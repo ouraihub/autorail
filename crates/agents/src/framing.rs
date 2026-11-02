@@ -14,7 +14,9 @@ pub(crate) const MAX_FRAME: usize = 64 * 1024 * 1024;
 pub(crate) fn read_frame(reader: &mut impl BufRead, limit: usize) -> Result<Option<Value>> {
     let mut line = Vec::new();
     loop {
-        let available = reader.fill_buf().map_err(|e| Error::protocol(format!("读取 Agent 输出失败：{e}")))?;
+        let available = reader
+            .fill_buf()
+            .map_err(|e| Error::protocol(format!("读取 Agent 输出失败：{e}")))?;
         if available.is_empty() {
             if line.is_empty() {
                 return Ok(None);
@@ -39,7 +41,9 @@ pub(crate) fn read_frame(reader: &mut impl BufRead, limit: usize) -> Result<Opti
     if text.iter().all(u8::is_ascii_whitespace) {
         return read_frame(reader, limit);
     }
-    serde_json::from_slice(text).map(Some).map_err(|e| Error::protocol(format!("Agent 输出不是合法 JSON：{e}")))
+    serde_json::from_slice(text)
+        .map(Some)
+        .map_err(|e| Error::protocol(format!("Agent 输出不是合法 JSON：{e}")))
 }
 
 struct Pending {
@@ -65,18 +69,35 @@ impl Chunks {
             }
             return Ok(Some(frame));
         }
-        let id = frame["chunkId"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| bad("缺少 chunkId"))?;
+        let id = frame["chunkId"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| bad("缺少 chunkId"))?;
         let index = frame["index"].as_u64().ok_or_else(|| bad("缺少 index"))?;
-        let count = frame["count"].as_u64().filter(|&c| c > 0).ok_or_else(|| bad("count 无效"))?;
+        let count = frame["count"]
+            .as_u64()
+            .filter(|&c| c > 0)
+            .ok_or_else(|| bad("count 无效"))?;
         let length = frame["byteLength"]
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
             .filter(|&n| n <= MAX_FRAME)
             .ok_or_else(|| bad("byteLength 无效或超过 64 MiB"))?;
-        let data = frame["data"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| bad("缺少 data"))?;
-        let data = STANDARD.decode(data).map_err(|_| bad("data 不是合法 base64"))?;
+        let data = frame["data"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| bad("缺少 data"))?;
+        let data = STANDARD
+            .decode(data)
+            .map_err(|_| bad("data 不是合法 base64"))?;
         let pending = match self.pending.take() {
-            None if index == 0 => Pending { id: id.into(), count, length, next: 0, bytes: Vec::with_capacity(length) },
+            None if index == 0 => Pending {
+                id: id.into(),
+                count,
+                length,
+                next: 0,
+                bytes: Vec::with_capacity(length),
+            },
             Some(p) if p.id == id && p.count == count && p.length == length && p.next == index => p,
             _ => return Err(bad("分片顺序或元数据不连续")),
         };
@@ -93,7 +114,9 @@ impl Chunks {
         if pending.bytes.len() != pending.length {
             return Err(bad("分片总长度与声明不一致"));
         }
-        serde_json::from_slice(&pending.bytes).map(Some).map_err(|e| bad(format!("重组结果不是合法 JSON：{e}")))
+        serde_json::from_slice(&pending.bytes)
+            .map(Some)
+            .map_err(|e| bad(format!("重组结果不是合法 JSON：{e}")))
     }
 }
 
@@ -122,9 +145,15 @@ mod tests {
         assert_eq!(read_frame(&mut input, 64).unwrap(), None);
 
         let mut big = Cursor::new(format!("{{\"x\":\"{}\"}}\n", "y".repeat(100)).into_bytes());
-        assert_eq!(read_frame(&mut big, 64).unwrap_err().kind(), Some(ErrorKind::Protocol));
+        assert_eq!(
+            read_frame(&mut big, 64).unwrap_err().kind(),
+            Some(ErrorKind::Protocol)
+        );
         let mut cut = Cursor::new(b"{\"a\":".to_vec());
-        assert_eq!(read_frame(&mut cut, 64).unwrap_err().kind(), Some(ErrorKind::Protocol));
+        assert_eq!(
+            read_frame(&mut cut, 64).unwrap_err().kind(),
+            Some(ErrorKind::Protocol)
+        );
     }
 
     #[test]
@@ -132,17 +161,32 @@ mod tests {
         let payload = br#"{"type":"message_end","n":1}"#;
         let (a, b) = payload.split_at(10);
         let mut chunks = Chunks::default();
-        assert_eq!(chunks.accept(chunk("c", 0, 2, payload.len(), a)).unwrap(), None);
-        assert_eq!(chunks.accept(chunk("c", 1, 2, payload.len(), b)).unwrap(), Some(json!({"type":"message_end","n":1})));
-        assert_eq!(chunks.accept(json!({"type":"ready"})).unwrap(), Some(json!({"type":"ready"})));
+        assert_eq!(
+            chunks.accept(chunk("c", 0, 2, payload.len(), a)).unwrap(),
+            None
+        );
+        assert_eq!(
+            chunks.accept(chunk("c", 1, 2, payload.len(), b)).unwrap(),
+            Some(json!({"type":"message_end","n":1}))
+        );
+        assert_eq!(
+            chunks.accept(json!({"type":"ready"})).unwrap(),
+            Some(json!({"type":"ready"}))
+        );
 
         let mut skipped = Chunks::default();
         assert!(skipped.accept(chunk("c", 1, 2, payload.len(), b)).is_err());
         let mut interrupted = Chunks::default();
-        interrupted.accept(chunk("c", 0, 2, payload.len(), a)).unwrap();
+        interrupted
+            .accept(chunk("c", 0, 2, payload.len(), a))
+            .unwrap();
         assert!(interrupted.accept(json!({"type":"agent_start"})).is_err());
         let mut short = Chunks::default();
-        assert!(short.accept(chunk("c", 0, 1, payload.len() + 1, payload)).is_err());
+        assert!(
+            short
+                .accept(chunk("c", 0, 1, payload.len() + 1, payload))
+                .is_err()
+        );
         let mut long = Chunks::default();
         assert!(long.accept(chunk("c", 0, 1, 3, payload)).is_err());
         let mut base64 = Chunks::default();

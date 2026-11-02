@@ -45,6 +45,8 @@ pub struct HostToolAccess {
 
 impl std::fmt::Debug for HostToolAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HostToolAccess").field("pipe", &self.pipe).finish_non_exhaustive()
+        f.debug_struct("HostToolAccess")
+            .field("pipe", &self.pipe)
+            .finish_non_exhaustive()
     }
 }

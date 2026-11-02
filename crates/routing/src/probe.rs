@@ -1,12 +1,15 @@
 //! `ProviderProbe`: model discovery and key checks straight against the upstream, never through
 //! the gateway (agent-settings 04 §5.3).
 
-use std::{sync::Arc, time::{Duration, Instant}};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 use thinkrail_core::{
-    DiscoveredModel, Error, KeyCheck, ProbeTarget, Protocol, ProviderId, ProviderProbe, ProviderService,
-    Result,
+    DiscoveredModel, Error, KeyCheck, ProbeTarget, Protocol, ProviderId, ProviderProbe,
+    ProviderService, Result,
 };
 
 use crate::{runtime, url};
@@ -23,7 +26,9 @@ pub struct Probe {
 
 impl std::fmt::Debug for Probe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Probe").field("timeout", &self.timeout).finish_non_exhaustive()
+        f.debug_struct("Probe")
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
     }
 }
 
@@ -52,11 +57,20 @@ fn snippet(body: &str, target: &ProbeTarget) -> String {
         .ok()
         .and_then(|v| {
             let error = v.get("error")?;
-            error.get("message").and_then(Value::as_str).or_else(|| error.as_str()).map(str::to_owned)
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| error.as_str())
+                .map(str::to_owned)
         })
         .unwrap_or_else(|| body.to_owned());
     let mut message = message;
-    for secret in target.key.iter().map(|key| key.expose()).chain(target.headers.iter().map(|header| header.value.as_str())) {
+    for secret in target
+        .key
+        .iter()
+        .map(|key| key.expose())
+        .chain(target.headers.iter().map(|header| header.value.as_str()))
+    {
         if !secret.is_empty() {
             message = message.replace(secret, "***");
         }
@@ -79,15 +93,27 @@ fn status_error(reply: &Reply, target: &ProbeTarget) -> Error {
 fn parse_models(body: &str) -> Result<Vec<DiscoveredModel>> {
     let not_a_list = || Error::protocol("这不是兼容 OpenAI 或 Anthropic 的模型列表响应。");
     let value: Value = serde_json::from_str(body).map_err(|_| not_a_list())?;
-    let data = value.get("data").and_then(Value::as_array).ok_or_else(not_a_list)?;
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(not_a_list)?;
     let models = data
         .iter()
         .map(|item| {
-            let id = item.get("id").and_then(Value::as_str).ok_or_else(not_a_list)?;
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(not_a_list)?;
             Ok(DiscoveredModel {
                 id: id.to_owned(),
-                name: item.get("display_name").and_then(Value::as_str).map(str::to_owned),
-                context_window: item.get("context_length").and_then(Value::as_u64).and_then(|n| u32::try_from(n).ok()),
+                name: item
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                context_window: item
+                    .get("context_length")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok()),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -99,7 +125,10 @@ fn parse_models(body: &str) -> Result<Vec<DiscoveredModel>> {
 
 impl Probe {
     pub fn new(providers: Arc<dyn ProviderService>) -> Self {
-        Self { providers, timeout: TIMEOUT }
+        Self {
+            providers,
+            timeout: TIMEOUT,
+        }
     }
 
     #[cfg(test)]
@@ -110,7 +139,10 @@ impl Probe {
     fn send(&self, target: &ProbeTarget, path: &str, body: Option<Value>) -> Result<Reply> {
         let runtime = runtime::get()?;
         let protocol = target.endpoint.protocol;
-        let address = format!("{}{path}", url::base_url(&target.endpoint.base_url, protocol));
+        let address = format!(
+            "{}{path}",
+            url::base_url(&target.endpoint.base_url, protocol)
+        );
         let client = &runtime.client;
         let mut request = match &body {
             Some(body) => client.post(&address).json(body),
@@ -153,9 +185,10 @@ impl ProviderProbe for Probe {
                 "/chat/completions",
                 serde_json::json!({"model": model_id, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}),
             ),
-            Protocol::OpenaiResponses => {
-                ("/responses", serde_json::json!({"model": model_id, "input": "hi", "max_output_tokens": 16}))
-            }
+            Protocol::OpenaiResponses => (
+                "/responses",
+                serde_json::json!({"model": model_id, "input": "hi", "max_output_tokens": 16}),
+            ),
             Protocol::AnthropicMessages => (
                 "/v1/messages",
                 serde_json::json!({"model": model_id, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}),
@@ -189,8 +222,18 @@ impl ProviderProbe for Probe {
             let result = self.list_models(&target);
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             out.push(match result {
-                Ok(models) => KeyCheck { key: summary.id.clone(), models: Some(models.len()), elapsed_ms, error: None },
-                Err(error) => KeyCheck { key: summary.id.clone(), models: None, elapsed_ms, error: Some(error.to_string()) },
+                Ok(models) => KeyCheck {
+                    key: summary.id.clone(),
+                    models: Some(models.len()),
+                    elapsed_ms,
+                    error: None,
+                },
+                Err(error) => KeyCheck {
+                    key: summary.id.clone(),
+                    models: None,
+                    elapsed_ms,
+                    error: Some(error.to_string()),
+                },
             });
         }
         Ok(out)

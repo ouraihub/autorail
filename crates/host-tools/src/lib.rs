@@ -6,9 +6,9 @@
 mod bridge;
 mod mcp;
 mod spec;
-mod tools;
 #[cfg(test)]
 mod tests;
+mod tools;
 
 pub use bridge::ToolBridge;
 pub use mcp::run_mcp_stdio;

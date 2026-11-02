@@ -5,7 +5,12 @@ use crate::{Result, TerminalRuntimeId, WorkspaceId};
 /// Explicit shell choice; a missing shell is an error, never a silent fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Shell { PowerShell, Pwsh, Cmd, Bash }
+pub enum Shell {
+    PowerShell,
+    Pwsh,
+    Cmd,
+    Bash,
+}
 
 /// A persisted terminal tab. The PTY behind it is not persisted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +23,10 @@ pub struct TerminalTab {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GridSize { pub cols: u16, pub rows: u16 }
+pub struct GridSize {
+    pub cols: u16,
+    pub rows: u16,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachRequest {
@@ -42,8 +50,15 @@ pub struct Attached {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
-    Data { runtime: TerminalRuntimeId, byte_offset: u64, data: String },
-    Exit { runtime: TerminalRuntimeId, exit_code: Option<u32> },
+    Data {
+        runtime: TerminalRuntimeId,
+        byte_offset: u64,
+        data: String,
+    },
+    Exit {
+        runtime: TerminalRuntimeId,
+        exit_code: Option<u32>,
+    },
 }
 
 /// Receives PTY output. May block briefly: a full queue is the backpressure on the reader.

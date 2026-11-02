@@ -2,8 +2,9 @@
 //! [`ThinkrailTheme`]; clicks are reported through the handlers they are given.
 
 use gpui_kit::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, base::h_flex, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, base::h_flex, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_kit::{assets::IconName, component::Icon};
 
@@ -31,7 +32,11 @@ impl<T: Styled> TextStyled for T {}
 /// Text with a type style, uppercased when the style says so.
 pub fn label(style: TextStyle, content: impl Into<SharedString>) -> gpui_kit::Div {
     let content = content.into();
-    let content: SharedString = if style.uppercase { content.to_uppercase().into() } else { content };
+    let content: SharedString = if style.uppercase {
+        content.to_uppercase().into()
+    } else {
+        content
+    };
     div().text_style(style).child(content)
 }
 
@@ -52,7 +57,14 @@ pub struct IconButton {
 
 impl IconButton {
     pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
-        Self { id: id.into(), icon, selected: false, disabled: false, tooltip: None, on_click: None }
+        Self {
+            id: id.into(),
+            icon,
+            selected: false,
+            disabled: false,
+            tooltip: None,
+            on_click: None,
+        }
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
@@ -71,7 +83,10 @@ impl IconButton {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -98,9 +113,17 @@ impl RenderOnce for IconButton {
             .rounded(radius::SM)
             .text_color(color)
             .when(self.selected, |d| d.bg(r.control_bg_selected))
-            .when(!self.disabled, |d| d.cursor_pointer().hover(|s| s.bg(r.control_bg_hovered)))
-            .when_some(tooltip, |d, tip| d.tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)))
-            .when_some(self.on_click.filter(|_| !self.disabled), |d, handler| d.on_click(handler))
+            .when(!self.disabled, |d| {
+                d.cursor_pointer().hover(|s| s.bg(r.control_bg_hovered))
+            })
+            .when_some(tooltip, |d, tip| {
+                d.tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                })
+            })
+            .when_some(self.on_click.filter(|_| !self.disabled), |d, handler| {
+                d.on_click(handler)
+            })
             .child(Icon::new(self.icon).size(size::ICON).text_color(color))
     }
 }
@@ -114,7 +137,10 @@ pub struct PanelHeader {
 
 impl PanelHeader {
     pub fn new(title: impl Into<SharedString>) -> Self {
-        Self { title: title.into(), actions: Vec::new() }
+        Self {
+            title: title.into(),
+            actions: Vec::new(),
+        }
     }
 
     pub fn action(mut self, action: impl IntoElement) -> Self {
@@ -133,7 +159,12 @@ impl RenderOnce for PanelHeader {
             .gap(space::S4)
             .border_b_1()
             .border_color(r.border_muted)
-            .child(label(text::TITLE_COMPACT, self.title).flex_1().text_color(r.text_default).truncate())
+            .child(
+                label(text::TITLE_COMPACT, self.title)
+                    .flex_1()
+                    .text_color(r.text_default)
+                    .truncate(),
+            )
             .children(self.actions)
     }
 }
@@ -199,7 +230,10 @@ impl TreeRow {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -208,23 +242,54 @@ impl TreeRow {
 impl RenderOnce for TreeRow {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let r = roles(cx);
-        let name_color = if self.selected { r.primary } else { r.text_default };
+        let name_color = if self.selected {
+            r.primary
+        } else {
+            r.text_default
+        };
         let indent = size::TREE_INDENT * self.depth as f32;
-        let chevron = self.expanded.map(|open| if open { IconName::ChevronDown } else { IconName::ChevronRight });
+        let chevron = self.expanded.map(|open| {
+            if open {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            }
+        });
         let main = h_flex()
             .h(size::ROW)
             .gap(space::S4)
             .pl(indent + space::S4)
             .pr(space::S4)
-            .child(div().w(size::ICON_SMALL).flex_none().when_some(chevron, |d, icon| {
-                d.child(Icon::new(icon).size(size::ICON_SMALL).text_color(r.text_subtle))
-            }))
-            .when_some(self.icon, |d, icon| d.child(Icon::new(icon).size(size::ICON).text_color(r.text_muted)))
-            .child(label(text::UI, self.label).flex_1().min_w(px(0.)).truncate().text_color(name_color))
+            .child(
+                div()
+                    .w(size::ICON_SMALL)
+                    .flex_none()
+                    .when_some(chevron, |d, icon| {
+                        d.child(
+                            Icon::new(icon)
+                                .size(size::ICON_SMALL)
+                                .text_color(r.text_subtle),
+                        )
+                    }),
+            )
+            .when_some(self.icon, |d, icon| {
+                d.child(Icon::new(icon).size(size::ICON).text_color(r.text_muted))
+            })
+            .child(
+                label(text::UI, self.label)
+                    .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_color(name_color),
+            )
             .children(self.trailing);
         let detail = self.detail.map(|detail| {
             let left = indent + space::S4 + size::ICON_SMALL + space::S4 + size::ICON + space::S4;
-            label(text::METADATA, detail).pl(left).pb(space::S2).truncate().text_color(r.text_subtle)
+            label(text::METADATA, detail)
+                .pl(left)
+                .pb(space::S2)
+                .truncate()
+                .text_color(r.text_subtle)
         });
         div()
             .id(self.id)
@@ -253,7 +318,14 @@ pub struct Tab {
 
 impl Tab {
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), icon: None, label: label.into(), active: false, on_click: None, on_close: None }
+        Self {
+            id: id.into(),
+            icon: None,
+            label: label.into(),
+            active: false,
+            on_click: None,
+            on_close: None,
+        }
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
@@ -266,12 +338,18 @@ impl Tab {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 
-    pub fn on_close(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_close(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_close = Some(Box::new(handler));
         self
     }
@@ -280,7 +358,11 @@ impl Tab {
 impl RenderOnce for Tab {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let r = roles(cx);
-        let color = if self.active { r.text_default } else { r.text_muted };
+        let color = if self.active {
+            r.text_default
+        } else {
+            r.text_muted
+        };
         let close_id = ElementId::NamedChild(std::sync::Arc::new(self.id.clone()), "close".into());
         h_flex()
             .id(self.id)
@@ -295,7 +377,9 @@ impl RenderOnce for Tab {
             .when(self.active, |d| d.bg(r.container_workspace_bg))
             .when(!self.active, |d| d.hover(|s| s.bg(r.control_bg_hovered)))
             .when_some(self.on_click, |d, handler| d.on_click(handler))
-            .when_some(self.icon, |d, icon| d.child(Icon::new(icon).size(size::ICON_SMALL)))
+            .when_some(self.icon, |d, icon| {
+                d.child(Icon::new(icon).size(size::ICON_SMALL))
+            })
             .child(label(text::ACTION, self.label))
             .when_some(self.on_close, |d, handler| {
                 d.child(
@@ -304,7 +388,11 @@ impl RenderOnce for Tab {
                         .rounded(radius::XS)
                         .hover(|s| s.bg(r.control_bg_hovered))
                         .on_click(handler)
-                        .child(Icon::new(IconName::X).size(size::ICON_SMALL).text_color(r.text_subtle)),
+                        .child(
+                            Icon::new(IconName::X)
+                                .size(size::ICON_SMALL)
+                                .text_color(r.text_subtle),
+                        ),
                 )
             })
     }
@@ -319,7 +407,10 @@ pub struct TabStrip {
 
 impl TabStrip {
     pub fn new() -> Self {
-        Self { tabs: Vec::new(), actions: Vec::new() }
+        Self {
+            tabs: Vec::new(),
+            actions: Vec::new(),
+        }
     }
 
     pub fn tab(mut self, tab: Tab) -> Self {
@@ -348,7 +439,14 @@ impl RenderOnce for TabStrip {
             .bg(r.container_header_bg)
             .border_b_1()
             .border_color(r.border_muted)
-            .child(h_flex().h_full().flex_1().min_w(px(0.)).overflow_hidden().children(self.tabs))
+            .child(
+                h_flex()
+                    .h_full()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .children(self.tabs),
+            )
             .child(h_flex().gap(space::S2).px(space::S4).children(self.actions))
     }
 }
@@ -363,8 +461,17 @@ pub struct Segment {
 }
 
 impl Segment {
-    pub fn new(id: impl Into<ElementId>, options: impl IntoIterator<Item = impl Into<SharedString>>, active: usize) -> Self {
-        Self { id: id.into(), options: options.into_iter().map(Into::into).collect(), active, on_select: None }
+    pub fn new(
+        id: impl Into<ElementId>,
+        options: impl IntoIterator<Item = impl Into<SharedString>>,
+        active: usize,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            options: options.into_iter().map(Into::into).collect(),
+            active,
+            on_select: None,
+        }
     }
 
     pub fn on_select(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
@@ -388,7 +495,10 @@ impl RenderOnce for Segment {
                 let active = index == self.active;
                 let handler = handler.clone();
                 div()
-                    .id(ElementId::NamedChild(base.clone(), index.to_string().into()))
+                    .id(ElementId::NamedChild(
+                        base.clone(),
+                        index.to_string().into(),
+                    ))
                     .h_full()
                     .flex()
                     .items_center()
@@ -398,7 +508,9 @@ impl RenderOnce for Segment {
                     .text_color(if active { r.text_default } else { r.text_muted })
                     .when(active, |d| d.bg(r.control_bg_selected))
                     .when(!active, |d| d.hover(|s| s.bg(r.control_bg_hovered)))
-                    .when_some(handler, move |d, handler| d.on_click(move |_, window, cx| handler(&index, window, cx)))
+                    .when_some(handler, move |d, handler| {
+                        d.on_click(move |_, window, cx| handler(&index, window, cx))
+                    })
                     .child(label(text::ACTION, option))
             }))
     }
@@ -422,7 +534,10 @@ pub struct StatusDot {
 
 impl StatusDot {
     pub fn new(status: Status) -> Self {
-        Self { status, label: None }
+        Self {
+            status,
+            label: None,
+        }
     }
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
@@ -443,8 +558,16 @@ impl RenderOnce for StatusDot {
         };
         h_flex()
             .gap(space::S6)
-            .child(div().size(size::STATUS_DOT).flex_none().rounded_full().bg(color))
-            .when_some(self.label, |d, text| d.child(label(text::METADATA, text).text_color(r.text_muted)))
+            .child(
+                div()
+                    .size(size::STATUS_DOT)
+                    .flex_none()
+                    .rounded_full()
+                    .bg(color),
+            )
+            .when_some(self.label, |d, text| {
+                d.child(label(text::METADATA, text).text_color(r.text_muted))
+            })
     }
 }
 
@@ -460,8 +583,19 @@ pub struct Breadcrumb {
 }
 
 impl Breadcrumb {
-    pub fn new(id: impl Into<ElementId>, eyebrow: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), eyebrow: eyebrow.into(), value: value.into(), icon: None, mono: false, on_click: None }
+    pub fn new(
+        id: impl Into<ElementId>,
+        eyebrow: impl Into<SharedString>,
+        value: impl Into<SharedString>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            eyebrow: eyebrow.into(),
+            value: value.into(),
+            icon: None,
+            mono: false,
+            on_click: None,
+        }
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {
@@ -475,7 +609,10 @@ impl Breadcrumb {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -484,7 +621,11 @@ impl Breadcrumb {
 impl RenderOnce for Breadcrumb {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let r = roles(cx);
-        let value_style = if self.mono { text::CODE_TEXT } else { text::ACTION };
+        let value_style = if self.mono {
+            text::CODE_TEXT
+        } else {
+            text::ACTION
+        };
         div()
             .id(self.id)
             .flex()
@@ -500,9 +641,23 @@ impl RenderOnce for Breadcrumb {
             .child(
                 h_flex()
                     .gap(space::S4)
-                    .when_some(self.icon, |d, icon| d.child(Icon::new(icon).size(size::ICON_SMALL).text_color(r.text_muted)))
-                    .child(label(value_style, self.value).text_color(r.text_default).truncate())
-                    .child(Icon::new(IconName::ChevronDown).size(size::ICON_SMALL).text_color(r.text_subtle)),
+                    .when_some(self.icon, |d, icon| {
+                        d.child(
+                            Icon::new(icon)
+                                .size(size::ICON_SMALL)
+                                .text_color(r.text_muted),
+                        )
+                    })
+                    .child(
+                        label(value_style, self.value)
+                            .text_color(r.text_default)
+                            .truncate(),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronDown)
+                            .size(size::ICON_SMALL)
+                            .text_color(r.text_subtle),
+                    ),
             )
     }
 }
@@ -519,7 +674,13 @@ pub struct ActivityItem {
 
 impl ActivityItem {
     pub fn new(id: impl Into<ElementId>, icon: IconName, tooltip: impl Into<SharedString>) -> Self {
-        Self { id: id.into(), icon, tooltip: tooltip.into(), active: false, on_click: None }
+        Self {
+            id: id.into(),
+            icon,
+            tooltip: tooltip.into(),
+            active: false,
+            on_click: None,
+        }
     }
 
     pub fn active(mut self, active: bool) -> Self {
@@ -527,7 +688,10 @@ impl ActivityItem {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -536,7 +700,11 @@ impl ActivityItem {
 impl RenderOnce for ActivityItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let r = roles(cx);
-        let color = if self.active { r.text_default } else { r.text_muted };
+        let color = if self.active {
+            r.text_default
+        } else {
+            r.text_muted
+        };
         let tooltip = self.tooltip;
         div()
             .id(self.id)
@@ -550,10 +718,20 @@ impl RenderOnce for ActivityItem {
             .text_color(color)
             .when(self.active, |d| d.bg(r.control_bg_selected))
             .when(!self.active, |d| d.hover(|s| s.bg(r.control_bg_hovered)))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx))
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
             .when_some(self.on_click, |d, handler| d.on_click(handler))
             .when(self.active, |d| {
-                d.child(div().absolute().left_0().top_0().bottom_0().w(size::ACCENT_BAR).bg(r.primary))
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(size::ACCENT_BAR)
+                        .bg(r.primary),
+                )
             })
             .child(Icon::new(self.icon).size(size::ICON).text_color(color))
     }
@@ -570,4 +748,14 @@ macro_rules! opaque_debug {
     )*};
 }
 
-opaque_debug!(IconButton, PanelHeader, TreeRow, Tab, TabStrip, Segment, StatusDot, Breadcrumb, ActivityItem);
+opaque_debug!(
+    IconButton,
+    PanelHeader,
+    TreeRow,
+    Tab,
+    TabStrip,
+    Segment,
+    StatusDot,
+    Breadcrumb,
+    ActivityItem
+);

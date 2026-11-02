@@ -6,7 +6,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use thinkrail_core::{Error, IoContext, Project, ProjectId, Result, Workspace, WorkspaceId, WorkspaceKind};
+use thinkrail_core::{
+    Error, IoContext, Project, ProjectId, Result, Workspace, WorkspaceId, WorkspaceKind,
+};
 
 use crate::paths::{bounded_read, is_link};
 
@@ -52,17 +54,27 @@ impl Registry {
     }
 
     pub fn workspace(&self, id: &WorkspaceId) -> Result<&Workspace> {
-        self.workspaces.iter().find(|w| &w.id == id).ok_or_else(|| Error::not_found("工作区"))
+        self.workspaces
+            .iter()
+            .find(|w| &w.id == id)
+            .ok_or_else(|| Error::not_found("工作区"))
     }
 
     fn validate(&self) -> Result<()> {
         if self.schema_version != SCHEMA_VERSION {
-            return Err(Error::corrupt(format!("工作区注册表版本 {} 不受支持", self.schema_version)));
+            return Err(Error::corrupt(format!(
+                "工作区注册表版本 {} 不受支持",
+                self.schema_version
+            )));
         }
         let mut ids = HashSet::new();
         for stored in &self.projects {
             let p = &stored.project;
-            if !ids.insert(p.id.as_str()) || !p.path.is_absolute() || p.slug.is_empty() || p.slug.contains(['/', '\\']) {
+            if !ids.insert(p.id.as_str())
+                || !p.path.is_absolute()
+                || p.slug.is_empty()
+                || p.slug.contains(['/', '\\'])
+            {
                 return Err(Error::corrupt("工作区注册表中的项目记录无效"));
             }
         }
@@ -72,7 +84,9 @@ impl Registry {
                 return Err(Error::corrupt("工作区注册表中的工作区记录无效或重复"));
             }
             if (w.kind == WorkspaceKind::Managed) != self.managed.contains_key(&w.id) {
-                return Err(Error::corrupt("托管工作区缺少归属记录，或归属记录没有对应工作区"));
+                return Err(Error::corrupt(
+                    "托管工作区缺少归属记录，或归属记录没有对应工作区",
+                ));
             }
         }
         Ok(())
@@ -92,7 +106,9 @@ pub(crate) struct Locked {
 
 impl Store {
     pub fn new(dir: &Path) -> Self {
-        Self { dir: dir.to_path_buf() }
+        Self {
+            dir: dir.to_path_buf(),
+        }
     }
 
     pub fn read(&self) -> Result<Registry> {
@@ -101,14 +117,22 @@ impl Store {
             Ok(metadata) if metadata.is_file() && !is_link(&metadata) => {}
             Ok(_) => return Err(Error::corrupt("workbench.json 不是普通文件")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Registry { schema_version: SCHEMA_VERSION, ..Registry::default() });
+                return Ok(Registry {
+                    schema_version: SCHEMA_VERSION,
+                    ..Registry::default()
+                });
             }
-            Err(error) => return Err(Error::Io { context: "读取工作区注册表".into(), source: error }),
+            Err(error) => {
+                return Err(Error::Io {
+                    context: "读取工作区注册表".into(),
+                    source: error,
+                });
+            }
         }
         let bytes = bounded_read(File::open(&path).context("读取工作区注册表")?, MAX_BYTES)
             .map_err(|_| Error::corrupt("工作区注册表超过 16 MiB"))?;
-        let registry: Registry =
-            serde_json::from_slice(&bytes).map_err(|e| Error::corrupt(format!("工作区注册表无法解析：{e}")))?;
+        let registry: Registry = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::corrupt(format!("工作区注册表无法解析：{e}")))?;
         registry.validate()?;
         Ok(registry)
     }
@@ -128,11 +152,17 @@ impl Store {
 
     pub fn write(&self, _lock: &Locked, registry: &Registry) -> Result<()> {
         registry.validate()?;
-        let bytes = serde_json::to_vec_pretty(registry).map_err(|e| Error::invalid(format!("无法序列化注册表：{e}")))?;
+        let bytes = serde_json::to_vec_pretty(registry)
+            .map_err(|e| Error::invalid(format!("无法序列化注册表：{e}")))?;
         let target = self.dir.join(FILE_NAME);
-        let temporary = self.dir.join(format!("{FILE_NAME}.{}.tmp", uuid::Uuid::new_v4().simple()));
+        let temporary = self
+            .dir
+            .join(format!("{FILE_NAME}.{}.tmp", uuid::Uuid::new_v4().simple()));
         let result = (|| {
-            let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
             drop(file);

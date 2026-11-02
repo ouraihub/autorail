@@ -30,25 +30,40 @@ pub(crate) fn run(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output>
     let mut command = Command::new("git");
     command
         .current_dir(root)
-        .args(["--no-optional-locks", "--literal-pathspecs", "-c", "core.hooksPath=", "-c", "core.fsmonitor=false"])
+        .args([
+            "--no-optional-locks",
+            "--literal-pathspecs",
+            "-c",
+            "core.hooksPath=",
+            "-c",
+            "core.fsmonitor=false",
+        ])
         .args(["-c", "core.quotePath=false"])
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+        if key
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
             command.env_remove(key);
         }
     }
-    command.env("GIT_TERMINAL_PROMPT", "0").env("GIT_PAGER", "cat");
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_PAGER", "cat");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = command.spawn().context("无法启动 git，请确认已安装 Git 并在 PATH 中")?;
+    let mut child = command
+        .spawn()
+        .context("无法启动 git，请确认已安装 Git 并在 PATH 中")?;
     let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
         (Some(out), Some(err)) => (out, err),
         _ => return Err(Error::external("git 输出管道不可用")),
@@ -61,20 +76,33 @@ pub(crate) fn run(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output>
         }
         if started.elapsed() > TIMEOUT {
             terminate(&mut child);
-            return Err(Error::timeout(format!("git {} 超过 30 秒未完成", args.first().copied().unwrap_or(""))));
+            return Err(Error::timeout(format!(
+                "git {} 超过 30 秒未完成",
+                args.first().copied().unwrap_or("")
+            )));
         }
         thread::sleep(POLL);
     };
     let stdout = received(&out_rx)?;
     let stderr = received(&err_rx)?;
-    debug!(command = args.first().copied().unwrap_or(""), elapsed_ms = started.elapsed().as_millis() as u64, "git");
+    debug!(
+        command = args.first().copied().unwrap_or(""),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "git"
+    );
     if !status.success() && !status.code().is_some_and(|code| allowed.contains(&code)) {
         let detail = String::from_utf8_lossy(&stderr);
         let detail: String = detail.trim().chars().take(2048).collect();
-        return Err(Error::external(format!("git {} 失败：{detail}", args.first().copied().unwrap_or(""))));
+        return Err(Error::external(format!(
+            "git {} 失败：{detail}",
+            args.first().copied().unwrap_or("")
+        )));
     }
     let stdout = String::from_utf8(stdout).map_err(|_| Error::external("git 输出不是 UTF-8"))?;
-    Ok(Output { success: status.success(), stdout })
+    Ok(Output {
+        success: status.success(),
+        stdout,
+    })
 }
 
 fn drain(reader: impl Read + Send + 'static) -> mpsc::Receiver<Result<Vec<u8>>> {
@@ -86,7 +114,8 @@ fn drain(reader: impl Read + Send + 'static) -> mpsc::Receiver<Result<Vec<u8>>> 
 }
 
 fn received(rx: &mpsc::Receiver<Result<Vec<u8>>>) -> Result<Vec<u8>> {
-    rx.recv_timeout(TIMEOUT).map_err(|_| Error::timeout("读取 git 输出超时"))?
+    rx.recv_timeout(TIMEOUT)
+        .map_err(|_| Error::timeout("读取 git 输出超时"))?
 }
 
 fn terminate(child: &mut std::process::Child) {
@@ -105,7 +134,9 @@ pub(crate) fn ok(root: &Path, args: &[&str]) -> Result<String> {
 
 /// Git rejects `\\?\` verbatim paths, which `fs::canonicalize` produces on Windows.
 pub(crate) fn path_arg(path: &Path) -> Result<String> {
-    let text = path.to_str().ok_or_else(|| Error::invalid("路径不是 UTF-8"))?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| Error::invalid("路径不是 UTF-8"))?;
     Ok(match text.strip_prefix(r"\\?\") {
         Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_owned(),
         _ => text.to_owned(),
@@ -119,12 +150,19 @@ pub(crate) fn toplevel(dir: &Path) -> Result<PathBuf> {
 }
 
 pub(crate) fn common_dir(root: &Path) -> Result<PathBuf> {
-    let dir = ok(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let dir = ok(
+        root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
     fs::canonicalize(dir.trim_end_matches(['\r', '\n'])).context("解析 Git 公共目录")
 }
 
 pub(crate) fn safe_ref(reference: &str) -> Result<()> {
-    if reference.is_empty() || reference.starts_with('-') || reference.chars().any(|c| c.is_control() || c.is_whitespace())
+    if reference.is_empty()
+        || reference.starts_with('-')
+        || reference
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace())
     {
         return Err(Error::invalid("Git 引用名无效"));
     }
@@ -137,7 +175,17 @@ pub(crate) fn validate_branch(root: &Path, branch: &str) -> Result<()> {
 }
 
 pub(crate) fn branch_exists(root: &Path, branch: &str) -> Result<bool> {
-    Ok(run(root, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")], &[1])?.success)
+    Ok(run(
+        root,
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+        &[1],
+    )?
+    .success)
 }
 
 pub(crate) fn current_branch(root: &Path) -> Result<String> {
@@ -146,11 +194,24 @@ pub(crate) fn current_branch(root: &Path) -> Result<String> {
         return Ok(symbolic.stdout.trim_end().into());
     }
     let detached = run(root, &["rev-parse", "--short", "HEAD"], &[128])?;
-    Ok(if detached.success { detached.stdout.trim_end().into() } else { String::new() })
+    Ok(if detached.success {
+        detached.stdout.trim_end().into()
+    } else {
+        String::new()
+    })
 }
 
 pub(crate) fn default_branch(root: &Path) -> Result<String> {
-    let remote = run(root, &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], &[1])?;
+    let remote = run(
+        root,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        &[1],
+    )?;
     if remote.success {
         return Ok(remote.stdout.trim_end().into());
     }
@@ -163,11 +224,19 @@ pub(crate) fn default_branch(root: &Path) -> Result<String> {
 }
 
 fn has_head(root: &Path) -> Result<bool> {
-    Ok(run(root, &["rev-parse", "--verify", "--quiet", "HEAD"], &[1, 128])?.success)
+    Ok(run(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        &[1, 128],
+    )?
+    .success)
 }
 
 pub(crate) fn status(root: &Path) -> Result<GitStatus> {
-    let output = ok(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+    let output = ok(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
     let mut records = output.split('\0').filter(|s| !s.is_empty());
     let mut changes = Vec::new();
     while let Some(record) = records.next() {
@@ -178,7 +247,12 @@ pub(crate) fn status(root: &Path) -> Result<GitStatus> {
         let (index, worktree) = (bytes[0], bytes[1]);
         let status = change_status(index, worktree);
         let original_path = if matches!(status, ChangeStatus::Renamed | ChangeStatus::Copied) {
-            Some(records.next().ok_or_else(|| Error::external("git status 缺少重命名来源"))?.to_owned())
+            Some(
+                records
+                    .next()
+                    .ok_or_else(|| Error::external("git status 缺少重命名来源"))?
+                    .to_owned(),
+            )
         } else {
             None
         };
@@ -195,24 +269,47 @@ pub(crate) fn status(root: &Path) -> Result<GitStatus> {
         apply_numstat(root, &mut changes)?;
     }
     let branch = current_branch(root)?;
-    let upstream = run(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], &[128])?;
+    let upstream = run(
+        root,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+        &[128],
+    )?;
     let (upstream, ahead, behind) = if upstream.success {
-        let counts = ok(root, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])?;
-        let mut parts = counts.split_whitespace().map(|n| n.parse::<u32>().unwrap_or(0));
+        let counts = ok(
+            root,
+            &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        )?;
+        let mut parts = counts
+            .split_whitespace()
+            .map(|n| n.parse::<u32>().unwrap_or(0));
         let behind = parts.next().unwrap_or(0);
         let ahead = parts.next().unwrap_or(0);
         (Some(upstream.stdout.trim_end().to_owned()), ahead, behind)
     } else {
         (None, 0, 0)
     };
-    Ok(GitStatus { branch: (!branch.is_empty()).then_some(branch), upstream, ahead, behind, changes })
+    Ok(GitStatus {
+        branch: (!branch.is_empty()).then_some(branch),
+        upstream,
+        ahead,
+        behind,
+        changes,
+    })
 }
 
 fn change_status(index: u8, worktree: u8) -> ChangeStatus {
     let either = |c: u8| index == c || worktree == c;
     if index == b'?' {
         ChangeStatus::Untracked
-    } else if either(b'U') || (index == b'A' && worktree == b'A') || (index == b'D' && worktree == b'D') {
+    } else if either(b'U')
+        || (index == b'A' && worktree == b'A')
+        || (index == b'D' && worktree == b'D')
+    {
         ChangeStatus::Conflicted
     } else if either(b'R') {
         ChangeStatus::Renamed
@@ -238,7 +335,10 @@ fn apply_numstat(root: &Path, changes: &mut [Change]) -> Result<()> {
             continue;
         }
         let mut parts = head.splitn(3, '\t');
-        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
         // A rename has an empty path here followed by `old\0new`.
         let path = if path.is_empty() {
             let _old = fields.next();
@@ -256,8 +356,17 @@ fn apply_numstat(root: &Path, changes: &mut [Change]) -> Result<()> {
 
 pub(crate) fn branches(root: &Path) -> Result<Vec<Branch>> {
     let current = current_branch(root)?;
-    let local = ok(root, &["for-each-ref", "--format=%(refname:short)", "refs/heads/"])?;
-    Ok(local.lines().map(|name| Branch { name: name.to_owned(), current: name == current }).collect())
+    let local = ok(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+    )?;
+    Ok(local
+        .lines()
+        .map(|name| Branch {
+            name: name.to_owned(),
+            current: name == current,
+        })
+        .collect())
 }
 
 pub(crate) fn commits(root: &Path, limit: usize) -> Result<Vec<Commit>> {
@@ -267,7 +376,16 @@ pub(crate) fn commits(root: &Path, limit: usize) -> Result<Vec<Commit>> {
     if !has_head(root)? {
         return Ok(Vec::new());
     }
-    let output = ok(root, &["log", "-z", &format!("-{limit}"), "--format=%H%x1f%s%x1f%an%x1f%ct", "--"])?;
+    let output = ok(
+        root,
+        &[
+            "log",
+            "-z",
+            &format!("-{limit}"),
+            "--format=%H%x1f%s%x1f%an%x1f%ct",
+            "--",
+        ],
+    )?;
     output
         .split('\0')
         .filter(|record| !record.trim().is_empty())
@@ -276,8 +394,16 @@ pub(crate) fn commits(root: &Path, limit: usize) -> Result<Vec<Commit>> {
             let [hash, subject, author, seconds] = fields[..] else {
                 return Err(Error::external("git log 输出格式异常"));
             };
-            let seconds: u64 = seconds.trim().parse().map_err(|_| Error::external("git log 时间格式异常"))?;
-            Ok(Commit { hash: hash.into(), subject: subject.into(), author: author.into(), timestamp: seconds * 1000 })
+            let seconds: u64 = seconds
+                .trim()
+                .parse()
+                .map_err(|_| Error::external("git log 时间格式异常"))?;
+            Ok(Commit {
+                hash: hash.into(),
+                subject: subject.into(),
+                author: author.into(),
+                timestamp: seconds * 1000,
+            })
         })
         .collect()
 }
@@ -294,13 +420,28 @@ pub(crate) fn bootstrap(root: &Path) -> Result<()> {
     let committed = (|| {
         ok(root, &["add", "-A"])?;
         let mut args: Vec<&str> = Vec::new();
-        if run(root, &["config", "user.name"], &[1])?.stdout.trim().is_empty() {
+        if run(root, &["config", "user.name"], &[1])?
+            .stdout
+            .trim()
+            .is_empty()
+        {
             args.extend(["-c", "user.name=ThinkRail"]);
         }
-        if run(root, &["config", "user.email"], &[1])?.stdout.trim().is_empty() {
+        if run(root, &["config", "user.email"], &[1])?
+            .stdout
+            .trim()
+            .is_empty()
+        {
             args.extend(["-c", "user.email=thinkrail@localhost"]);
         }
-        args.extend(["commit", "-q", "--allow-empty", "--no-verify", "-m", "Initial commit"]);
+        args.extend([
+            "commit",
+            "-q",
+            "--allow-empty",
+            "--no-verify",
+            "-m",
+            "Initial commit",
+        ]);
         ok(root, &args).map(|_| ())
     })();
     if committed.is_err() {

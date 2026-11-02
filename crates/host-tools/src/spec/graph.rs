@@ -32,7 +32,11 @@ pub(super) struct Graph<'a> {
 }
 
 pub(super) fn link_targets<'a>(file: &'a SpecFile, kind: &str) -> Vec<&'a str> {
-    if kind == PARENT { scalar(&file.fm, PARENT).into_iter().collect() } else { list(&file.fm, kind) }
+    if kind == PARENT {
+        scalar(&file.fm, PARENT).into_iter().collect()
+    } else {
+        list(&file.fm, kind)
+    }
 }
 
 pub(super) fn kind_index(kind: &str) -> Option<usize> {
@@ -41,11 +45,19 @@ pub(super) fn kind_index(kind: &str) -> Option<usize> {
 
 impl<'a> Graph<'a> {
     pub fn build(files: &'a [SpecFile]) -> Self {
-        let mut graph = Graph { nodes: Vec::new(), index: HashMap::new(), forward: Default::default(), reverse: Default::default(), duplicates: Vec::new() };
+        let mut graph = Graph {
+            nodes: Vec::new(),
+            index: HashMap::new(),
+            forward: Default::default(),
+            reverse: Default::default(),
+            duplicates: Vec::new(),
+        };
         let mut paths: Vec<(&'a str, Vec<&'a str>)> = Vec::new();
         let mut path_slot: HashMap<&'a str, usize> = HashMap::new();
         for file in files {
-            let (Some(id), Some(kind)) = (scalar(&file.fm, ID), scalar(&file.fm, TYPE)) else { continue };
+            let (Some(id), Some(kind)) = (scalar(&file.fm, ID), scalar(&file.fm, TYPE)) else {
+                continue;
+            };
             let slot = *path_slot.entry(id).or_insert_with(|| {
                 paths.push((id, Vec::new()));
                 paths.len() - 1
@@ -53,7 +65,12 @@ impl<'a> Graph<'a> {
             paths[slot].1.push(&file.rel);
             if !graph.index.contains_key(id) {
                 graph.index.insert(id, graph.nodes.len());
-                graph.nodes.push(Node { id, kind, title: scalar(&file.fm, TITLE), file });
+                graph.nodes.push(Node {
+                    id,
+                    kind,
+                    title: scalar(&file.fm, TITLE),
+                    file,
+                });
             }
         }
         for node in &graph.nodes {
@@ -88,16 +105,54 @@ pub(super) struct Slice<'g, 'a> {
 }
 
 /// A breadth-first slice `depth` hops out from `root` (which must be a node).
-pub(super) fn slice<'g, 'a>(graph: &'g Graph<'a>, root: &'a str, direction: &str, edge: usize, depth: f64) -> Slice<'g, 'a> {
+pub(super) fn slice<'g, 'a>(
+    graph: &'g Graph<'a>,
+    root: &'a str,
+    direction: &str,
+    edge: usize,
+    depth: f64,
+) -> Slice<'g, 'a> {
     let parent = 0;
     let next = |id: &'a str| -> Vec<(&'a str, Edge<'a>)> {
         match direction {
-            "subtree" => graph.reverse(parent, id).iter().map(|&child| (child, Edge { from: child, to: id, kind: PARENT })).collect(),
-            "ancestors" => graph.forward(parent, id).iter().map(|&up| (up, Edge { from: id, to: up, kind: PARENT })).collect(),
+            "subtree" => graph
+                .reverse(parent, id)
+                .iter()
+                .map(|&child| {
+                    (
+                        child,
+                        Edge {
+                            from: child,
+                            to: id,
+                            kind: PARENT,
+                        },
+                    )
+                })
+                .collect(),
+            "ancestors" => graph
+                .forward(parent, id)
+                .iter()
+                .map(|&up| {
+                    (
+                        up,
+                        Edge {
+                            from: id,
+                            to: up,
+                            kind: PARENT,
+                        },
+                    )
+                })
+                .collect(),
             _ => {
                 let kind = LINK_KINDS[edge];
-                let out = graph.forward(edge, id).iter().map(|&to| (to, Edge { from: id, to, kind }));
-                let inc = graph.reverse(edge, id).iter().map(|&from| (from, Edge { from, to: id, kind }));
+                let out = graph
+                    .forward(edge, id)
+                    .iter()
+                    .map(|&to| (to, Edge { from: id, to, kind }));
+                let inc = graph
+                    .reverse(edge, id)
+                    .iter()
+                    .map(|&from| (from, Edge { from, to: id, kind }));
                 out.chain(inc).collect()
             }
         }
@@ -128,8 +183,15 @@ pub(super) fn slice<'g, 'a>(graph: &'g Graph<'a>, root: &'a str, direction: &str
         frontier = next_frontier;
         hop += 1.0;
     }
-    let nodes = included.into_iter().filter_map(|id| graph.node(id)).collect();
-    Slice { nodes, edges, missing }
+    let nodes = included
+        .into_iter()
+        .filter_map(|id| graph.node(id))
+        .collect();
+    Slice {
+        nodes,
+        edges,
+        missing,
+    }
 }
 
 pub(super) struct Dangling<'a> {
@@ -145,7 +207,12 @@ pub(super) fn dangling_links<'a>(graph: &Graph<'a>) -> Vec<Dangling<'a>> {
         for kind in LINK_KINDS {
             for target in link_targets(node.file, kind) {
                 if graph.node(target).is_none() {
-                    out.push(Dangling { from: node.id, from_path: &node.file.rel, kind, target });
+                    out.push(Dangling {
+                        from: node.id,
+                        from_path: &node.file.rel,
+                        kind,
+                        target,
+                    });
                 }
             }
         }

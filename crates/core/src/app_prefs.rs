@@ -17,7 +17,10 @@ pub enum LogLevel {
 impl LogLevel {
     /// The `EnvFilter` directive.
     pub fn as_str(self) -> &'static str {
-        match self { Self::Info => "info", Self::Debug => "debug" }
+        match self {
+            Self::Info => "info",
+            Self::Debug => "debug",
+        }
     }
 }
 

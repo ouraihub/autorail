@@ -9,7 +9,11 @@ const OP: &str = "2026-11-01T15:26:55.669+08:00  INFO op{id=42 at=panels/chat.rs
 #[test]
 fn a_line_inside_an_operation_keeps_its_span_target_and_fields_apart() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("thinkrail-native.2026-11-01.log"), format!("{OP}\n")).unwrap();
+    fs::write(
+        dir.path().join("thinkrail-native.2026-11-01.log"),
+        format!("{OP}\n"),
+    )
+    .unwrap();
     let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
     assert_eq!(entry.time, "2026-11-01T15:26:55.669+08:00");
     assert_eq!(entry.level, "INFO");
@@ -30,20 +34,48 @@ fn lines_outside_operations_and_unparsable_lines_still_show() {
     )
     .unwrap();
     let entries = tail(dir.path(), 10).unwrap();
-    assert_eq!((entries[0].level.as_str(), entries[0].target.as_str(), entries[0].message.as_str()), ("ERROR", "", "无效的窗口句柄。 (0x80070578)"));
-    assert_eq!((entries[1].spans.as_str(), entries[1].target.as_str()), ("", "thinkrail_app::state"));
-    assert_eq!((entries[2].time.as_str(), entries[2].level.as_str(), entries[2].message.as_str()), ("", "INFO", "panicked at somewhere"));
+    assert_eq!(
+        (
+            entries[0].level.as_str(),
+            entries[0].target.as_str(),
+            entries[0].message.as_str()
+        ),
+        ("ERROR", "", "无效的窗口句柄。 (0x80070578)")
+    );
+    assert_eq!(
+        (entries[1].spans.as_str(), entries[1].target.as_str()),
+        ("", "thinkrail_app::state")
+    );
+    assert_eq!(
+        (
+            entries[2].time.as_str(),
+            entries[2].level.as_str(),
+            entries[2].message.as_str()
+        ),
+        ("", "INFO", "panicked at somewhere")
+    );
 }
 
 #[test]
 fn reads_only_the_newest_file_and_its_last_lines() {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("thinkrail-native.2026-10-31.log"), format!("{OP} old\n")).unwrap();
-    fs::write(dir.path().join("other.2026-12-01.log"), format!("{OP} foreign\n")).unwrap();
+    fs::write(
+        dir.path().join("thinkrail-native.2026-10-31.log"),
+        format!("{OP} old\n"),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("other.2026-12-01.log"),
+        format!("{OP} foreign\n"),
+    )
+    .unwrap();
     let lines: String = (0..5).map(|i| format!("{OP} n={i}\n")).collect();
     fs::write(dir.path().join("thinkrail-native.2026-11-01.log"), lines).unwrap();
     let entries = tail(dir.path(), 2).unwrap();
-    let messages: Vec<_> = entries.iter().map(|e| e.message.rsplit(' ').next().unwrap()).collect();
+    let messages: Vec<_> = entries
+        .iter()
+        .map(|e| e.message.rsplit(' ').next().unwrap())
+        .collect();
     assert_eq!(messages, ["n=3", "n=4"], "newest two, oldest first");
     assert_eq!(entries.iter().map(|e| e.seq).collect::<Vec<_>>(), [0, 1]);
 }

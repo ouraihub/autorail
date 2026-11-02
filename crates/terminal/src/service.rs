@@ -2,8 +2,8 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use parking_lot::Mutex;
 use thinkrail_core::{
-    AttachRequest, Attached, Error, ErrorCode, GridSize, Result, TerminalRuntimeId, TerminalService, TerminalSink,
-    TerminalTab, WorkspaceId, WorkspaceRoots,
+    AttachRequest, Attached, Error, ErrorCode, GridSize, Result, TerminalRuntimeId,
+    TerminalService, TerminalSink, TerminalTab, WorkspaceId, WorkspaceRoots,
 };
 use tracing::{info, warn};
 
@@ -22,24 +22,43 @@ pub struct PtyTerminalService {
 
 impl std::fmt::Debug for PtyTerminalService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PtyTerminalService").field("runtimes", &self.runtimes.lock().len()).finish_non_exhaustive()
+        f.debug_struct("PtyTerminalService")
+            .field("runtimes", &self.runtimes.lock().len())
+            .finish_non_exhaustive()
     }
 }
 
 impl PtyTerminalService {
-    pub fn new(data_dir: &Path, roots: Arc<dyn WorkspaceRoots>, sink: Arc<dyn TerminalSink>) -> Self {
-        Self { catalog: Catalog::new(data_dir.to_path_buf()), roots, sink, runtimes: Mutex::new(HashMap::new()) }
+    pub fn new(
+        data_dir: &Path,
+        roots: Arc<dyn WorkspaceRoots>,
+        sink: Arc<dyn TerminalSink>,
+    ) -> Self {
+        Self {
+            catalog: Catalog::new(data_dir.to_path_buf()),
+            roots,
+            sink,
+            runtimes: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Live runtime for a tab; a shell that exited on its own is dropped here, never returned.
     fn live(&self, workspace: &WorkspaceId, tab_key: &str) -> Option<Arc<Runtime>> {
         let mut runtimes = self.runtimes.lock();
         runtimes.retain(|_, runtime| !runtime.is_exited());
-        runtimes.values().find(|r| &r.workspace == workspace && r.tab_key == tab_key).cloned()
+        runtimes
+            .values()
+            .find(|r| &r.workspace == workspace && r.tab_key == tab_key)
+            .cloned()
     }
 
     fn runtime(&self, id: &TerminalRuntimeId) -> Result<Arc<Runtime>> {
-        self.runtimes.lock().get(id).filter(|r| !r.is_exited()).cloned().ok_or_else(|| Error::not_found("终端"))
+        self.runtimes
+            .lock()
+            .get(id)
+            .filter(|r| !r.is_exited())
+            .cloned()
+            .ok_or_else(|| Error::not_found("终端"))
     }
 }
 
@@ -50,8 +69,15 @@ impl TerminalService for PtyTerminalService {
             .into_iter()
             .filter(|tab| &tab.workspace == workspace)
             .map(|tab| {
-                let runtime = self.live(&tab.workspace, &tab.tab_key).map(|r| r.id.clone());
-                TerminalTab { workspace: tab.workspace, tab_key: tab.tab_key, title: tab.title, runtime }
+                let runtime = self
+                    .live(&tab.workspace, &tab.tab_key)
+                    .map(|r| r.id.clone());
+                TerminalTab {
+                    workspace: tab.workspace,
+                    tab_key: tab.tab_key,
+                    title: tab.title,
+                    runtime,
+                }
             })
             .collect())
     }
@@ -63,17 +89,29 @@ impl TerminalService for PtyTerminalService {
         }
         let locked = self.catalog.lock()?;
         let mut tabs = locked.read()?;
-        let stored = match tabs.iter().find(|t| &t.workspace == workspace && t.tab_key == tab_key) {
+        let stored = match tabs
+            .iter()
+            .find(|t| &t.workspace == workspace && t.tab_key == tab_key)
+        {
             Some(existing) => existing.clone(),
             None => {
-                let tab = StoredTab { workspace: workspace.clone(), tab_key: tab_key.into(), title: title.into() };
+                let tab = StoredTab {
+                    workspace: workspace.clone(),
+                    tab_key: tab_key.into(),
+                    title: title.into(),
+                };
                 tabs.push(tab.clone());
                 locked.save(&tabs)?;
                 tab
             }
         };
         let runtime = self.live(workspace, tab_key).map(|r| r.id.clone());
-        Ok(TerminalTab { workspace: stored.workspace, tab_key: stored.tab_key, title: stored.title, runtime })
+        Ok(TerminalTab {
+            workspace: stored.workspace,
+            tab_key: stored.tab_key,
+            title: stored.title,
+            runtime,
+        })
     }
 
     fn attach(&self, request: AttachRequest) -> Result<Attached> {
@@ -97,11 +135,20 @@ impl TerminalService for PtyTerminalService {
             cwd: &cwd,
             sink: self.sink.clone(),
         })?);
-        if !tabs.iter().any(|t| t.workspace == request.workspace && t.tab_key == request.tab_key) {
-            tabs.push(StoredTab { workspace: request.workspace, tab_key: request.tab_key, title: "终端".into() });
+        if !tabs
+            .iter()
+            .any(|t| t.workspace == request.workspace && t.tab_key == request.tab_key)
+        {
+            tabs.push(StoredTab {
+                workspace: request.workspace,
+                tab_key: request.tab_key,
+                title: "终端".into(),
+            });
             locked.save(&tabs)?;
         }
-        self.runtimes.lock().insert(runtime.id.clone(), runtime.clone());
+        self.runtimes
+            .lock()
+            .insert(runtime.id.clone(), runtime.clone());
         Ok(runtime.attached(true))
     }
 
@@ -117,7 +164,10 @@ impl TerminalService for PtyTerminalService {
         validate_ids(workspace, tab_key)?;
         let removed = {
             let mut runtimes = self.runtimes.lock();
-            let id = runtimes.iter().find(|(_, r)| &r.workspace == workspace && r.tab_key == tab_key).map(|(id, _)| id.clone());
+            let id = runtimes
+                .iter()
+                .find(|(_, r)| &r.workspace == workspace && r.tab_key == tab_key)
+                .map(|(id, _)| id.clone());
             id.and_then(|id| runtimes.remove(&id))
         };
         if let Some(runtime) = removed {

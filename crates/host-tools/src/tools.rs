@@ -7,10 +7,12 @@ use std::sync::{Arc, LazyLock};
 
 use serde_json::{Value, json};
 use thinkrail_core::{
-    Error, ErrorKind, HostToolHandler, HostToolResult, HostToolSpec, Plan, PlanItem, PlanItemId, PlanReviewService,
-    PlanScope, PlanStatus, ReviewId, ReviewState, Result, WorkspaceRoots,
+    Error, ErrorKind, HostToolHandler, HostToolResult, HostToolSpec, Plan, PlanItem, PlanItemId,
+    PlanReviewService, PlanScope, PlanStatus, Result, ReviewId, ReviewState, WorkspaceRoots,
 };
-use thinkrail_plan_review::plan_ops::{self, GroupStatus, ItemPatch, NewItem, WriteGroup, WriteItem};
+use thinkrail_plan_review::plan_ops::{
+    self, GroupStatus, ItemPatch, NewItem, WriteGroup, WriteItem,
+};
 
 const TODO_SPECS: &str = include_str!("../specs/todo-tools.json");
 /// Lines per `todo_list` page (pi's 2,000-line limit minus headroom) and its byte budget.
@@ -68,9 +70,9 @@ fn refuse(text: impl Into<String>) -> Refusal {
 /// Domain errors become tool-level refusals; only infrastructure failures stay `Err`.
 fn classify(error: Error) -> Result<Refusal> {
     match error.kind() {
-        Some(ErrorKind::NotFound | ErrorKind::Invalid | ErrorKind::Conflict | ErrorKind::Forbidden) => {
-            Ok(Refusal(error.to_string()))
-        }
+        Some(
+            ErrorKind::NotFound | ErrorKind::Invalid | ErrorKind::Conflict | ErrorKind::Forbidden,
+        ) => Ok(Refusal(error.to_string())),
         _ => Err(error),
     }
 }
@@ -81,7 +83,11 @@ impl HostTools {
     }
 
     /// Runs one plan mutation; domain failures surface as refusals.
-    fn mutate<T>(&self, scope: &PlanScope, mut change: impl FnMut(&mut Plan) -> Result<T>) -> Result<std::result::Result<(Plan, T), Refusal>> {
+    fn mutate<T>(
+        &self,
+        scope: &PlanScope,
+        mut change: impl FnMut(&mut Plan) -> Result<T>,
+    ) -> Result<std::result::Result<(Plan, T), Refusal>> {
         let mut out = None;
         let result = self.plans.update_plan(scope, &mut |plan| {
             out = Some(change(plan)?);
@@ -109,15 +115,26 @@ impl HostTools {
         let plan = self.plans.plan(scope)?;
         let rendered = match status {
             Some(status) => {
-                let lines: Vec<String> = plan_ops::items(&plan).filter(|i| i.status == status).map(format_item).collect();
-                if lines.is_empty() { format!("No {} TODOs.", status_name(status)) } else { lines.join("\n") }
+                let lines: Vec<String> = plan_ops::items(&plan)
+                    .filter(|i| i.status == status)
+                    .map(format_item)
+                    .collect();
+                if lines.is_empty() {
+                    format!("No {} TODOs.", status_name(status))
+                } else {
+                    lines.join("\n")
+                }
             }
-            None if plan_ops::items(&plan).next().is_none() && plan.groups.is_empty() => "The plan is empty.".to_owned(),
+            None if plan_ops::items(&plan).next().is_none() && plan.groups.is_empty() => {
+                "The plan is empty.".to_owned()
+            }
             None => with_nudges(format_plan(&plan), &[consistency_nudge(&plan)]),
         };
         let lines: Vec<&str> = rendered.split('\n').collect();
         if offset >= lines.len() {
-            return Ok(Ok("No more plan lines. Restart at offset: 0 if the plan changed.".to_owned()));
+            return Ok(Ok(
+                "No more plan lines. Restart at offset: 0 if the plan changed.".to_owned(),
+            ));
         }
         let mut page = String::new();
         let mut count = 0;
@@ -133,7 +150,9 @@ impl HostTools {
         }
         let next = offset + count;
         if next < lines.len() {
-            let filter = status.map(|s| format!(" and status: {}", status_name(s))).unwrap_or_default();
+            let filter = status
+                .map(|s| format!(" and status: {}", status_name(s)))
+                .unwrap_or_default();
             page.push_str(&format!(
                 "\n\nMore plan lines: call todo_list with offset: {next}{filter}. Restart at offset: 0 after plan edits."
             ));
@@ -142,14 +161,22 @@ impl HostTools {
     }
 
     fn add(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
-        let Some(title) = string(args, "title") else { return Ok(Err(refuse("`title` is required."))) };
+        let Some(title) = string(args, "title") else {
+            return Ok(Err(refuse("`title` is required.")));
+        };
         let after = string(args, "after").map(PlanItemId::from);
         if let Some(after) = &after {
             let plan = self.plans.plan(scope)?;
-            if !plan.groups.iter().any(|g| g.items.iter().any(|i| &i.id == after)) {
+            if !plan
+                .groups
+                .iter()
+                .any(|g| g.items.iter().any(|i| &i.id == after))
+            {
                 let loose = plan.loose.iter().any(|i| &i.id == after);
                 return Ok(Err(refuse(if loose {
-                    format!("\"{after}\" is a loose item — anchor to a step inside a task, or pass `group` to append there (loose items are promoted into a group, not grown with siblings).")
+                    format!(
+                        "\"{after}\" is a loose item — anchor to a step inside a task, or pass `group` to append there (loose items are promoted into a group, not grown with siblings)."
+                    )
                 } else {
                     format!("No step with id \"{after}\" to insert after.")
                 })));
@@ -158,17 +185,28 @@ impl HostTools {
         let input = NewItem {
             title,
             origin: None,
-            group: if after.is_none() { string(args, "group") } else { None },
+            group: if after.is_none() {
+                string(args, "group")
+            } else {
+                None
+            },
             after,
             note: string(args, "note"),
         };
-        Ok(self.mutate(scope, |plan| plan_ops::add(plan, input.clone()))?.map(|(plan, item)| {
-            with_nudges(format!("Added: {}", format_item(&item)), &[consistency_nudge(&plan)])
-        }))
+        Ok(self
+            .mutate(scope, |plan| plan_ops::add(plan, input.clone()))?
+            .map(|(plan, item)| {
+                with_nudges(
+                    format!("Added: {}", format_item(&item)),
+                    &[consistency_nudge(&plan)],
+                )
+            }))
     }
 
     fn update(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
-        let Some(id) = string(args, "id").map(PlanItemId::from) else { return Ok(Err(refuse("`id` is required."))) };
+        let Some(id) = string(args, "id").map(PlanItemId::from) else {
+            return Ok(Err(refuse("`id` is required.")));
+        };
         let status = match optional_status(args)? {
             Ok(status) => status,
             Err(refusal) => return Ok(Err(refusal)),
@@ -191,27 +229,56 @@ impl HostTools {
             let paused: Vec<String> = result
                 .paused
                 .iter()
-                .map(|p| format!("{p} \"{}\"", plan_ops::find(&plan, p).map(|i| i.title.as_str()).unwrap_or_default()))
+                .map(|p| {
+                    format!(
+                        "{p} \"{}\"",
+                        plan_ops::find(&plan, p)
+                            .map(|i| i.title.as_str())
+                            .unwrap_or_default()
+                    )
+                })
                 .collect();
-            text.push_str(&format!("\n(paused: {} — back to pending)", paused.join(", ")));
+            text.push_str(&format!(
+                "\n(paused: {} — back to pending)",
+                paused.join(", ")
+            ));
         }
-        let next = (status == Some(PlanStatus::Done)).then(|| next_open_step(&plan, &id)).flatten();
-        let next_nudge = next.map(|n| format!("next: {} \"{}\" — mark it in_progress when you start.", n.id, n.title));
-        let consistency = if next_nudge.is_some() { None } else { consistency_nudge(&plan) };
-        let complete = (status == Some(PlanStatus::Done)).then(|| plan_complete_nudge(&plan)).flatten();
+        let next = (status == Some(PlanStatus::Done))
+            .then(|| next_open_step(&plan, &id))
+            .flatten();
+        let next_nudge = next.map(|n| {
+            format!(
+                "next: {} \"{}\" — mark it in_progress when you start.",
+                n.id, n.title
+            )
+        });
+        let consistency = if next_nudge.is_some() {
+            None
+        } else {
+            consistency_nudge(&plan)
+        };
+        let complete = (status == Some(PlanStatus::Done))
+            .then(|| plan_complete_nudge(&plan))
+            .flatten();
         Ok(Ok(with_nudges(text, &[next_nudge, consistency, complete])))
     }
 
     fn remove(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
-        let Some(id) = string(args, "id").map(PlanItemId::from) else { return Ok(Err(refuse("`id` is required."))) };
-        Ok(match self.mutate(scope, |plan| plan_ops::remove(plan, &id))? {
-            Ok(_) => Ok(format!("Removed {id}.")),
-            Err(_) => Err(refuse(format!("No TODO with id \"{id}\"."))),
-        })
+        let Some(id) = string(args, "id").map(PlanItemId::from) else {
+            return Ok(Err(refuse("`id` is required.")));
+        };
+        Ok(
+            match self.mutate(scope, |plan| plan_ops::remove(plan, &id))? {
+                Ok(_) => Ok(format!("Removed {id}.")),
+                Err(_) => Err(refuse(format!("No TODO with id \"{id}\"."))),
+            },
+        )
     }
 
     fn promote(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
-        let Some(id) = string(args, "id").map(PlanItemId::from) else { return Ok(Err(refuse("`id` is required."))) };
+        let Some(id) = string(args, "id").map(PlanItemId::from) else {
+            return Ok(Err(refuse("`id` is required.")));
+        };
         let title = string(args, "title");
         let before = self.plans.plan(scope)?;
         match self.mutate(scope, |plan| plan_ops::promote(plan, &id, title.clone()))? {
@@ -223,17 +290,29 @@ impl HostTools {
                 &[consistency_nudge(&plan)],
             ))),
             Err(_) => {
-                let grouped = before.groups.iter().any(|g| g.items.iter().any(|i| i.id == id));
+                let grouped = before
+                    .groups
+                    .iter()
+                    .any(|g| g.items.iter().any(|i| i.id == id));
                 let loose = before.loose.iter().any(|i| i.id == id);
-                let shown = title.as_deref().map(|t| format!("\"{t}\"")).unwrap_or_else(|| "the loose item's title".into());
+                let shown = title
+                    .as_deref()
+                    .map(|t| format!("\"{t}\""))
+                    .unwrap_or_else(|| "the loose item's title".into());
                 Ok(Err(refuse(if grouped {
-                    format!("\"{id}\" is already a step inside a group. Promotion only applies to loose items (todo_promote adds a group of its own; a grouped step is already in one).")
+                    format!(
+                        "\"{id}\" is already a step inside a group. Promotion only applies to loose items (todo_promote adds a group of its own; a grouped step is already in one)."
+                    )
                 } else if !loose {
-                    format!("No TODO with id \"{id}\". Check the id with todo_list; a stale id from an older plan read never matches.")
+                    format!(
+                        "No TODO with id \"{id}\". Check the id with todo_list; a stale id from an older plan read never matches."
+                    )
                 } else if title.as_deref().is_some_and(|t| t.trim().is_empty()) {
                     "Resolved group title is empty. Pass a non-empty `title:` so the group has an addressable name for later todo_add group: calls.".to_owned()
                 } else {
-                    format!("A group titled {shown} already exists. Pass a disambiguating `title:` on todo_promote (a silent merge would make the loose ask disappear without adding any step).")
+                    format!(
+                        "A group titled {shown} already exists. Pass a disambiguating `title:` on todo_promote (a silent merge would make the loose ask disappear without adding any step)."
+                    )
                 })))
             }
         }
@@ -245,29 +324,54 @@ impl HostTools {
         };
         let mut groups = Vec::with_capacity(raw.len());
         for group in raw {
-            let Some(title) = string(group, "title") else { return Ok(Err(refuse("Each group needs a `title`."))) };
+            let Some(title) = string(group, "title") else {
+                return Ok(Err(refuse("Each group needs a `title`.")));
+            };
             let mut items = Vec::new();
-            for todo in group.get("todos").and_then(Value::as_array).into_iter().flatten() {
-                let Some(step) = string(todo, "title") else { return Ok(Err(refuse("Each todo needs a `title`."))) };
+            for todo in group
+                .get("todos")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(step) = string(todo, "title") else {
+                    return Ok(Err(refuse("Each todo needs a `title`.")));
+                };
                 let status = match todo.get("status").and_then(Value::as_str) {
                     None => None,
                     Some(raw) => match parse_status(raw) {
                         Some(status) => Some(status),
-                        None => return Ok(Err(refuse(format!("Unknown status \"{raw}\"; use pending | in_progress | done.")))),
+                        None => {
+                            return Ok(Err(refuse(format!(
+                                "Unknown status \"{raw}\"; use pending | in_progress | done."
+                            ))));
+                        }
                     },
                 };
-                items.push(WriteItem { title: step, status, note: string(todo, "note") });
+                items.push(WriteItem {
+                    title: step,
+                    status,
+                    note: string(todo, "note"),
+                });
             }
             groups.push(WriteGroup { title, items });
         }
-        Ok(self.mutate(scope, |plan| plan_ops::write_groups(plan, groups.clone()))?.map(|(plan, ())| {
-            let count = plan_ops::items(&plan).count();
-            if count == 0 && plan.groups.is_empty() {
-                "Cleared the plan.".to_owned()
-            } else {
-                with_nudges(format!("Wrote the plan ({count} item(s) total):\n{}", format_plan(&plan)), &[consistency_nudge(&plan)])
-            }
-        }))
+        Ok(self
+            .mutate(scope, |plan| plan_ops::write_groups(plan, groups.clone()))?
+            .map(|(plan, ())| {
+                let count = plan_ops::items(&plan).count();
+                if count == 0 && plan.groups.is_empty() {
+                    "Cleared the plan.".to_owned()
+                } else {
+                    with_nudges(
+                        format!(
+                            "Wrote the plan ({count} item(s) total):\n{}",
+                            format_plan(&plan)
+                        ),
+                        &[consistency_nudge(&plan)],
+                    )
+                }
+            }))
     }
 
     fn summary(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
@@ -290,21 +394,34 @@ impl HostTools {
     }
 
     fn resolve(&self, scope: &PlanScope, args: &Value) -> Result<Outcome> {
-        let Some(id) = string(args, "commentId") else { return Ok(Err(refuse("`commentId` is required."))) };
+        let Some(id) = string(args, "commentId") else {
+            return Ok(Err(refuse("`commentId` is required.")));
+        };
         let id = ReviewId::from(id);
         let comment = self.plans.reviews(scope)?.into_iter().find(|c| c.id == id);
         match comment {
             Some(c) if c.state == ReviewState::Sent => {}
-            Some(c) if c.state == ReviewState::Resolved => return Ok(Err(refuse(format!("Review comment {id} is already resolved.")))),
+            Some(c) if c.state == ReviewState::Resolved => {
+                return Ok(Err(refuse(format!(
+                    "Review comment {id} is already resolved."
+                ))));
+            }
             Some(_) => {
                 return Ok(Err(refuse(format!(
                     "Review comment {id} has not been sent to you in a review package yet; only comments you received can be resolved."
                 ))));
             }
-            None => return Ok(Err(refuse(format!("No review comment with id \"{id}\" in this conversation.")))),
+            None => {
+                return Ok(Err(refuse(format!(
+                    "No review comment with id \"{id}\" in this conversation."
+                ))));
+            }
         }
         match self.plans.resolve_review(scope, &id) {
-            Ok(resolved) => Ok(Ok(format!("Resolved review comment {id} (\"{}\").", truncate(&resolved.body, 80)))),
+            Ok(resolved) => Ok(Ok(format!(
+                "Resolved review comment {id} (\"{}\").",
+                truncate(&resolved.body, 80)
+            ))),
             Err(error) => classify(error).map(Err),
         }
     }
@@ -316,16 +433,28 @@ impl HostToolHandler for HostTools {
     }
 
     fn call(&self, scope: &PlanScope, name: &str, arguments: Value) -> Result<HostToolResult> {
-        let args = if arguments.is_null() { json!({}) } else { arguments };
+        let args = if arguments.is_null() {
+            json!({})
+        } else {
+            arguments
+        };
         if !args.is_object() {
-            return Ok(HostToolResult { text: "Tool arguments must be a JSON object.".into(), is_error: true, structured: None });
+            return Ok(HostToolResult {
+                text: "Tool arguments must be a JSON object.".into(),
+                is_error: true,
+                structured: None,
+            });
         }
         if crate::spec::is_spec_tool(name) {
             return match self.roots.workspace_root(&scope.workspace) {
                 Ok(root) => Ok(crate::spec::call(&root, name, &args)),
                 Err(error) => {
                     let Refusal(text) = classify(error)?;
-                    Ok(HostToolResult { text, is_error: true, structured: None })
+                    Ok(HostToolResult {
+                        text,
+                        is_error: true,
+                        structured: None,
+                    })
                 }
             };
         }
@@ -341,8 +470,16 @@ impl HostToolHandler for HostTools {
             other => Err(refuse(format!("Unknown host tool \"{other}\"."))),
         };
         Ok(match outcome {
-            Ok(text) => HostToolResult { text, is_error: false, structured: None },
-            Err(Refusal(text)) => HostToolResult { text, is_error: true, structured: None },
+            Ok(text) => HostToolResult {
+                text,
+                is_error: false,
+                structured: None,
+            },
+            Err(Refusal(text)) => HostToolResult {
+                text,
+                is_error: true,
+                structured: None,
+            },
         })
     }
 }
@@ -353,7 +490,9 @@ fn string(args: &Value, key: &str) -> Option<String> {
 
 /// A string field where `""` clears: absent → untouched, present → set or cleared.
 fn field(args: &Value, key: &str) -> Option<Option<String>> {
-    args.get(key).and_then(Value::as_str).map(|s| (!s.trim().is_empty()).then(|| s.to_owned()))
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(|s| (!s.trim().is_empty()).then(|| s.to_owned()))
 }
 
 fn parse_status(raw: &str) -> Option<PlanStatus> {
@@ -368,7 +507,11 @@ fn parse_status(raw: &str) -> Option<PlanStatus> {
 fn optional_status(args: &Value) -> Result<std::result::Result<Option<PlanStatus>, Refusal>> {
     Ok(match args.get("status").and_then(Value::as_str) {
         None => Ok(None),
-        Some(raw) => parse_status(raw).map(Some).ok_or_else(|| refuse(format!("Unknown status \"{raw}\"; use pending | in_progress | done."))),
+        Some(raw) => parse_status(raw).map(Some).ok_or_else(|| {
+            refuse(format!(
+                "Unknown status \"{raw}\"; use pending | in_progress | done."
+            ))
+        }),
     })
 }
 
@@ -392,13 +535,21 @@ fn format_item(item: &PlanItem) -> String {
 fn format_plan(plan: &Plan) -> String {
     let mut lines = Vec::new();
     for group in &plan.groups {
-        let done = group.items.iter().filter(|i| i.status == PlanStatus::Done).count();
+        let done = group
+            .items
+            .iter()
+            .filter(|i| i.status == PlanStatus::Done)
+            .count();
         let status = match plan_ops::group_status(group) {
             GroupStatus::Pending => "pending",
             GroupStatus::Active => "in_progress",
             GroupStatus::Done => "done",
         };
-        lines.push(format!("▸ {} [{status} {done}/{}]", group.title, group.items.len()));
+        lines.push(format!(
+            "▸ {} [{status} {done}/{}]",
+            group.title,
+            group.items.len()
+        ));
         lines.extend(group.items.iter().map(|i| format!("  {}", format_item(i))));
     }
     if !plan.loose.is_empty() {
@@ -411,7 +562,9 @@ fn format_plan(plan: &Plan) -> String {
 }
 
 fn consistency_nudge(plan: &Plan) -> Option<String> {
-    let mut open = plan_ops::items(plan).filter(|i| i.status != PlanStatus::Done).peekable();
+    let mut open = plan_ops::items(plan)
+        .filter(|i| i.status != PlanStatus::Done)
+        .peekable();
     open.peek()?;
     let mut open = open;
     if open.any(|i| i.status == PlanStatus::InProgress) {
@@ -421,7 +574,10 @@ fn consistency_nudge(plan: &Plan) -> Option<String> {
 }
 
 fn next_open_step<'a>(plan: &'a Plan, id: &PlanItemId) -> Option<&'a PlanItem> {
-    let group = plan.groups.iter().find(|g| g.items.iter().any(|i| &i.id == id))?;
+    let group = plan
+        .groups
+        .iter()
+        .find(|g| g.items.iter().any(|i| &i.id == id))?;
     group.items.iter().find(|i| i.status != PlanStatus::Done)
 }
 
@@ -439,7 +595,11 @@ fn plan_complete_nudge(plan: &Plan) -> Option<String> {
 
 fn with_nudges(text: String, nudges: &[Option<String>]) -> String {
     let extra: Vec<&str> = nudges.iter().flatten().map(String::as_str).collect();
-    if extra.is_empty() { text } else { format!("{text}\n{}", extra.join("\n")) }
+    if extra.is_empty() {
+        text
+    } else {
+        format!("{text}\n{}", extra.join("\n"))
+    }
 }
 
 fn truncate(text: &str, max: usize) -> String {

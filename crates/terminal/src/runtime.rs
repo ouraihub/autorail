@@ -13,7 +13,8 @@ use std::{
 use parking_lot::Mutex;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
 use thinkrail_core::{
-    Attached, Error, ErrorKind, GridSize, Result, Shell, TerminalEvent, TerminalRuntimeId, TerminalSink, WorkspaceId,
+    Attached, Error, ErrorKind, GridSize, Result, Shell, TerminalEvent, TerminalRuntimeId,
+    TerminalSink, WorkspaceId,
 };
 use tracing::{debug, info, warn};
 
@@ -91,7 +92,12 @@ pub(crate) fn validate_size(size: GridSize) -> Result<()> {
 }
 
 fn pty_size(size: GridSize) -> PtySize {
-    PtySize { rows: size.rows, cols: size.cols, pixel_width: 0, pixel_height: 0 }
+    PtySize {
+        rows: size.rows,
+        cols: size.cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
 }
 
 fn pty_error(what: &str, error: impl std::fmt::Display) -> Error {
@@ -115,13 +121,23 @@ impl Runtime {
     pub(crate) fn spawn(request: SpawnRequest<'_>) -> Result<Self> {
         validate_size(request.size)?;
         let program = shell::program(request.shell)?;
-        let pair = native_pty_system().openpty(pty_size(request.size)).map_err(|e| pty_error("无法创建终端", e))?;
-        let reader = pair.master.try_clone_reader().map_err(|e| pty_error("无法读取终端", e))?;
-        let writer = pair.master.take_writer().map_err(|e| pty_error("无法写入终端", e))?;
+        let pair = native_pty_system()
+            .openpty(pty_size(request.size))
+            .map_err(|e| pty_error("无法创建终端", e))?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| pty_error("无法读取终端", e))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| pty_error("无法写入终端", e))?;
         let mut command = shell::command(request.shell, program);
         command.cwd(plain_path(request.cwd));
-        let mut child =
-            pair.slave.spawn_command(command).map_err(|e| pty_error(&format!("无法启动终端 shell {program}"), e))?;
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .map_err(|e| pty_error(&format!("无法启动终端 shell {program}"), e))?;
         drop(pair.slave);
         let killer = child.clone_killer();
         let id = TerminalRuntimeId::generate();
@@ -137,7 +153,10 @@ impl Runtime {
             let shared = shared.clone();
             thread::spawn(move || {
                 let status = child.wait();
-                let code = status.as_ref().ok().map(portable_pty::ExitStatus::exit_code);
+                let code = status
+                    .as_ref()
+                    .ok()
+                    .map(portable_pty::ExitStatus::exit_code);
                 *shared.exit_code.lock() = code;
                 shared.exited.store(true, Ordering::Release);
                 // Closing the master is what ends the reader on Windows ConPTY.
@@ -196,8 +215,14 @@ impl Runtime {
             return Err(Error::invalid("终端输入超过 64 KiB"));
         }
         let mut writer = self.writer.lock();
-        let writer = writer.as_mut().filter(|_| !self.is_exited()).ok_or_else(closed)?;
-        writer.write_all(data.as_bytes()).and_then(|()| writer.flush()).map_err(|e| pty_error("终端写入失败", e))
+        let writer = writer
+            .as_mut()
+            .filter(|_| !self.is_exited())
+            .ok_or_else(closed)?;
+        writer
+            .write_all(data.as_bytes())
+            .and_then(|()| writer.flush())
+            .map_err(|e| pty_error("终端写入失败", e))
     }
 
     pub(crate) fn resize(&self, size: GridSize) -> Result<()> {
@@ -207,7 +232,11 @@ impl Runtime {
             return Ok(());
         }
         let master = self.shared.master.lock();
-        master.as_ref().ok_or_else(closed)?.resize(pty_size(size)).map_err(|e| pty_error("终端调整尺寸失败", e))?;
+        master
+            .as_ref()
+            .ok_or_else(closed)?
+            .resize(pty_size(size))
+            .map_err(|e| pty_error("终端调整尺寸失败", e))?;
         *current = size;
         Ok(())
     }
@@ -216,7 +245,11 @@ impl Runtime {
     /// portable-pty 0.9.0's Windows `kill` reports success as an error, so its result is not proof.
     pub(crate) fn shutdown(&self) -> Result<()> {
         self.shared.stopped.store(true, Ordering::Release);
-        let kill_error = if self.is_exited() { None } else { self.killer.lock().kill().err() };
+        let kill_error = if self.is_exited() {
+            None
+        } else {
+            self.killer.lock().kill().err()
+        };
         self.writer.lock().take();
         let deadline = Instant::now() + EXIT_TIMEOUT;
         while !self.is_exited() && Instant::now() < deadline {
@@ -278,7 +311,15 @@ fn read_loop(mut reader: Box<dyn Read + Send>, shared: &Shared, tx: &SyncSender<
         let data = decode_utf8(&mut pending, end);
         if !data.is_empty() {
             let byte_offset = shared.history.lock().append(&data);
-            if !send(tx, &shared.stopped, TerminalEvent::Data { runtime: shared.id.clone(), byte_offset, data }) {
+            if !send(
+                tx,
+                &shared.stopped,
+                TerminalEvent::Data {
+                    runtime: shared.id.clone(),
+                    byte_offset,
+                    data,
+                },
+            ) {
                 return;
             }
         }
@@ -287,12 +328,21 @@ fn read_loop(mut reader: Box<dyn Read + Send>, shared: &Shared, tx: &SyncSender<
         }
     }
     let deadline = Instant::now() + EXIT_TIMEOUT;
-    while !shared.exited.load(Ordering::Acquire) && !shared.stopped.load(Ordering::Acquire) && Instant::now() < deadline
+    while !shared.exited.load(Ordering::Acquire)
+        && !shared.stopped.load(Ordering::Acquire)
+        && Instant::now() < deadline
     {
         thread::sleep(POLL);
     }
     let exit_code = *shared.exit_code.lock();
-    send(tx, &shared.stopped, TerminalEvent::Exit { runtime: shared.id.clone(), exit_code });
+    send(
+        tx,
+        &shared.stopped,
+        TerminalEvent::Exit {
+            runtime: shared.id.clone(),
+            exit_code,
+        },
+    );
 }
 
 /// Blocks while the queue is full (backpressure) but gives up as soon as the runtime is stopped.

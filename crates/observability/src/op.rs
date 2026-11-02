@@ -16,7 +16,9 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 /// The path is shortened to start at `src/` of its crate.
 pub fn op(at: &'static Location<'static>) -> Span {
     let file = at.file().replace('\\', "/");
-    let short = file.split_once("/src/").map_or(file.as_str(), |(_, rest)| rest);
+    let short = file
+        .split_once("/src/")
+        .map_or(file.as_str(), |(_, rest)| rest);
     tracing::info_span!("op", id = NEXT.fetch_add(1, Ordering::Relaxed), at = %format_args!("{short}:{}", at.line()))
 }
 

@@ -22,19 +22,26 @@ pub(crate) trait Backend {
 
 impl Backend for BridgeClient {
     fn list(&mut self) -> Result<Vec<HostToolSpec>, String> {
-        let reply = self.request(json!({"method": "list"})).map_err(|e| e.to_string())?;
+        let reply = self
+            .request(json!({"method": "list"}))
+            .map_err(|e| e.to_string())?;
         result_of(reply)
     }
 
     fn call(&mut self, name: &str, arguments: Value) -> Result<HostToolResult, String> {
-        let reply = self.request(json!({"method": "call", "name": name, "arguments": arguments})).map_err(|e| e.to_string())?;
+        let reply = self
+            .request(json!({"method": "call", "name": name, "arguments": arguments}))
+            .map_err(|e| e.to_string())?;
         result_of(reply)
     }
 }
 
 fn result_of<T: serde::de::DeserializeOwned>(reply: Value) -> Result<T, String> {
     if let Some(error) = reply.get("error") {
-        return Err(error["message"].as_str().unwrap_or("host tool failed").to_owned());
+        return Err(error["message"]
+            .as_str()
+            .unwrap_or("host tool failed")
+            .to_owned());
     }
     serde_json::from_value(reply["result"].clone()).map_err(|e| e.to_string())
 }
@@ -58,7 +65,11 @@ pub(crate) fn handle(line: &str, backend: &mut dyn Backend) -> Option<Value> {
     Some(match method {
         "initialize" => {
             let asked = params["protocolVersion"].as_str().unwrap_or_default();
-            let version = SUPPORTED.iter().find(|v| **v == asked).copied().unwrap_or(SUPPORTED[0]);
+            let version = SUPPORTED
+                .iter()
+                .find(|v| **v == asked)
+                .copied()
+                .unwrap_or(SUPPORTED[0]);
             reply(
                 &id,
                 json!({
@@ -83,7 +94,10 @@ pub(crate) fn handle(line: &str, backend: &mut dyn Backend) -> Option<Value> {
             let Some(name) = params["name"].as_str() else {
                 return Some(failure(&id, INVALID_PARAMS, "missing tool name"));
             };
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             match backend.call(name, arguments) {
                 Ok(result) => {
                     let mut body = json!({"content": [{"type": "text", "text": result.text}]});
@@ -98,12 +112,20 @@ pub(crate) fn handle(line: &str, backend: &mut dyn Backend) -> Option<Value> {
                 Err(message) => failure(&id, INTERNAL, &message),
             }
         }
-        _ => failure(&id, METHOD_NOT_FOUND, &format!("method not found: {method}")),
+        _ => failure(
+            &id,
+            METHOD_NOT_FOUND,
+            &format!("method not found: {method}"),
+        ),
     })
 }
 
 /// Serves MCP frames from `input` to `output` until EOF.
-pub(crate) fn serve(input: &mut impl BufRead, output: &mut impl Write, backend: &mut dyn Backend) -> std::io::Result<()> {
+pub(crate) fn serve(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    backend: &mut dyn Backend,
+) -> std::io::Result<()> {
     while let Some(line) = bridge::read_line(input)? {
         if line.trim().is_empty() {
             continue;
@@ -118,12 +140,18 @@ pub(crate) fn serve(input: &mut impl BufRead, output: &mut impl Write, backend: 
 /// Body of `thinkrail-native.exe mcp-host`: connect with `THINKRAIL_HOST_PIPE` /
 /// `THINKRAIL_HOST_TOKEN`, then serve MCP on stdio.
 pub fn run_mcp_stdio() -> Result<(), String> {
-    let pipe = std::env::var("THINKRAIL_HOST_PIPE").map_err(|_| "缺少 THINKRAIL_HOST_PIPE".to_owned())?;
-    let token = std::env::var("THINKRAIL_HOST_TOKEN").map_err(|_| "缺少 THINKRAIL_HOST_TOKEN".to_owned())?;
-    let mut client = BridgeClient::connect(&pipe, &token).map_err(|e| format!("无法连接宿主工具管道：{e}"))?;
+    let pipe =
+        std::env::var("THINKRAIL_HOST_PIPE").map_err(|_| "缺少 THINKRAIL_HOST_PIPE".to_owned())?;
+    let token = std::env::var("THINKRAIL_HOST_TOKEN")
+        .map_err(|_| "缺少 THINKRAIL_HOST_TOKEN".to_owned())?;
+    let mut client =
+        BridgeClient::connect(&pipe, &token).map_err(|e| format!("无法连接宿主工具管道：{e}"))?;
     // Fail fast on a refused token instead of on the first tool call.
-    client.list().map_err(|e| format!("宿主拒绝了工具连接：{e}"))?;
+    client
+        .list()
+        .map_err(|e| format!("宿主拒绝了工具连接：{e}"))?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    serve(&mut stdin.lock(), &mut stdout.lock(), &mut client).map_err(|e| format!("MCP 连接中断：{e}"))
+    serve(&mut stdin.lock(), &mut stdout.lock(), &mut client)
+        .map_err(|e| format!("MCP 连接中断：{e}"))
 }

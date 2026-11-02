@@ -16,7 +16,9 @@ use std::{
 
 use parking_lot::Mutex;
 use serde_json::Value;
-use thinkrail_core::{BackendKind, Error, ErrorCode, ErrorKind, Result, SessionError, StartSession};
+use thinkrail_core::{
+    BackendKind, Error, ErrorCode, ErrorKind, Result, SessionError, StartSession,
+};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -46,7 +48,11 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    pub(crate) fn new(process: Arc<Process>, projection: Projection, backend: BackendKind) -> Arc<Self> {
+    pub(crate) fn new(
+        process: Arc<Process>,
+        projection: Projection,
+        backend: BackendKind,
+    ) -> Arc<Self> {
         Arc::new(Self {
             process,
             state: Mutex::new(projection),
@@ -93,7 +99,12 @@ impl Live {
         Ok(receiver)
     }
 
-    pub(crate) fn wait(&self, key: &str, receiver: &mpsc::Receiver<Result<Value>>, timeout: Duration) -> Result<Value> {
+    pub(crate) fn wait(
+        &self,
+        key: &str,
+        receiver: &mpsc::Receiver<Result<Value>>,
+        timeout: Duration,
+    ) -> Result<Value> {
         match receiver.recv_timeout(timeout) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -147,7 +158,10 @@ impl Live {
             return Err(closed());
         }
         if state.is_running() || state.has_interactions() {
-            return Err(Error::new(ErrorKind::SessionBusy, "请等待当前回合结束或先停止"));
+            return Err(Error::new(
+                ErrorKind::SessionBusy,
+                "请等待当前回合结束或先停止",
+            ));
         }
         Ok(())
     }
@@ -195,14 +209,22 @@ impl Live {
         self.process.kill_tree();
         self.process.wait_exit(EXIT_GRACE);
         self.close(None);
-        warn!(backend = self.backend.label(), code = error.code(), "agent handshake failed");
+        warn!(
+            backend = self.backend.label(),
+            code = error.code(),
+            "agent handshake failed"
+        );
         if let Some((needle, message)) = hint
             && self.process.stderr_contains(needle)
         {
             return Error::new(ErrorKind::BackendUnavailable, message);
         }
         let summary = self.process.stderr_summary();
-        let reason = if summary.is_empty() { error.to_string() } else { format!("{error}\n{summary}") };
+        let reason = if summary.is_empty() {
+            error.to_string()
+        } else {
+            format!("{error}\n{summary}")
+        };
         Error::new(ErrorKind::BackendUnavailable, reason)
     }
 
@@ -219,11 +241,17 @@ impl Live {
         let error = match (disposing, failure) {
             (true, _) => None,
             (false, Some(error)) => {
-                warn!(backend = self.backend.label(), code = error.code(), "agent protocol failure");
+                warn!(
+                    backend = self.backend.label(),
+                    code = error.code(),
+                    "agent protocol failure"
+                );
                 Some(session_error(&error))
             }
             (false, None) => {
-                let exit = code.flatten().map_or_else(|| "未知".to_owned(), |c| c.to_string());
+                let exit = code
+                    .flatten()
+                    .map_or_else(|| "未知".to_owned(), |c| c.to_string());
                 let summary = self.process.stderr_summary();
                 warn!(backend = self.backend.label(), exit = %exit, "agent process exited unexpectedly");
                 let message = if summary.is_empty() {
@@ -231,7 +259,10 @@ impl Live {
                 } else {
                     format!("Agent 进程意外退出（退出码 {exit}）：\n{summary}")
                 };
-                Some(SessionError { code: ErrorKind::SessionClosed.code().into(), message })
+                Some(SessionError {
+                    code: ErrorKind::SessionClosed.code().into(),
+                    message,
+                })
             }
         };
         self.close(error);
@@ -239,11 +270,17 @@ impl Live {
 }
 
 pub(crate) fn closed() -> Error {
-    Error::new(ErrorKind::SessionClosed, "Agent 进程已结束，请重新发送以恢复会话")
+    Error::new(
+        ErrorKind::SessionClosed,
+        "Agent 进程已结束，请重新发送以恢复会话",
+    )
 }
 
 pub(crate) fn session_error(error: &Error) -> SessionError {
-    SessionError { code: error.code().into(), message: error.to_string() }
+    SessionError {
+        code: error.code().into(),
+        message: error.to_string(),
+    }
 }
 
 /// An engine-reported failure: bounded and redacted, never parsed.
@@ -273,7 +310,14 @@ pub(crate) fn spawn_reader(
             let failure = loop {
                 match framing::read_frame(&mut reader, limit) {
                     Ok(Some(frame)) => {
-                        debug!(backend = live.backend.label(), frame = frame["type"].as_str().or(frame["method"].as_str()).unwrap_or("reply"), "agent frame");
+                        debug!(
+                            backend = live.backend.label(),
+                            frame = frame["type"]
+                                .as_str()
+                                .or(frame["method"].as_str())
+                                .unwrap_or("reply"),
+                            "agent frame"
+                        );
                         if let Err(error) = handle(frame) {
                             break Some(error);
                         }
@@ -285,21 +329,36 @@ pub(crate) fn spawn_reader(
             live.finish(failure);
         })
         .map(drop)
-        .map_err(|error| Error::new(ErrorKind::BackendUnavailable, format!("无法创建读取线程：{error}")))
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::BackendUnavailable,
+                format!("无法创建读取线程：{error}"),
+            )
+        })
 }
 
 /// Checks that `request` is for `backend` and runs in an existing `request.cwd`.
 pub(crate) fn validate(request: &StartSession, backend: BackendKind) -> Result<()> {
     if request.backend != backend {
-        return Err(Error::invalid(format!("会话的后端是 {}，不是 {}", request.backend.label(), backend.label())));
+        return Err(Error::invalid(format!(
+            "会话的后端是 {}，不是 {}",
+            request.backend.label(),
+            backend.label()
+        )));
     }
     if !request.cwd.is_absolute() || !request.cwd.is_dir() {
-        return Err(Error::invalid(format!("工作目录不存在：{}", request.cwd.display())));
+        return Err(Error::invalid(format!(
+            "工作目录不存在：{}",
+            request.cwd.display()
+        )));
     }
     Ok(())
 }
 
-pub(crate) fn identity(request: &StartSession, capabilities: thinkrail_core::Capabilities) -> Identity {
+pub(crate) fn identity(
+    request: &StartSession,
+    capabilities: thinkrail_core::Capabilities,
+) -> Identity {
     Identity {
         chat: request.chat.clone(),
         backend: request.backend,
@@ -310,5 +369,7 @@ pub(crate) fn identity(request: &StartSession, capabilities: thinkrail_core::Cap
 
 /// Time left until `deadline`, at least one millisecond so a late step still gets a fair poll.
 pub(crate) fn left(deadline: Instant) -> Duration {
-    deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1))
+    deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(1))
 }

@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use thinkrail_core::{
-    Access, BackendKind, ChatId, DefaultModel, EngineProvider, EngineRouting, EnvBinding, EnvValue, Error, McpService, McpTransport,
-    ModelChoice, ModelPrefService, ModelPrefs, ModelRouter, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
-    ProjectedProvider, Protocol, Provider, ProviderModel, ProviderService, Result, RouteRequest, Secret,
+    Access, BackendKind, ChatId, DefaultModel, EngineProvider, EngineRouting, EnvBinding, EnvValue,
+    Error, McpService, McpTransport, ModelChoice, ModelPrefService, ModelPrefs, ModelRouter,
+    ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel, ProjectedProvider, Protocol,
+    Provider, ProviderModel, ProviderService, Result, RouteRequest, Secret,
 };
 use tracing::info;
 
@@ -44,7 +45,11 @@ pub(crate) fn protocol_suffix(protocol: Protocol) -> &'static str {
 
 /// `thinkrail-<short id>-<oc|or|am>`.
 pub(crate) fn route_name(provider: &str, protocol: Protocol) -> String {
-    format!("thinkrail-{}-{}", short_id(provider), protocol_suffix(protocol))
+    format!(
+        "thinkrail-{}-{}",
+        short_id(provider),
+        protocol_suffix(protocol)
+    )
 }
 
 /// Protocols each engine speaks (04 §4.5).
@@ -58,7 +63,10 @@ fn supports(backend: BackendKind, protocol: Protocol) -> bool {
 }
 
 fn no_enabled_key(provider: &Provider) -> Error {
-    Error::invalid(format!("提供方 {} 没有启用的 API 密钥，请在设置 → 模型服务中启用一个。", provider.input.name))
+    Error::invalid(format!(
+        "提供方 {} 没有启用的 API 密钥，请在设置 → 模型服务中启用一个。",
+        provider.input.name
+    ))
 }
 
 /// One (provider, protocol) pair that has models for the engine (04 §4.3 step 2).
@@ -77,7 +85,11 @@ fn project_model(model: &ProviderModel) -> ProjectedModel {
         name: model.name.clone(),
         vision: model.vision,
         reasoning: model.reasoning,
-        efforts: if model.reasoning { model.efforts.clone() } else { Vec::new() },
+        efforts: if model.reasoning {
+            model.efforts.clone()
+        } else {
+            Vec::new()
+        },
         context_window: model.context_window.unwrap_or(DEFAULT_CONTEXT_WINDOW),
         max_tokens: model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
     }
@@ -86,17 +98,27 @@ fn project_model(model: &ProviderModel) -> ProjectedModel {
 /// Steps 1–3 of 04 §4.3: the providers the engine's 编码搭档 choice allows × supported endpoints
 /// × enabled models. No choice and 统一网关 take every enabled provider (统一网关 forces the
 /// gateway); 官方 projects none; one provider keeps its own access mode and must be enabled.
-fn plan<'a>(providers: &'a [Provider], backend: BackendKind, choice: Option<&EngineProvider>) -> Result<Vec<PlannedRoute<'a>>> {
+fn plan<'a>(
+    providers: &'a [Provider],
+    backend: BackendKind,
+    choice: Option<&EngineProvider>,
+) -> Result<Vec<PlannedRoute<'a>>> {
     let chosen: Vec<&Provider> = match choice {
         Some(EngineProvider::Official) => Vec::new(),
-        None | Some(EngineProvider::Gateway) => providers.iter().filter(|p| p.input.enabled).collect(),
-        Some(EngineProvider::Provider(id)) => match providers.iter().find(|p| &p.id == id && p.input.enabled) {
-            Some(provider) => vec![provider],
-            None => return Err(Error::invalid(format!(
-                "{} 在编码搭档中选择的服务商已删除或停用，请在设置 → 编码搭档中重新选择。",
-                backend.label()
-            ))),
-        },
+        None | Some(EngineProvider::Gateway) => {
+            providers.iter().filter(|p| p.input.enabled).collect()
+        }
+        Some(EngineProvider::Provider(id)) => {
+            match providers.iter().find(|p| &p.id == id && p.input.enabled) {
+                Some(provider) => vec![provider],
+                None => {
+                    return Err(Error::invalid(format!(
+                        "{} 在编码搭档中选择的服务商已删除或停用，请在设置 → 编码搭档中重新选择。",
+                        backend.label()
+                    )));
+                }
+            }
+        }
     };
     let forced_gateway = choice == Some(&EngineProvider::Gateway);
     let mut routes = Vec::new();
@@ -133,42 +155,76 @@ fn plan<'a>(providers: &'a [Provider], backend: BackendKind, choice: Option<&Eng
 }
 
 /// The route a model is reached through: its first protocol that has a planned route.
-fn route_for<'a>(routes: &'a [PlannedRoute<'_>], provider: &Provider, model: &ProviderModel) -> Option<&'a str> {
+fn route_for<'a>(
+    routes: &'a [PlannedRoute<'_>],
+    provider: &Provider,
+    model: &ProviderModel,
+) -> Option<&'a str> {
     model.protocols.iter().find_map(|protocol| {
         routes
             .iter()
-            .find(|r| r.provider.id == provider.id && r.protocol == *protocol && r.models.iter().any(|m| m.id == model.model_id))
+            .find(|r| {
+                r.provider.id == provider.id
+                    && r.protocol == *protocol
+                    && r.models.iter().any(|m| m.id == model.model_id)
+            })
             .map(|r| r.route.as_str())
     })
 }
 
-fn default_model(routes: &[PlannedRoute<'_>], providers: &[Provider], prefs: &ModelPrefs) -> Option<DefaultModel> {
+fn default_model(
+    routes: &[PlannedRoute<'_>],
+    providers: &[Provider],
+    prefs: &ModelPrefs,
+) -> Option<DefaultModel> {
     let wanted = prefs.default_model.as_ref()?;
-    let found = providers.iter().filter(|p| p.input.enabled && p.id == wanted.provider).find_map(|provider| {
-        let model = provider.input.models.iter().find(|m| usable(m) && m.model_id == wanted.model_id)?;
-        let route = route_for(routes, provider, model)?;
-        let effort = if model.reasoning {
-            prefs.default_effort.and_then(|effort| model.efforts.iter().copied().filter(|e| *e <= effort).max())
-        } else {
-            None
-        };
-        Some(DefaultModel { route: route.to_owned(), model_id: model.model_id.clone(), effort })
-    });
+    let found = providers
+        .iter()
+        .filter(|p| p.input.enabled && p.id == wanted.provider)
+        .find_map(|provider| {
+            let model = provider
+                .input
+                .models
+                .iter()
+                .find(|m| usable(m) && m.model_id == wanted.model_id)?;
+            let route = route_for(routes, provider, model)?;
+            let effort = if model.reasoning {
+                prefs
+                    .default_effort
+                    .and_then(|effort| model.efforts.iter().copied().filter(|e| *e <= effort).max())
+            } else {
+                None
+            };
+            Some(DefaultModel {
+                route: route.to_owned(),
+                model_id: model.model_id.clone(),
+                effort,
+            })
+        });
     if found.is_none() {
-        info!(provider = wanted.provider.as_str(), "默认模型不可用，引擎使用自己的默认模型");
+        info!(
+            provider = wanted.provider.as_str(),
+            "默认模型不可用，引擎使用自己的默认模型"
+        );
     }
     found
 }
 
 /// `$VAR` / `${VAR}` → the host launch environment; anything else is plaintext.
 fn resolve(server: &str, value: &str) -> Result<String> {
-    let var = match value.strip_prefix("${").and_then(|rest| rest.strip_suffix('}')) {
+    let var = match value
+        .strip_prefix("${")
+        .and_then(|rest| rest.strip_suffix('}'))
+    {
         Some(name) => Some(name),
         None => value.strip_prefix('$'),
     };
     match var {
-        Some(name) if !name.is_empty() => std::env::var(name)
-            .map_err(|_| Error::invalid(format!("MCP 服务器 {server} 引用的环境变量 {name} 未设置。"))),
+        Some(name) if !name.is_empty() => std::env::var(name).map_err(|_| {
+            Error::invalid(format!(
+                "MCP 服务器 {server} 引用的环境变量 {name} 未设置。"
+            ))
+        }),
         _ => Ok(value.to_owned()),
     }
 }
@@ -185,13 +241,21 @@ struct ResolvedMcp {
     values: Values,
 }
 
-fn bind(server: &str, short: &str, letter: char, values: &[EnvValue]) -> Result<(Vec<EnvBinding>, Values)> {
+fn bind(
+    server: &str,
+    short: &str,
+    letter: char,
+    values: &[EnvValue],
+) -> Result<(Vec<EnvBinding>, Values)> {
     let mut bindings = Vec::with_capacity(values.len());
     let mut resolved = Vec::with_capacity(values.len());
     for (index, entry) in values.iter().enumerate() {
         let var = format!("THINKRAIL_MCP_{}_{letter}{index}", short.to_uppercase());
         resolved.push((var.clone(), resolve(server, &entry.value)?));
-        bindings.push(EnvBinding { name: entry.name.clone(), var });
+        bindings.push(EnvBinding {
+            name: entry.name.clone(),
+            var,
+        });
     }
     Ok((bindings, resolved))
 }
@@ -225,13 +289,23 @@ impl Router {
         prefs: Arc<dyn ModelPrefService>,
         gateway: Arc<dyn GatewayRoutes>,
     ) -> Self {
-        Self { providers, mcp, prefs, gateway }
+        Self {
+            providers,
+            mcp,
+            prefs,
+            gateway,
+        }
     }
 
     /// Enabled effective servers for the project with their values resolved (04 §4.3 step 5).
     fn mcp_servers(&self, request: &RouteRequest) -> Result<Vec<ResolvedMcp>> {
         let mut out = Vec::new();
-        for entry in self.mcp.effective(&request.project)?.into_iter().filter(|e| e.enabled) {
+        for entry in self
+            .mcp
+            .effective(&request.project)?
+            .into_iter()
+            .filter(|e| e.enabled)
+        {
             let server = &entry.server;
             let short = short_id(server.id.as_str());
             let display = server.input.name.as_str();
@@ -239,8 +313,11 @@ impl Router {
             let resolved = match &server.input.transport {
                 McpTransport::Stdio { command, args, env } => {
                     let (bindings, values) = bind(display, &short, 'E', env)?;
-                    let transport =
-                        ProjectedMcpTransport::Stdio { command: command.clone(), args: args.clone(), env: bindings };
+                    let transport = ProjectedMcpTransport::Stdio {
+                        command: command.clone(),
+                        args: args.clone(),
+                        env: bindings,
+                    };
                     ResolvedMcp {
                         server: ProjectedMcpServer { name, transport },
                         kind: "stdio",
@@ -251,7 +328,10 @@ impl Router {
                 }
                 McpTransport::Http { url, headers } => {
                     let (bindings, values) = bind(display, &short, 'H', headers)?;
-                    let transport = ProjectedMcpTransport::Http { url: url.clone(), headers: bindings };
+                    let transport = ProjectedMcpTransport::Http {
+                        url: url.clone(),
+                        headers: bindings,
+                    };
                     ResolvedMcp {
                         server: ProjectedMcpServer { name, transport },
                         kind: "http",
@@ -269,7 +349,11 @@ impl Router {
     fn build(&self, request: &RouteRequest, mode: Mode) -> Result<EngineRouting> {
         let providers = self.providers.providers()?;
         let prefs = self.prefs.prefs()?;
-        let routes = plan(&providers, request.backend, prefs.engine_provider(request.backend))?;
+        let routes = plan(
+            &providers,
+            request.backend,
+            prefs.engine_provider(request.backend),
+        )?;
         let default_model = if request.new_session {
             default_model(&routes, &providers, &prefs)
         } else {
@@ -318,7 +402,10 @@ impl Router {
                     let key = if provider.keys.is_empty() {
                         Secret::new(NO_KEY)
                     } else {
-                        self.providers.next_key(&provider.id)?.ok_or_else(|| no_enabled_key(provider))?.value
+                        self.providers
+                            .next_key(&provider.id)?
+                            .ok_or_else(|| no_enabled_key(provider))?
+                            .value
                     };
                     env.push((key_var.clone(), key));
                     for (binding, header) in headers.iter().zip(&provider.input.headers) {
@@ -339,7 +426,12 @@ impl Router {
         }
         if mode == Mode::Prepare {
             for server in &mcp {
-                env.extend(server.values.iter().map(|(var, value)| (var.clone(), Secret::new(value.clone()))));
+                env.extend(
+                    server
+                        .values
+                        .iter()
+                        .map(|(var, value)| (var.clone(), Secret::new(value.clone()))),
+                );
             }
         }
 
@@ -351,13 +443,25 @@ impl Router {
                     route: &route.route,
                     protocol: route.protocol,
                     base_url: (!route.gateway).then_some(projected.base_url.as_str()),
-                    headers: route.provider.input.headers.iter().map(|h| (h.name.as_str(), h.value.as_str())).collect(),
+                    headers: route
+                        .provider
+                        .input
+                        .headers
+                        .iter()
+                        .map(|h| (h.name.as_str(), h.value.as_str()))
+                        .collect(),
                     models: &route.models,
                 })
                 .collect(),
             keys: keyed
                 .iter()
-                .map(|p| (p.id.as_str(), p.revision, p.keys.iter().filter(|k| k.enabled).map(|k| &k.id).collect()))
+                .map(|p| {
+                    (
+                        p.id.as_str(),
+                        p.revision,
+                        p.keys.iter().filter(|k| k.enabled).map(|k| &k.id).collect(),
+                    )
+                })
                 .collect(),
             default_model: default_model.as_ref(),
             mcp: mcp
@@ -367,7 +471,11 @@ impl Router {
                     kind: server.kind,
                     target: &server.target,
                     args: &server.args,
-                    values: server.values.iter().map(|(var, value)| (var.as_str(), value.as_str())).collect(),
+                    values: server
+                        .values
+                        .iter()
+                        .map(|(var, value)| (var.as_str(), value.as_str()))
+                        .collect(),
                 })
                 .collect(),
         };
@@ -402,12 +510,17 @@ impl ModelRouter for Router {
         let mut out = Vec::new();
         for provider in providers.iter().filter(|p| p.input.enabled) {
             for model in provider.input.models.iter().filter(|m| usable(m)) {
-                let hidden = prefs.hidden.iter().any(|h| h.provider == provider.id && h.model_id == model.model_id);
+                let hidden = prefs
+                    .hidden
+                    .iter()
+                    .any(|h| h.provider == provider.id && h.model_id == model.model_id);
                 if hidden {
                     continue;
                 }
                 // A model reachable over several protocols is listed once, under its first route.
-                let Some(route) = route_for(&routes, provider, model) else { continue };
+                let Some(route) = route_for(&routes, provider, model) else {
+                    continue;
+                };
                 out.push(ModelChoice {
                     provider: provider.id.clone(),
                     provider_name: provider.input.name.clone(),

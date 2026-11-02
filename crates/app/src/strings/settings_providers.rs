@@ -151,15 +151,30 @@ pub fn model_type(kind: thinkrail_core::ModelType) -> &'static str {
     }
 }
 
-pub fn probe_get(url: &str) -> String { format!("GET {url}") }
-pub fn request_post(url: &str) -> String { format!("请求地址：POST {url}") }
-pub fn keys_enabled(enabled: usize, total: usize) -> String { format!("{enabled} / {total} 已启用") }
-pub fn more_keys(extra: usize) -> String { format!("+{extra}") }
-pub fn check_ok(count: usize) -> String { format!("连接正常 · 可用 {count} 个模型") }
-pub fn picked_count(count: usize) -> String { format!("已选 {count} 个") }
+pub fn probe_get(url: &str) -> String {
+    format!("GET {url}")
+}
+pub fn request_post(url: &str) -> String {
+    format!("请求地址：POST {url}")
+}
+pub fn keys_enabled(enabled: usize, total: usize) -> String {
+    format!("{enabled} / {total} 已启用")
+}
+pub fn more_keys(extra: usize) -> String {
+    format!("+{extra}")
+}
+pub fn check_ok(count: usize) -> String {
+    format!("连接正常 · 可用 {count} 个模型")
+}
+pub fn picked_count(count: usize) -> String {
+    format!("已选 {count} 个")
+}
 pub fn delete_confirm(name: &str) -> String {
     format!("删除 {name}？其模型将从模型选择器中移除，使用过它们的聊天会保留历史记录。")
 }
 pub fn remove_line_confirm(protocol: Protocol) -> String {
-    format!("删除 {} 线路？只在这条线路上的模型会一起删除。", protocol_short(protocol))
+    format!(
+        "删除 {} 线路？只在这条线路上的模型会一起删除。",
+        protocol_short(protocol)
+    )
 }

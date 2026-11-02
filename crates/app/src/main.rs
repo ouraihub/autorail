@@ -21,11 +21,17 @@ struct Args {
     appearance: Appearance,
 }
 
-fn derive_paths(data_dir: Option<PathBuf>, exe_dir: &std::path::Path, user_profile: Option<PathBuf>) -> anyhow::Result<(PathBuf, PathBuf)> {
+fn derive_paths(
+    data_dir: Option<PathBuf>,
+    exe_dir: &std::path::Path,
+    user_profile: Option<PathBuf>,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
     match data_dir {
         Some(dir) => Ok((dir.clone(), dir.join("thinkrail.db"))),
         None => {
-            let data_dir = user_profile.ok_or_else(|| anyhow::anyhow!("找不到用户目录，请用 --data-dir 指定数据目录"))?.join(".autorail");
+            let data_dir = user_profile
+                .ok_or_else(|| anyhow::anyhow!("找不到用户目录，请用 --data-dir 指定数据目录"))?
+                .join(".autorail");
             Ok((data_dir, exe_dir.join("data").join("thinkrail.db")))
         }
     }
@@ -37,20 +43,37 @@ fn args() -> anyhow::Result<Args> {
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
-            Some("--data-dir") => data_dir = Some(PathBuf::from(args.next().context("--data-dir 需要一个目录")?)),
+            Some("--data-dir") => {
+                data_dir = Some(PathBuf::from(
+                    args.next().context("--data-dir 需要一个目录")?,
+                ))
+            }
             Some("--light") => appearance = Appearance::Light,
-            _ => bail!("未知参数：{}（可用：--data-dir <目录>、--light）", arg.to_string_lossy()),
+            _ => bail!(
+                "未知参数：{}（可用：--data-dir <目录>、--light）",
+                arg.to_string_lossy()
+            ),
         }
     }
-    let exe_dir = std::env::current_exe()?.parent().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("找不到程序目录，请用 --data-dir 指定数据目录"))?;
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("找不到程序目录，请用 --data-dir 指定数据目录"))?;
     let user_profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
     let (data_dir, db_path) = derive_paths(data_dir, &exe_dir, user_profile)?;
-    Ok(Args { data_dir, db_path, appearance })
+    Ok(Args {
+        data_dir,
+        db_path,
+        appearance,
+    })
 }
 
 fn main() {
     // An engine launches this same executable as its stdio MCP server; no window, no logging.
-    if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp-host") {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "mcp-host")
+    {
         if let Err(error) = thinkrail_host_tools::run_mcp_stdio() {
             use std::io::Write as _;
             let _ = writeln!(std::io::stderr(), "{error}");
@@ -75,27 +98,33 @@ fn main() {
         }
     };
     let terminals = services.terminals.clone();
-    gpui_kit::application().with_assets(UiAssets).with_quit_mode(QuitMode::LastWindowClosed).run(move |cx| {
-        gpui_kit::init(cx);
-        if let Err(error) = fonts::register(cx) {
-            error!(error = %error, "bundled fonts not registered; system fonts are used");
-        }
-        if let Err(error) = ThinkrailTheme::install(args.appearance, None, cx) {
-            error!(error, "theme not installed");
-        }
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
-            titlebar: Some(TitlebarOptions { title: Some(strings::shell::WINDOW_TITLE.into()), ..Default::default() }),
-            ..Default::default()
-        };
-        let opened = gpui_kit::open_window(options, cx, move |window, cx| {
-            cx.new(|cx| workbench::Workbench::new(services, channels, window, cx))
+    gpui_kit::application()
+        .with_assets(UiAssets)
+        .with_quit_mode(QuitMode::LastWindowClosed)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            if let Err(error) = fonts::register(cx) {
+                error!(error = %error, "bundled fonts not registered; system fonts are used");
+            }
+            if let Err(error) = ThinkrailTheme::install(args.appearance, None, cx) {
+                error!(error, "theme not installed");
+            }
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(strings::shell::WINDOW_TITLE.into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let opened = gpui_kit::open_window(options, cx, move |window, cx| {
+                cx.new(|cx| workbench::Workbench::new(services, channels, window, cx))
+            });
+            if let Err(error) = opened {
+                error!(error = %format!("{error:#}"), "cannot open window");
+                cx.quit();
+            }
         });
-        if let Err(error) = opened {
-            error!(error = %format!("{error:#}"), "cannot open window");
-            cx.quit();
-        }
-    });
     terminals.shutdown();
     info!("app exited");
 }
@@ -115,14 +144,24 @@ mod tests {
 
     #[test]
     fn explicit_data_dir_places_database_inside_it() {
-        let (data, db) = derive_paths(Some(PathBuf::from("C:/data")), PathBuf::from("C:/exe").as_path(), None).expect("path derivation");
+        let (data, db) = derive_paths(
+            Some(PathBuf::from("C:/data")),
+            PathBuf::from("C:/exe").as_path(),
+            None,
+        )
+        .expect("path derivation");
         assert_eq!(data, PathBuf::from("C:/data"));
         assert_eq!(db, PathBuf::from("C:/data/thinkrail.db"));
     }
 
     #[test]
     fn default_uses_autorail_and_keeps_database_portable() {
-        let (data, db) = derive_paths(None, PathBuf::from("C:/exe").as_path(), Some(PathBuf::from("C:/user"))).expect("path derivation");
+        let (data, db) = derive_paths(
+            None,
+            PathBuf::from("C:/exe").as_path(),
+            Some(PathBuf::from("C:/user")),
+        )
+        .expect("path derivation");
         assert_eq!(data, PathBuf::from("C:/user/.autorail"));
         assert_eq!(db, PathBuf::from("C:/exe/data/thinkrail.db"));
     }

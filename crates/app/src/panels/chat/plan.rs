@@ -2,8 +2,8 @@
 //! the items with their status. Read-only; the Agent edits the plan through the host tools.
 
 use gpui_kit::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _,
     assets::IconName,
     base::{h_flex, v_flex},
     component::Icon,
@@ -21,11 +21,19 @@ use crate::strings::chat as s;
 
 /// `None` for an empty plan: no strip is shown.
 pub fn strip(key: &str, plan: &Plan, open: bool, toggle: &Toggle, r: &Roles) -> Option<AnyElement> {
-    let items: Vec<&PlanItem> = plan.groups.iter().flat_map(|g| g.items.iter()).chain(plan.loose.iter()).collect();
+    let items: Vec<&PlanItem> = plan
+        .groups
+        .iter()
+        .flat_map(|g| g.items.iter())
+        .chain(plan.loose.iter())
+        .collect();
     if items.is_empty() {
         return None;
     }
-    let done = items.iter().filter(|i| i.status == PlanStatus::Done).count();
+    let done = items
+        .iter()
+        .filter(|i| i.status == PlanStatus::Done)
+        .count();
     let toggle = toggle.clone();
     let key_owned = key.to_owned();
     let bar = h_flex()
@@ -36,7 +44,14 @@ pub fn strip(key: &str, plan: &Plan, open: bool, toggle: &Toggle, r: &Roles) -> 
         .gap(space::S6)
         .cursor_pointer()
         .text_color(r.text_muted)
-        .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).size(size::ICON_SMALL))
+        .child(
+            Icon::new(if open {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            })
+            .size(size::ICON_SMALL),
+        )
         .child(label(text::METADATA, s::PLAN).text_color(r.text_default))
         .child(label(text::METADATA, format!("{done}/{}", items.len())))
         .on_click(move |_, window, cx| toggle(key_owned.clone(), window, cx));
@@ -55,7 +70,10 @@ pub fn strip(key: &str, plan: &Plan, open: bool, toggle: &Toggle, r: &Roles) -> 
                         .children(plan.groups.iter().filter(|g| !g.items.is_empty()).map(|g| {
                             v_flex()
                                 .gap(space::S4)
-                                .child(label(text::METADATA, g.title.clone()).text_color(r.text_subtle))
+                                .child(
+                                    label(text::METADATA, g.title.clone())
+                                        .text_color(r.text_subtle),
+                                )
                                 .children(g.items.iter().map(|i| row(i, r)))
                         }))
                         .children(plan.loose.iter().map(|i| row(i, r))),

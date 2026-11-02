@@ -39,7 +39,9 @@ fn engine_error(phase: Phase, error: turso::Error) -> Error {
         return Error::conflict("与已有数据重复，请修改后重试。");
     }
     let detail = match &error {
-        turso::Error::ToSqlConversionFailure(_) | turso::Error::ConversionFailure(_) => "数据类型转换失败".to_owned(),
+        turso::Error::ToSqlConversionFailure(_) | turso::Error::ConversionFailure(_) => {
+            "数据类型转换失败".to_owned()
+        }
         other => other.to_string(),
     };
     match phase {
@@ -61,7 +63,9 @@ pub(crate) struct Conn {
 impl Conn {
     fn open(db: &turso::Database, phase: Phase) -> Result<Self> {
         let inner = db.connect().map_err(|error| engine_error(phase, error))?;
-        inner.busy_timeout(BUSY_TIMEOUT).map_err(|error| engine_error(phase, error))?;
+        inner
+            .busy_timeout(BUSY_TIMEOUT)
+            .map_err(|error| engine_error(phase, error))?;
         let conn = Self { inner, phase };
         // M0: like SQLite, foreign key enforcement is a per-connection setting.
         conn.execute("PRAGMA foreign_keys = ON", ())?;
@@ -70,7 +74,8 @@ impl Conn {
 
     /// Run one statement; returns the number of changed rows.
     pub(crate) fn execute(&self, sql: &str, params: impl IntoParams) -> Result<u64> {
-        pollster::block_on(self.inner.execute(sql, params)).map_err(|error| engine_error(self.phase, error))
+        pollster::block_on(self.inner.execute(sql, params))
+            .map_err(|error| engine_error(self.phase, error))
     }
 
     pub(crate) fn rows(&self, sql: &str, params: impl IntoParams) -> Result<Vec<Row>> {
@@ -123,15 +128,27 @@ impl SqliteSettingsStore {
 
 /// Create the directory, open the file and migrate it (04 §3.1–§3.2).
 pub(crate) fn open(path: &Path) -> Result<turso::Database> {
-    let directory = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let unwritable =
-        || Error::invalid(format!("无法在 {} 创建数据库，请用 --data-dir 指定可写目录。", directory.display()));
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let unwritable = || {
+        Error::invalid(format!(
+            "无法在 {} 创建数据库，请用 --data-dir 指定可写目录。",
+            directory.display()
+        ))
+    };
     fs::create_dir_all(directory).map_err(|_| unwritable())?;
-    let text = path.to_str().ok_or_else(|| Error::invalid("数据库路径必须是有效的 Unicode 文本。"))?;
-    let db = pollster::block_on(turso::Builder::new_local(text).build()).map_err(|error| match error {
-        turso::Error::IoError(..) | turso::Error::Readonly(_) => unwritable(),
-        other => engine_error(Phase::Open, other),
-    })?;
+    let text = path
+        .to_str()
+        .ok_or_else(|| Error::invalid("数据库路径必须是有效的 Unicode 文本。"))?;
+    let db =
+        pollster::block_on(turso::Builder::new_local(text).build()).map_err(
+            |error| match error {
+                turso::Error::IoError(..) | turso::Error::Readonly(_) => unwritable(),
+                other => engine_error(Phase::Open, other),
+            },
+        )?;
     migrate(&Conn::open(&db, Phase::Open)?)?;
     info!(version = SCHEMA_VERSION, "settings database opened");
     Ok(db)
@@ -140,14 +157,23 @@ pub(crate) fn open(path: &Path) -> Result<turso::Database> {
 /// Empty database: create every table. Same version: use as is. Anything else: `Corrupt`,
 /// without writing.
 fn migrate(conn: &Conn) -> Result<()> {
-    let tables = conn.rows("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'", ())?;
-    let names = tables.iter().map(|row| text(row, 0)).collect::<Result<Vec<_>>>()?;
+    let tables = conn.rows(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        (),
+    )?;
+    let names = tables
+        .iter()
+        .map(|row| text(row, 0))
+        .collect::<Result<Vec<_>>>()?;
     if names.is_empty() {
         return conn.transaction("BEGIN IMMEDIATE", |conn| {
             for sql in TABLES {
                 conn.execute(sql, ())?;
             }
-            conn.execute("INSERT INTO schema_meta (version) VALUES (?1)", (SCHEMA_VERSION,))?;
+            conn.execute(
+                "INSERT INTO schema_meta (version) VALUES (?1)",
+                (SCHEMA_VERSION,),
+            )?;
             info!(version = SCHEMA_VERSION, "settings database created");
             Ok(())
         });
@@ -161,10 +187,12 @@ fn migrate(conn: &Conn) -> Result<()> {
     };
     match int(row, 0)? {
         SCHEMA_VERSION => Ok(()),
-        version if version > SCHEMA_VERSION => Err(Error::corrupt("数据库由更新版本的 ThinkRail 创建，请升级后再打开。")),
-        version if version >= 1 => {
-            Err(Error::corrupt("设置数据库来自早期开发版本，表结构已变更；请删除 thinkrail.db 后重新打开。"))
-        }
+        version if version > SCHEMA_VERSION => Err(Error::corrupt(
+            "数据库由更新版本的 ThinkRail 创建，请升级后再打开。",
+        )),
+        version if version >= 1 => Err(Error::corrupt(
+            "设置数据库来自早期开发版本，表结构已变更；请删除 thinkrail.db 后重新打开。",
+        )),
         _ => Err(Error::corrupt("设置数据库的版本号无效。")),
     }
 }

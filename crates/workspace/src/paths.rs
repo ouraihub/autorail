@@ -9,7 +9,9 @@ use thinkrail_core::{Error, ErrorKind, IoContext, Result};
 /// `.git` in any spelling Windows resolves to the same entry (trailing dots/spaces, 8.3 alias).
 pub(crate) fn forbidden_component(component: &str) -> bool {
     let component = component.trim_end_matches(['.', ' ']);
-    [".git", "git~1", ".git~1"].iter().any(|name| component.eq_ignore_ascii_case(name))
+    [".git", "git~1", ".git~1"]
+        .iter()
+        .any(|name| component.eq_ignore_ascii_case(name))
 }
 
 /// Normalizes a workspace-relative input to `a/b/c`; rejects absolute paths, `..`, NUL, NTFS
@@ -40,7 +42,10 @@ pub(crate) fn resolve_contained(root: &Path, input: &str) -> Result<PathBuf> {
     for part in relative.split('/').filter(|p| !p.is_empty()) {
         current = fs::canonicalize(current.join(part)).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => Error::not_found(format!("路径 {relative}")),
-            _ => Error::Io { context: "解析路径".into(), source: e },
+            _ => Error::Io {
+                context: "解析路径".into(),
+                source: e,
+            },
         })?;
         let escaped = current
             .strip_prefix(root)
@@ -62,8 +67,12 @@ pub(crate) fn validate_missing_leaf(root: &Path, relative: &str) -> Result<()> {
             return Err(Error::forbidden("路径没有位于工作区内的上级目录"));
         }
     }
-    let inner = ancestor.strip_prefix(root).map_err(|_| Error::forbidden("路径超出工作区"))?;
-    let inner = inner.to_str().ok_or_else(|| Error::invalid("路径不是 UTF-8"))?;
+    let inner = ancestor
+        .strip_prefix(root)
+        .map_err(|_| Error::forbidden("路径超出工作区"))?;
+    let inner = inner
+        .to_str()
+        .ok_or_else(|| Error::invalid("路径不是 UTF-8"))?;
     match resolve_contained(root, inner) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == Some(ErrorKind::NotFound) => Ok(()),
@@ -74,12 +83,15 @@ pub(crate) fn validate_missing_leaf(root: &Path, relative: &str) -> Result<()> {
 /// Every component below `root` up to `path` must be a real directory, not a symlink, junction or
 /// other reparse point. Guards the managed-worktree tree before anything is removed.
 pub(crate) fn reject_links(root: &Path, path: &Path) -> Result<()> {
-    let inner = path.strip_prefix(root).map_err(|_| Error::forbidden("路径不在数据目录内"))?;
+    let inner = path
+        .strip_prefix(root)
+        .map_err(|_| Error::forbidden("路径不在数据目录内"))?;
     let mut current = root.to_path_buf();
     for component in inner.components() {
         current.push(component);
         let metadata = fs::symlink_metadata(&current).context("检查托管目录")?;
-        if is_link(&metadata) || fs::canonicalize(&current).context("检查托管目录")? != current {
+        if is_link(&metadata) || fs::canonicalize(&current).context("检查托管目录")? != current
+        {
             return Err(Error::forbidden("托管目录中存在符号链接或 junction"));
         }
     }
@@ -100,15 +112,22 @@ pub(crate) fn is_link(metadata: &fs::Metadata) -> bool {
 
 pub(crate) fn bounded_read(reader: impl Read, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    reader.take(limit as u64 + 1).read_to_end(&mut bytes).context("读取内容")?;
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .context("读取内容")?;
     if bytes.len() > limit {
-        return Err(Error::invalid(format!("内容超过 {} MiB 上限", limit / 1024 / 1024)));
+        return Err(Error::invalid(format!(
+            "内容超过 {} MiB 上限",
+            limit / 1024 / 1024
+        )));
     }
     Ok(bytes)
 }
 
 pub(crate) fn utf8(path: &Path) -> Result<&str> {
-    path.to_str().ok_or_else(|| Error::invalid("路径不是 UTF-8"))
+    path.to_str()
+        .ok_or_else(|| Error::invalid("路径不是 UTF-8"))
 }
 
 #[cfg(test)]
@@ -117,10 +136,24 @@ mod tests {
 
     #[test]
     fn relative_paths_reject_escape_and_git_metadata() {
-        for bad in ["../x", "/etc", "C:\\x", "a/../b", ".git/config", ".GIT/config", ".git./x", "git~1/x", "a/b.", "f:s"] {
+        for bad in [
+            "../x",
+            "/etc",
+            "C:\\x",
+            "a/../b",
+            ".git/config",
+            ".GIT/config",
+            ".git./x",
+            "git~1/x",
+            "a/b.",
+            "f:s",
+        ] {
             assert!(safe_relative(bad).is_err(), "{bad}");
         }
-        assert_eq!(safe_relative("目录\\中文 空格.txt").unwrap(), "目录/中文 空格.txt");
+        assert_eq!(
+            safe_relative("目录\\中文 空格.txt").unwrap(),
+            "目录/中文 空格.txt"
+        );
         assert_eq!(safe_relative("./a//b").unwrap(), "a/b");
         assert_eq!(safe_relative("").unwrap(), "");
     }

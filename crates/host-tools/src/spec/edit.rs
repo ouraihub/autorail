@@ -7,7 +7,10 @@
 
 use serde_yaml_ng::Value;
 
-use super::model::{BOM, FmValue, ID, IDENTITY_FIELDS, LIST_FIELDS, field_line, is_spec, parse_frontmatter, scalar_text, split_frontmatter};
+use super::model::{
+    BOM, FmValue, ID, IDENTITY_FIELDS, LIST_FIELDS, field_line, is_spec, parse_frontmatter,
+    scalar_text, split_frontmatter,
+};
 
 #[derive(Debug, Default)]
 pub(super) struct FrontmatterEdit {
@@ -24,11 +27,15 @@ struct Block {
 }
 
 fn starts_field(line: &str) -> bool {
-    !line.is_empty() && !line.starts_with([' ', '\t', '#']) && !(line.starts_with('-') && line[1..].starts_with([' ', '\t']) || line == "-")
+    !line.is_empty()
+        && !line.starts_with([' ', '\t', '#'])
+        && !(line.starts_with('-') && line[1..].starts_with([' ', '\t']) || line == "-")
 }
 
 fn entry(lines: &[String]) -> Option<(String, Value)> {
-    let Ok(Value::Mapping(map)) = serde_yaml_ng::from_str::<Value>(&lines.join("\n")) else { return None };
+    let Ok(Value::Mapping(map)) = serde_yaml_ng::from_str::<Value>(&lines.join("\n")) else {
+        return None;
+    };
     let mut entries = map.into_iter();
     let (key, value) = entries.next()?;
     if entries.next().is_some() {
@@ -40,7 +47,10 @@ fn entry(lines: &[String]) -> Option<(String, Value)> {
 fn current_list(block: Option<&Block>) -> Vec<String> {
     match block.and_then(|b| entry(&b.lines)).map(|(_, value)| value) {
         Some(Value::Sequence(items)) => items.iter().filter_map(scalar_text).collect(),
-        Some(value) => scalar_text(&value).filter(|s| !s.is_empty()).into_iter().collect(),
+        Some(value) => scalar_text(&value)
+            .filter(|s| !s.is_empty())
+            .into_iter()
+            .collect(),
         None => Vec::new(),
     }
 }
@@ -57,11 +67,19 @@ impl Blocks {
         let line = field_line(key, value);
         match self.0.iter_mut().find(|b| b.key.as_deref() == Some(key)) {
             Some(block) => {
-                let kept = block.lines.iter().rev().take_while(|l| l.trim().is_empty()).count();
+                let kept = block
+                    .lines
+                    .iter()
+                    .rev()
+                    .take_while(|l| l.trim().is_empty())
+                    .count();
                 let tail = block.lines.split_off(block.lines.len() - kept);
                 block.lines = std::iter::once(line).chain(tail).collect();
             }
-            None => self.0.push(Block { key: Some(key.to_owned()), lines: vec![line] }),
+            None => self.0.push(Block {
+                key: Some(key.to_owned()),
+                lines: vec![line],
+            }),
         }
     }
 
@@ -70,18 +88,29 @@ impl Blocks {
     }
 }
 
-pub(super) fn update_frontmatter_text(file: &str, edit: &FrontmatterEdit) -> Result<String, String> {
+pub(super) fn update_frontmatter_text(
+    file: &str,
+    edit: &FrontmatterEdit,
+) -> Result<String, String> {
     let split = split_frontmatter(file).ok_or("File has no frontmatter to update.")?;
     let invalid = || "File frontmatter is not valid YAML.".to_owned();
-    if !matches!(serde_yaml_ng::from_str::<Value>(&split.fm_text), Ok(Value::Mapping(_))) {
+    if !matches!(
+        serde_yaml_ng::from_str::<Value>(&split.fm_text),
+        Ok(Value::Mapping(_))
+    ) {
         return Err(invalid());
     }
 
     let mut blocks = Blocks(Vec::new());
     for line in split.fm_text.split('\n') {
         match blocks.0.last_mut() {
-            Some(block) if !starts_field(line) && !line.starts_with('#') => block.lines.push(line.to_owned()),
-            _ => blocks.0.push(Block { key: None, lines: vec![line.to_owned()] }),
+            Some(block) if !starts_field(line) && !line.starts_with('#') => {
+                block.lines.push(line.to_owned())
+            }
+            _ => blocks.0.push(Block {
+                key: None,
+                lines: vec![line.to_owned()],
+            }),
         }
     }
     for block in &mut blocks.0 {
@@ -95,7 +124,9 @@ pub(super) fn update_frontmatter_text(file: &str, edit: &FrontmatterEdit) -> Res
             return Err("Cannot rename a spec's id via set.".into());
         }
         if LIST_FIELDS.contains(&key.as_str()) {
-            return Err(format!("Use addList/removeList to edit the list field \"{key}\"."));
+            return Err(format!(
+                "Use addList/removeList to edit the list field \"{key}\"."
+            ));
         }
         blocks.put(key, &FmValue::Scalar(value.clone()));
     }
@@ -106,7 +137,11 @@ pub(super) fn update_frontmatter_text(file: &str, edit: &FrontmatterEdit) -> Res
         blocks.delete(key);
     }
     let entries = |group: &[(String, Vec<String>)], field: &str| -> Vec<String> {
-        group.iter().filter(|(key, _)| key == field).flat_map(|(_, values)| values.iter().cloned()).collect()
+        group
+            .iter()
+            .filter(|(key, _)| key == field)
+            .flat_map(|(_, values)| values.iter().cloned())
+            .collect()
     };
     for field in LIST_FIELDS {
         let add = entries(&edit.add_list, field);
@@ -121,8 +156,15 @@ pub(super) fn update_frontmatter_text(file: &str, edit: &FrontmatterEdit) -> Res
         }
         let remove = entries(&edit.remove_list, field);
         if !remove.is_empty() {
-            let next: Vec<String> = current_list(blocks.find(field)).into_iter().filter(|v| !remove.contains(v)).collect();
-            if next.is_empty() { blocks.delete(field) } else { blocks.put(field, &FmValue::List(next)) }
+            let next: Vec<String> = current_list(blocks.find(field))
+                .into_iter()
+                .filter(|v| !remove.contains(v))
+                .collect();
+            if next.is_empty() {
+                blocks.delete(field)
+            } else {
+                blocks.put(field, &FmValue::List(next))
+            }
         }
     }
 

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use thinkrail_core::{
-    BackendKind, Capabilities, ContentBlock, Interaction, InteractionKind, Message, Role, SessionError, SessionEvent,
-    SessionPhase, SessionSink, ToolStatus,
+    BackendKind, Capabilities, ContentBlock, Interaction, InteractionKind, Message, Role,
+    SessionError, SessionEvent, SessionPhase, SessionSink, ToolStatus,
 };
 
 use super::*;
@@ -29,7 +29,11 @@ pub(crate) fn projection() -> (Projection, Arc<Events>) {
 }
 
 fn text(id: &str, role: Role, text: &str) -> Message {
-    Message { id: id.into(), role, content: vec![ContentBlock::Text { text: text.into() }] }
+    Message {
+        id: id.into(),
+        role,
+        content: vec![ContentBlock::Text { text: text.into() }],
+    }
 }
 
 fn revision(event: &SessionEvent) -> u64 {
@@ -45,7 +49,13 @@ fn revision(event: &SessionEvent) -> u64 {
 fn every_event_has_a_strictly_newer_revision_even_across_sessions() {
     let (mut first, events) = projection();
     first.upsert(text("a", Role::User, "hi"));
-    first.upsert(Message { id: "b".into(), role: Role::Assistant, content: vec![ContentBlock::Text { text: String::new() }] });
+    first.upsert(Message {
+        id: "b".into(),
+        role: Role::Assistant,
+        content: vec![ContentBlock::Text {
+            text: String::new(),
+        }],
+    });
     first.append("b", 0, "he");
     first.append("b", 0, "llo");
     first.set_running(true);
@@ -55,8 +65,15 @@ fn every_event_has_a_strictly_newer_revision_even_across_sessions() {
     let mut revisions: Vec<u64> = events.0.lock().iter().map(revision).collect();
     revisions.extend(later.0.lock().iter().map(revision));
     assert!(revisions.windows(2).all(|w| w[0] < w[1]), "{revisions:?}");
-    assert_eq!(first.snapshot().messages[1].content, vec![ContentBlock::Text { text: "hello".into() }]);
-    assert!(matches!(&events.0.lock()[2], SessionEvent::Delta { block: 0, text, .. } if text == "he"));
+    assert_eq!(
+        first.snapshot().messages[1].content,
+        vec![ContentBlock::Text {
+            text: "hello".into()
+        }]
+    );
+    assert!(
+        matches!(&events.0.lock()[2], SessionEvent::Delta { block: 0, text, .. } if text == "he")
+    );
 }
 
 #[test]
@@ -76,11 +93,20 @@ fn phase_follows_interactions_running_and_close() {
     };
     p.add_interaction(question);
     assert_eq!(p.snapshot().phase, SessionPhase::Waiting);
-    p.close(Some(SessionError { code: "SESSION_CLOSED".into(), message: "gone".into() }));
+    p.close(Some(SessionError {
+        code: "SESSION_CLOSED".into(),
+        message: "gone".into(),
+    }));
     let snapshot = p.snapshot();
     assert_eq!(snapshot.phase, SessionPhase::Closed);
-    assert!(snapshot.interactions.is_empty(), "open questions die with the engine");
-    assert_eq!(snapshot.last_error.map(|e| e.code), Some("SESSION_CLOSED".into()));
+    assert!(
+        snapshot.interactions.is_empty(),
+        "open questions die with the engine"
+    );
+    assert_eq!(
+        snapshot.last_error.map(|e| e.code),
+        Some("SESSION_CLOSED".into())
+    );
 }
 
 #[test]
@@ -110,24 +136,51 @@ fn replacing_a_message_keeps_tool_results_that_arrived_separately() {
 #[test]
 fn unfinished_tools_fail_when_a_turn_settles() {
     let (mut p, _) = projection();
-    let tool = |id: &str, status| ContentBlock::Tool { tool_call_id: id.into(), name: "x".into(), status, input: None, output: None };
+    let tool = |id: &str, status| ContentBlock::Tool {
+        tool_call_id: id.into(),
+        name: "x".into(),
+        status,
+        input: None,
+        output: None,
+    };
     p.upsert(Message {
         id: "m".into(),
         role: Role::Assistant,
-        content: vec![tool("done", ToolStatus::Completed), tool("cut", ToolStatus::Running)],
+        content: vec![
+            tool("done", ToolStatus::Completed),
+            tool("cut", ToolStatus::Running),
+        ],
     });
     p.fail_unfinished_tools();
     let content = &p.snapshot().messages[0].content;
-    assert!(matches!(content[0], ContentBlock::Tool { status: ToolStatus::Completed, .. }));
-    assert!(matches!(content[1], ContentBlock::Tool { status: ToolStatus::Failed, .. }));
+    assert!(matches!(
+        content[0],
+        ContentBlock::Tool {
+            status: ToolStatus::Completed,
+            ..
+        }
+    ));
+    assert!(matches!(
+        content[1],
+        ContentBlock::Tool {
+            status: ToolStatus::Failed,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn oversized_messages_are_truncated_and_old_messages_evicted() {
     let (mut p, _) = projection();
-    p.upsert(text("big", Role::Assistant, &"中".repeat(MAX_MESSAGE_BYTES)));
+    p.upsert(text(
+        "big",
+        Role::Assistant,
+        &"中".repeat(MAX_MESSAGE_BYTES),
+    ));
     let snapshot = p.snapshot();
-    let ContentBlock::Text { text: kept } = &snapshot.messages[0].content[0] else { panic!("text block") };
+    let ContentBlock::Text { text: kept } = &snapshot.messages[0].content[0] else {
+        panic!("text block")
+    };
     assert!(kept.len() <= MAX_MESSAGE_BYTES && kept.ends_with(TRUNCATED));
     assert!(snapshot.output_truncated);
 
@@ -144,13 +197,21 @@ fn oversized_messages_are_truncated_and_old_messages_evicted() {
 #[test]
 fn streamed_text_past_the_message_bound_is_dropped_from_the_projection_only() {
     let (mut p, _) = projection();
-    p.upsert(Message { id: "m".into(), role: Role::Assistant, content: vec![ContentBlock::Text { text: String::new() }] });
+    p.upsert(Message {
+        id: "m".into(),
+        role: Role::Assistant,
+        content: vec![ContentBlock::Text {
+            text: String::new(),
+        }],
+    });
     let chunk = "y".repeat(64 * 1024);
     for _ in 0..8 {
         p.append("m", 0, &chunk);
     }
     let snapshot = p.snapshot();
-    let ContentBlock::Text { text } = &snapshot.messages[0].content[0] else { panic!("text block") };
+    let ContentBlock::Text { text } = &snapshot.messages[0].content[0] else {
+        panic!("text block")
+    };
     assert!(text.len() < MAX_MESSAGE_BYTES);
     assert!(snapshot.output_truncated);
 }

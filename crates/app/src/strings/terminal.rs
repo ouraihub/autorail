@@ -10,4 +10,5 @@ pub const EXITED: &str = "进程已退出";
 pub const EXIT_CODE: &str = "代码";
 pub const DETACHED: &str = "未连接；点击标签或重新连接启动 shell。";
 pub const TRUNCATED: &str = "较早的输出未保留。";
-pub const COPY_HINT: &str = "Ctrl+Shift+C 复制当前屏 · Ctrl+Shift+V 粘贴 · Shift+PageUp/PageDown 滚动";
+pub const COPY_HINT: &str =
+    "Ctrl+Shift+C 复制当前屏 · Ctrl+Shift+V 粘贴 · Shift+PageUp/PageDown 滚动";

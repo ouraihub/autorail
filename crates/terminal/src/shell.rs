@@ -8,7 +8,9 @@ pub(crate) fn program(shell: Shell) -> Result<&'static str> {
         Shell::PowerShell if cfg!(windows) => Ok("powershell.exe"),
         Shell::Pwsh => Ok(if cfg!(windows) { "pwsh.exe" } else { "pwsh" }),
         Shell::Bash if !cfg!(windows) => Ok("/bin/bash"),
-        other => Err(Error::invalid(format!("当前平台不支持终端 shell {other:?}，请选择其他 shell"))),
+        other => Err(Error::invalid(format!(
+            "当前平台不支持终端 shell {other:?}，请选择其他 shell"
+        ))),
     }
 }
 

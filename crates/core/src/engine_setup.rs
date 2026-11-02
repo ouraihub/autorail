@@ -23,7 +23,11 @@ impl BackendKind {
     pub const ALL: [Self; 3] = [Self::Pi, Self::Omp, Self::Dsh];
 
     pub fn label(self) -> &'static str {
-        match self { Self::Pi => "pi", Self::Omp => "OMP", Self::Dsh => "DSH" }
+        match self {
+            Self::Pi => "pi",
+            Self::Omp => "OMP",
+            Self::Dsh => "DSH",
+        }
     }
 }
 
@@ -32,7 +36,10 @@ impl BackendKind {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum Launch {
     /// An absolute executable (e.g. `node.exe`) plus argv (e.g. the official CLI entry).
-    External { executable: PathBuf, args: Vec<String> },
+    External {
+        executable: PathBuf,
+        args: Vec<String>,
+    },
 }
 
 /// Where a found engine lives.

@@ -42,7 +42,10 @@ fn merge_keeps_user_entries_and_unknown_fields_and_drops_stale_host_entries() {
         })
     );
     let emptied = parse(&merge(path(), Some(&current), &[]).unwrap().unwrap());
-    assert_eq!(emptied["mcpServers"], json!({"user-tool": {"command": "uvx", "args": ["tool"], "timeout": 5000}}));
+    assert_eq!(
+        emptied["mcpServers"],
+        json!({"user-tool": {"command": "uvx", "args": ["tool"], "timeout": 5000}})
+    );
 }
 
 #[test]
@@ -50,8 +53,15 @@ fn merge_reports_no_change_when_the_content_is_the_same() {
     let servers = sample_routing().mcp;
     let written = merge(path(), None, &servers).unwrap().unwrap();
     assert_eq!(merge(path(), Some(&written), &servers).unwrap(), None);
-    assert_eq!(merge(path(), None, &[]).unwrap(), None, "no file and nothing to project stays without a file");
-    assert_eq!(merge(path(), Some(r#"{"other": true}"#), &[]).unwrap(), None);
+    assert_eq!(
+        merge(path(), None, &[]).unwrap(),
+        None,
+        "no file and nothing to project stays without a file"
+    );
+    assert_eq!(
+        merge(path(), Some(r#"{"other": true}"#), &[]).unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -80,14 +90,25 @@ fn sync_writes_references_never_values_and_leaves_invalid_files_alone() {
 
     let modified = fs::metadata(&file).unwrap().modified().unwrap();
     sync(root.path(), &servers).unwrap();
-    assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), modified, "unchanged content is not rewritten");
+    assert_eq!(
+        fs::metadata(&file).unwrap().modified().unwrap(),
+        modified,
+        "unchanged content is not rewritten"
+    );
 
     fs::write(&file, "{ broken").unwrap();
     let error = sync(root.path(), &servers).unwrap_err();
     assert_eq!(error.kind(), Some(ErrorKind::Invalid));
     assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken");
     sync(root.path(), &[]).unwrap();
-    assert_eq!(fs::read_to_string(&file).unwrap(), "{ broken", "nothing to project: the launch goes on untouched");
-    let leftovers: Vec<_> = fs::read_dir(root.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "{ broken",
+        "nothing to project: the launch goes on untouched"
+    );
+    let leftovers: Vec<_> = fs::read_dir(root.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
     assert_eq!(leftovers, ["mcp.json"]);
 }

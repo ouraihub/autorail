@@ -25,17 +25,25 @@ const MAX_CONNECTIONS: usize = 64;
 /// Reads one `\n`-terminated line of at most `MAX_LINE` bytes; `None` at EOF.
 pub(crate) fn read_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     let mut line = Vec::new();
-    let read = reader.by_ref().take(MAX_LINE as u64 + 1).read_until(b'\n', &mut line)?;
+    let read = reader
+        .by_ref()
+        .take(MAX_LINE as u64 + 1)
+        .read_until(b'\n', &mut line)?;
     if read == 0 {
         return Ok(None);
     }
     if line.len() > MAX_LINE {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "line exceeds the bridge limit"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "line exceeds the bridge limit",
+        ));
     }
     while matches!(line.last(), Some(b'\n' | b'\r')) {
         line.pop();
     }
-    String::from_utf8(line).map(Some).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "line is not UTF-8"))
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "line is not UTF-8"))
 }
 
 pub(crate) fn write_line(writer: &mut impl Write, value: &Value) -> std::io::Result<()> {
@@ -59,15 +67,23 @@ pub struct ToolBridge {
 
 impl std::fmt::Debug for ToolBridge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolBridge").field("pipe", &self.pipe).finish_non_exhaustive()
+        f.debug_struct("ToolBridge")
+            .field("pipe", &self.pipe)
+            .finish_non_exhaustive()
     }
 }
 
 impl ToolBridge {
     pub fn start(handler: Arc<dyn HostToolHandler>) -> Result<Self> {
         let pipe = format!("thinkrail-native-{}", uuid::Uuid::new_v4().simple());
-        let name = pipe.clone().to_ns_name::<GenericNamespaced>().map_err(|e| bridge_error("宿主工具管道名无效", e))?;
-        let listener = ListenerOptions::new().name(name).create_sync().map_err(|e| bridge_error("无法创建宿主工具管道", e))?;
+        let name = pipe
+            .clone()
+            .to_ns_name::<GenericNamespaced>()
+            .map_err(|e| bridge_error("宿主工具管道名无效", e))?;
+        let listener = ListenerOptions::new()
+            .name(name)
+            .create_sync()
+            .map_err(|e| bridge_error("无法创建宿主工具管道", e))?;
         let tokens: Tokens = Arc::new(Mutex::new(HashMap::new()));
         let accept_tokens = tokens.clone();
         let live = Arc::new(AtomicUsize::new(0));
@@ -87,11 +103,15 @@ impl ToolBridge {
                         warn!("host tool connection refused: too many connections");
                         continue;
                     }
-                    let (tokens, handler, live) = (accept_tokens.clone(), handler.clone(), live.clone());
-                    let spawned = thread::Builder::new().name("host-tools-conn".into()).spawn(move || {
-                        serve(stream, &tokens, handler.as_ref());
-                        live.fetch_sub(1, Ordering::AcqRel);
-                    });
+                    let (tokens, handler, live) =
+                        (accept_tokens.clone(), handler.clone(), live.clone());
+                    let spawned =
+                        thread::Builder::new()
+                            .name("host-tools-conn".into())
+                            .spawn(move || {
+                                serve(stream, &tokens, handler.as_ref());
+                                live.fetch_sub(1, Ordering::AcqRel);
+                            });
                     if let Err(error) = spawned {
                         warn!(%error, "cannot start host tool connection thread");
                     }
@@ -109,7 +129,11 @@ impl ToolBridge {
 
     /// A fresh secret for one chat (`THINKRAIL_HOST_TOKEN`).
     pub fn register(&self, scope: PlanScope) -> String {
-        let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+        let token = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
         self.tokens.lock().insert(token.clone(), scope);
         token
     }
@@ -119,7 +143,11 @@ impl ToolBridge {
     }
 }
 
-fn serve(stream: Stream, tokens: &Mutex<HashMap<String, PlanScope>>, handler: &dyn HostToolHandler) {
+fn serve(
+    stream: Stream,
+    tokens: &Mutex<HashMap<String, PlanScope>>,
+    handler: &dyn HostToolHandler,
+) {
     let mut reader = BufReader::new(&stream);
     let mut writer = &stream;
     let scope = match read_line(&mut reader) {
@@ -156,7 +184,9 @@ fn serve(stream: Stream, tokens: &Mutex<HashMap<String, PlanScope>>, handler: &d
 pub(crate) fn handle(line: &str, scope: &PlanScope, handler: &dyn HostToolHandler) -> Value {
     let request: Value = match serde_json::from_str(line) {
         Ok(request) => request,
-        Err(_) => return json!({"id": null, "error": {"code": "PROTOCOL", "message": "request is not JSON"}}),
+        Err(_) => {
+            return json!({"id": null, "error": {"code": "PROTOCOL", "message": "request is not JSON"}});
+        }
     };
     let id = request["id"].clone();
     match request["method"].as_str() {
@@ -168,7 +198,9 @@ pub(crate) fn handle(line: &str, scope: &PlanScope, handler: &dyn HostToolHandle
             match handler.call(scope, name, request["arguments"].clone()) {
                 Ok(result) => json!({"id": id, "result": result}),
                 // The handler logs the failure with its chat and duration.
-                Err(error) => json!({"id": id, "error": {"code": error.code(), "message": error.to_string()}}),
+                Err(error) => {
+                    json!({"id": id, "error": {"code": error.code(), "message": error.to_string()}})
+                }
             }
         }
         _ => json!({"id": id, "error": {"code": "PROTOCOL", "message": "unknown method"}}),
@@ -185,8 +217,14 @@ impl BridgeClient {
     pub(crate) fn connect(pipe: &str, token: &str) -> std::io::Result<Self> {
         let name = pipe.to_owned().to_ns_name::<GenericNamespaced>()?;
         let stream = Stream::connect(name)?;
-        let mut client = Self { reader: BufReader::new(stream), next: 0 };
-        client.reader.get_mut().write_all(format!("{token}\n").as_bytes())?;
+        let mut client = Self {
+            reader: BufReader::new(stream),
+            next: 0,
+        };
+        client
+            .reader
+            .get_mut()
+            .write_all(format!("{token}\n").as_bytes())?;
         Ok(client)
     }
 
@@ -194,8 +232,13 @@ impl BridgeClient {
         self.next += 1;
         request["id"] = json!(self.next);
         write_line(self.reader.get_mut(), &request)?;
-        let line = read_line(&mut self.reader)?
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "host closed the tool bridge"))?;
-        serde_json::from_str(&line).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        let line = read_line(&mut self.reader)?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "host closed the tool bridge",
+            )
+        })?;
+        serde_json::from_str(&line)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 }

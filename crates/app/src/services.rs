@@ -7,16 +7,17 @@ use std::{
 };
 
 use anyhow::Context as _;
-use thinkrail_agents::{DshRuntime, ManagedEngines, OmpRuntime, PiRuntime};
 use serde_json::Value;
+use thinkrail_agents::{DshRuntime, ManagedEngines, OmpRuntime, PiRuntime};
 use thinkrail_core::{
-    AgentRuntime, AppPrefService, BackendKind, ChatBindingService, ChatId, Error, ErrorCode as _, HostToolAccess,
-    HostToolHandler, HostToolResult, HostToolSpec, EngineSetup, McpService, ModelPrefService, ModelRouter,
-    PlanReviewService, PlanScope, ProviderProbe, ProviderService, Readiness, SessionEvent, SessionSink, TerminalEvent,
-    TerminalService, TerminalSink, WorkspaceId, WorkspaceRoots, WorkspaceService,
+    AgentRuntime, AppPrefService, BackendKind, ChatBindingService, ChatId, EngineSetup, Error,
+    ErrorCode as _, HostToolAccess, HostToolHandler, HostToolResult, HostToolSpec, McpService,
+    ModelPrefService, ModelRouter, PlanReviewService, PlanScope, ProviderProbe, ProviderService,
+    Readiness, SessionEvent, SessionSink, TerminalEvent, TerminalService, TerminalSink,
+    WorkspaceId, WorkspaceRoots, WorkspaceService,
 };
-use thinkrail_observability::LogHandle;
 use thinkrail_host_tools::{HostTools, ToolBridge};
+use thinkrail_observability::LogHandle;
 use thinkrail_plan_review::JsonPlanReviewStore;
 use thinkrail_routing::{Gateway, Probe, Router};
 use thinkrail_settings_store::SqliteSettingsStore;
@@ -92,14 +93,20 @@ impl Services {
     }
 
     /// The install of `backend` for resuming a bound chat; `None` when 编码搭档 no longer finds it.
-    pub fn launch(&self, backend: BackendKind) -> thinkrail_core::Result<Option<thinkrail_core::Launch>> {
+    pub fn launch(
+        &self,
+        backend: BackendKind,
+    ) -> thinkrail_core::Result<Option<thinkrail_core::Launch>> {
         Ok(self.engines.status(backend)?.map(|install| install.launch))
     }
 
     /// A fresh token for one engine launch of `chat`; its tool calls land in this chat's scope.
     pub fn host_tools(&self, workspace: &WorkspaceId, chat: &ChatId) -> Option<HostToolAccess> {
         let hub = self.host_tools.as_ref()?;
-        let token = hub.bridge.register(PlanScope { workspace: workspace.clone(), chat: chat.clone() });
+        let token = hub.bridge.register(PlanScope {
+            workspace: workspace.clone(),
+            chat: chat.clone(),
+        });
         Some(HostToolAccess {
             executable: hub.executable.clone(),
             pipe: hub.bridge.pipe_name().to_owned(),
@@ -154,13 +161,22 @@ impl HostToolHandler for NotifyingTools {
 
     /// Every engine's tool calls pass here (MCP bridge and OMP in-process): one line per call,
     /// tool name, chat, duration and outcome only — never arguments or results (04 §3).
-    fn call(&self, scope: &PlanScope, name: &str, arguments: Value) -> thinkrail_core::Result<HostToolResult> {
+    fn call(
+        &self,
+        scope: &PlanScope,
+        name: &str,
+        arguments: Value,
+    ) -> thinkrail_core::Result<HostToolResult> {
         let started = std::time::Instant::now();
         let result = self.inner.call(scope, name, arguments);
         let ms = started.elapsed().as_millis();
         match &result {
-            Ok(reply) => info!(chat = %scope.chat, tool = name, ms, is_error = reply.is_error, "host tool called"),
-            Err(error) => warn!(chat = %scope.chat, tool = name, ms, code = error.code(), "host tool failed"),
+            Ok(reply) => {
+                info!(chat = %scope.chat, tool = name, ms, is_error = reply.is_error, "host tool called")
+            }
+            Err(error) => {
+                warn!(chat = %scope.chat, tool = name, ms, code = error.code(), "host tool failed")
+            }
         }
         if self.changed.try_send(scope.clone()).is_err() {
             debug!("plan change dropped: UI is gone");
@@ -189,13 +205,21 @@ impl TerminalSink for TerminalChannel {
     }
 }
 
-pub fn build(data_dir: &Path, db_path: &Path, log: Arc<LogHandle>) -> anyhow::Result<(Services, Channels)> {
-    std::fs::create_dir_all(data_dir).with_context(|| format!("无法创建数据目录 {}", data_dir.display()))?;
+pub fn build(
+    data_dir: &Path,
+    db_path: &Path,
+    log: Arc<LogHandle>,
+) -> anyhow::Result<(Services, Channels)> {
+    std::fs::create_dir_all(data_dir)
+        .with_context(|| format!("无法创建数据目录 {}", data_dir.display()))?;
     let workspace = Arc::new(GitWorkspaceService::open(data_dir).context("无法打开工作区数据")?);
     let roots: Arc<dyn WorkspaceRoots> = workspace.clone();
-    let plans: Arc<dyn PlanReviewService> =
-        Arc::new(JsonPlanReviewStore::open(data_dir, roots.clone()).context("无法打开计划与审查数据")?);
-    let settings = Arc::new(SqliteSettingsStore::open(db_path).context("无法打开设置数据库；请检查数据库目录是否可写，或使用 --data-dir <目录> 指定可写目录")?);
+    let plans: Arc<dyn PlanReviewService> = Arc::new(
+        JsonPlanReviewStore::open(data_dir, roots.clone()).context("无法打开计划与审查数据")?,
+    );
+    let settings = Arc::new(SqliteSettingsStore::open(db_path).context(
+        "无法打开设置数据库；请检查数据库目录是否可写，或使用 --data-dir <目录> 指定可写目录",
+    )?);
     let providers: Arc<dyn ProviderService> = settings.clone();
     let mcp: Arc<dyn McpService> = settings.clone();
     let prefs: Arc<dyn ModelPrefService> = settings.clone();
@@ -208,15 +232,27 @@ pub fn build(data_dir: &Path, db_path: &Path, log: Arc<LogHandle>) -> anyhow::Re
                 warn!(error = %format!("{error:#}"), "stored log level not applied");
             }
         }
-        Err(error) => warn!(code = error.code(), "app preferences not read; logging stays at info"),
+        Err(error) => warn!(
+            code = error.code(),
+            "app preferences not read; logging stays at info"
+        ),
     }
     let gateway = Gateway::new(providers.clone());
-    let router: Arc<dyn ModelRouter> = Arc::new(Router::new(providers.clone(), mcp.clone(), prefs.clone(), gateway));
+    let router: Arc<dyn ModelRouter> = Arc::new(Router::new(
+        providers.clone(),
+        mcp.clone(),
+        prefs.clone(),
+        gateway,
+    ));
     let probe: Arc<dyn ProviderProbe> = Arc::new(Probe::new(providers.clone()));
     let (session_tx, sessions) = async_channel::unbounded();
     let (terminal_tx, terminals) = async_channel::bounded(TERMINAL_QUEUE);
     let (plan_tx, plan_changes) = async_channel::unbounded();
-    let terminals_service = Arc::new(PtyTerminalService::new(data_dir, roots, Arc::new(TerminalChannel(terminal_tx))));
+    let terminals_service = Arc::new(PtyTerminalService::new(
+        data_dir,
+        roots,
+        Arc::new(TerminalChannel(terminal_tx)),
+    ));
     let host_tools = start_host_tools(plans.clone(), workspace.clone(), plan_tx);
     let services = Services {
         workspace,
@@ -231,11 +267,20 @@ pub fn build(data_dir: &Path, db_path: &Path, log: Arc<LogHandle>) -> anyhow::Re
         engines: Arc::new(ManagedEngines::new(data_dir)),
         app_prefs,
         log,
-        runtimes: [Arc::new(PiRuntime::new()), Arc::new(OmpRuntime::new()), Arc::new(DshRuntime::new())],
+        runtimes: [
+            Arc::new(PiRuntime::new()),
+            Arc::new(OmpRuntime::new()),
+            Arc::new(DshRuntime::new()),
+        ],
         host_tools,
         engine_support_dir: data_dir.join("engines"),
     };
-    let channels = Channels { sessions, session_sink: Arc::new(SessionChannel(session_tx)), terminals, plans: plan_changes };
+    let channels = Channels {
+        sessions,
+        session_sink: Arc::new(SessionChannel(session_tx)),
+        terminals,
+        plans: plan_changes,
+    };
     Ok((services, channels))
 }
 
@@ -252,9 +297,16 @@ fn start_host_tools(
             return None;
         }
     };
-    let handler: Arc<dyn HostToolHandler> = Arc::new(NotifyingTools { inner: HostTools::new(plans, roots), changed });
+    let handler: Arc<dyn HostToolHandler> = Arc::new(NotifyingTools {
+        inner: HostTools::new(plans, roots),
+        changed,
+    });
     match ToolBridge::start(handler.clone()) {
-        Ok(bridge) => Some(Arc::new(HostToolsHub { bridge, handler, executable })),
+        Ok(bridge) => Some(Arc::new(HostToolsHub {
+            bridge,
+            handler,
+            executable,
+        })),
         Err(error) => {
             warn!(%error, "host tools disabled: bridge did not start");
             None

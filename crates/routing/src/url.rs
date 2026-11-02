@@ -51,7 +51,9 @@ pub fn models_url(raw: &str, protocol: Protocol) -> String {
 
 /// `v<digits>` optionally followed by `alpha` / `beta`.
 fn is_version(segment: &str) -> bool {
-    let Some(rest) = segment.strip_prefix(['v', 'V']) else { return false };
+    let Some(rest) = segment.strip_prefix(['v', 'V']) else {
+        return false;
+    };
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     if digits == 0 {
         return false;

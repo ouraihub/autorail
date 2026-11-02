@@ -44,7 +44,12 @@ pub(crate) fn sha256_hex(value: &str) -> String {
 }
 
 fn hashed(pairs: &[(&str, &str)]) -> Value {
-    Value::Array(pairs.iter().map(|(name, value)| json!([name, sha256_hex(value)])).collect())
+    Value::Array(
+        pairs
+            .iter()
+            .map(|(name, value)| json!([name, sha256_hex(value)]))
+            .collect(),
+    )
 }
 
 /// Lowercase hex SHA-256 of the canonical JSON (object keys are sorted by `serde_json`).
@@ -62,7 +67,11 @@ pub(crate) fn compute(signed: &Signed<'_>) -> String {
             })
         })
         .collect();
-    let keys: Vec<Value> = signed.keys.iter().map(|(provider, revision, ids)| json!([provider, revision, ids])).collect();
+    let keys: Vec<Value> = signed
+        .keys
+        .iter()
+        .map(|(provider, revision, ids)| json!([provider, revision, ids]))
+        .collect();
     let mcp: Vec<Value> = signed
         .mcp
         .iter()

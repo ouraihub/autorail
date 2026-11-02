@@ -23,12 +23,38 @@ const SENSITIVE: [&str; 5] = ["key", "token", "secret", "password", "authorizati
 /// Inherited variables that could carry the user's own credentials or engine configuration.
 pub(crate) fn is_isolated(name: &str) -> bool {
     const PREFIXES: [&str; 18] = [
-        "PI_", "OMP_", "DSH_", "THINKRAIL_", "AWS_", "OPENAI_", "ANTHROPIC_", "AZURE_", "GOOGLE_", "GEMINI_",
-        "VERTEX_", "DEEPSEEK_", "GROQ_", "MISTRAL_", "XAI_", "COHERE_", "OPENROUTER_", "BEDROCK_",
+        "PI_",
+        "OMP_",
+        "DSH_",
+        "THINKRAIL_",
+        "AWS_",
+        "OPENAI_",
+        "ANTHROPIC_",
+        "AZURE_",
+        "GOOGLE_",
+        "GEMINI_",
+        "VERTEX_",
+        "DEEPSEEK_",
+        "GROQ_",
+        "MISTRAL_",
+        "XAI_",
+        "COHERE_",
+        "OPENROUTER_",
+        "BEDROCK_",
     ];
-    const PARTS: [&str; 7] = ["API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "ACCESS_KEY", "PRIVATE_KEY"];
+    const PARTS: [&str; 7] = [
+        "API_KEY",
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "CREDENTIAL",
+        "ACCESS_KEY",
+        "PRIVATE_KEY",
+    ];
     let name = name.to_ascii_uppercase();
-    PREFIXES.iter().any(|p| name.starts_with(p)) || PARTS.iter().any(|p| name.contains(p)) || name.ends_with("_BASE_URL")
+    PREFIXES.iter().any(|p| name.starts_with(p))
+        || PARTS.iter().any(|p| name.contains(p))
+        || name.ends_with("_BASE_URL")
 }
 
 /// Path as engines expect it: Windows verbatim prefixes (`\\?\`) stripped.
@@ -50,7 +76,9 @@ pub(crate) fn config_dir(config_root: Option<&Path>, default: &str) -> Result<Pa
         None => std::env::var_os("USERPROFILE")
             .or_else(|| std::env::var_os("HOME"))
             .map(|home| PathBuf::from(home).join(default))
-            .ok_or_else(|| Error::invalid("找不到用户主目录（USERPROFILE / HOME），无法定位引擎配置目录")),
+            .ok_or_else(|| {
+                Error::invalid("找不到用户主目录（USERPROFILE / HOME），无法定位引擎配置目录")
+            }),
     }
 }
 
@@ -69,14 +97,22 @@ pub(crate) struct LaunchSpec<'a> {
 
 /// `EngineRouting.env` as launch variables, appended after the host tool variables. `command`
 /// clears inherited `THINKRAIL_*` first, so these values always win.
-pub(crate) fn routing_env(routing: &EngineRouting) -> impl Iterator<Item = (String, OsString)> + '_ {
-    routing.env.iter().map(|(name, value)| (name.clone(), OsString::from(value.expose())))
+pub(crate) fn routing_env(
+    routing: &EngineRouting,
+) -> impl Iterator<Item = (String, OsString)> + '_ {
+    routing
+        .env
+        .iter()
+        .map(|(name, value)| (name.clone(), OsString::from(value.expose())))
 }
 
 pub(crate) fn command(spec: &LaunchSpec<'_>) -> Result<Command> {
     let Launch::External { executable, args } = spec.launch;
     if !executable.is_absolute() || !executable.is_file() {
-        return Err(Error::new(ErrorKind::BackendUnavailable, format!("可执行文件不存在：{}", executable.display())));
+        return Err(Error::new(
+            ErrorKind::BackendUnavailable,
+            format!("可执行文件不存在：{}", executable.display()),
+        ));
     }
     let mut command = Command::new(executable);
     command
@@ -130,15 +166,25 @@ pub(crate) struct Process {
 
 impl Process {
     /// Spawns the engine plus its stdin writer, stderr tail and exit waiter threads.
-    pub(crate) fn spawn(mut command: Command, frame_limit: usize) -> Result<(Arc<Self>, ChildStdout)> {
-        let mut child = command
-            .spawn()
-            .map_err(|error| Error::new(ErrorKind::BackendUnavailable, format!("无法启动进程：{error}")))?;
+    pub(crate) fn spawn(
+        mut command: Command,
+        frame_limit: usize,
+    ) -> Result<(Arc<Self>, ChildStdout)> {
+        let mut child = command.spawn().map_err(|error| {
+            Error::new(
+                ErrorKind::BackendUnavailable,
+                format!("无法启动进程：{error}"),
+            )
+        })?;
         let pid = child.id();
-        let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
             terminate(pid);
-            return Err(Error::new(ErrorKind::BackendUnavailable, "无法连接进程的标准输入输出"));
+            return Err(Error::new(
+                ErrorKind::BackendUnavailable,
+                "无法连接进程的标准输入输出",
+            ));
         };
         let process = Arc::new(Self {
             pid,
@@ -167,14 +213,19 @@ impl Process {
     }
 
     pub(crate) fn send(&self, frame: &Value) -> Result<()> {
-        let mut bytes = serde_json::to_vec(frame).map_err(|e| Error::protocol(format!("无法编码发送帧：{e}")))?;
+        let mut bytes = serde_json::to_vec(frame)
+            .map_err(|e| Error::protocol(format!("无法编码发送帧：{e}")))?;
         bytes.push(b'\n');
         if bytes.len() > self.frame_limit {
             return Err(Error::invalid("发送给 Agent 的内容超过协议单帧上限"));
         }
         let stdin = self.stdin.lock();
         let closed = || Error::new(ErrorKind::SessionClosed, "Agent 进程的输入已关闭");
-        stdin.as_ref().ok_or_else(closed)?.send(bytes).map_err(|_| closed())
+        stdin
+            .as_ref()
+            .ok_or_else(closed)?
+            .send(bytes)
+            .map_err(|_| closed())
     }
 
     /// Ends stdin once queued frames are written; engines treat EOF as a request to exit.
@@ -206,7 +257,11 @@ impl Process {
             let (lock, condvar) = &*self.life;
             let mut life = lock.lock();
             if life.exited {
-                condvar.wait_while_for(&mut life, |life| !life.stderr_closed, Duration::from_secs(2));
+                condvar.wait_while_for(
+                    &mut life,
+                    |life| !life.stderr_closed,
+                    Duration::from_secs(2),
+                );
             }
         }
         let tail = self.stderr.lock();
@@ -224,7 +279,12 @@ fn spawn_thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<()> 
         .name(name.into())
         .spawn(body)
         .map(drop)
-        .map_err(|error| Error::new(ErrorKind::BackendUnavailable, format!("无法创建线程：{error}")))
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::BackendUnavailable,
+                format!("无法创建线程：{error}"),
+            )
+        })
 }
 
 fn write_stdin(mut stdin: impl Write, receiver: mpsc::Receiver<Vec<u8>>) {
@@ -278,7 +338,9 @@ fn terminate(pid: u32) {
         use std::os::windows::process::CommandExt;
         let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
         let mut command = Command::new(PathBuf::from(root).join(r"System32\taskkill.exe"));
-        command.args(["/PID", &pid.to_string(), "/T", "/F"]).creation_flags(0x0800_0000);
+        command
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000);
         command
     };
     #[cfg(unix)]
@@ -287,10 +349,17 @@ fn terminate(pid: u32) {
         command.args(["-KILL", &format!("-{pid}")]);
         command
     };
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     match command.status() {
         Ok(status) if status.success() => info!(pid, "agent process tree terminated"),
-        Ok(status) => warn!(pid, code = status.code(), "agent process tree termination failed"),
+        Ok(status) => warn!(
+            pid,
+            code = status.code(),
+            "agent process tree termination failed"
+        ),
         Err(error) => warn!(pid, %error, "cannot run process tree termination"),
     }
 }
@@ -306,7 +375,10 @@ fn redact_line(line: &str) -> String {
     if !is_sensitive(line) {
         return line.to_owned();
     }
-    for (at, separator) in line.char_indices().filter(|(_, c)| matches!(c, '=' | ':' | '：')) {
+    for (at, separator) in line
+        .char_indices()
+        .filter(|(_, c)| matches!(c, '=' | ':' | '：'))
+    {
         let before = line[..at].trim_end();
         let start = before
             .char_indices()
@@ -316,7 +388,10 @@ fn redact_line(line: &str) -> String {
             return format!("{}{separator} ***", &line[..at]);
         }
     }
-    line.split(' ').map(|word| if secret_shaped(word) { "***" } else { word }).collect::<Vec<_>>().join(" ")
+    line.split(' ')
+        .map(|word| if secret_shaped(word) { "***" } else { word })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn is_sensitive(text: &str) -> bool {
@@ -328,7 +403,9 @@ fn secret_shaped(word: &str) -> bool {
     let word = word.trim_matches(|c: char| c.is_ascii_punctuation() && !matches!(c, '-' | '_'));
     word.len() >= 16
         && word.chars().any(|c| c.is_ascii_digit())
-        && word.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
 #[cfg(test)]
@@ -337,10 +414,27 @@ mod tests {
 
     #[test]
     fn credentials_and_engine_config_are_never_inherited() {
-        for name in ["OPENAI_API_KEY", "my_token", "PI_CODING_AGENT_DIR", "dsh_home", "AWS_PROFILE", "ANTHROPIC_BASE_URL", "GITHUB_TOKEN", "CUSTOM_BASE_URL", "THINKRAIL_HOST_TOKEN"] {
+        for name in [
+            "OPENAI_API_KEY",
+            "my_token",
+            "PI_CODING_AGENT_DIR",
+            "dsh_home",
+            "AWS_PROFILE",
+            "ANTHROPIC_BASE_URL",
+            "GITHUB_TOKEN",
+            "CUSTOM_BASE_URL",
+            "THINKRAIL_HOST_TOKEN",
+        ] {
             assert!(is_isolated(name), "{name}");
         }
-        for name in ["PATH", "SystemRoot", "USERPROFILE", "APPDATA", "TEMP", "NODE_OPTIONS"] {
+        for name in [
+            "PATH",
+            "SystemRoot",
+            "USERPROFILE",
+            "APPDATA",
+            "TEMP",
+            "NODE_OPTIONS",
+        ] {
             assert!(!is_isolated(name), "{name}");
         }
     }
@@ -349,9 +443,17 @@ mod tests {
     fn stderr_values_after_sensitive_words_are_masked() {
         let text = "boot ok\nOPENAI_API_KEY=sk-live-1\nAuthorization: Bearer abc\nInvalid secret sk-proj-0123456789abcdef.\n中文 password：x";
         let masked = redact(text);
-        assert!(!masked.contains("sk-live-1") && !masked.contains("abc") && !masked.contains("0123456789"), "{masked}");
+        assert!(
+            !masked.contains("sk-live-1")
+                && !masked.contains("abc")
+                && !masked.contains("0123456789"),
+            "{masked}"
+        );
         assert!(!masked.ends_with('x'), "{masked}");
-        assert!(masked.starts_with("boot ok\nOPENAI_API_KEY= ***"), "{masked}");
+        assert!(
+            masked.starts_with("boot ok\nOPENAI_API_KEY= ***"),
+            "{masked}"
+        );
         assert_eq!(masked.lines().count(), 5);
     }
 
@@ -363,15 +465,26 @@ mod tests {
 
     #[test]
     fn verbatim_prefixes_are_stripped_for_engines() {
-        assert_eq!(plain_path(Path::new(r"\\?\C:\work\a")), PathBuf::from(r"C:\work\a"));
-        assert_eq!(plain_path(Path::new(r"\\?\UNC\srv\share")), PathBuf::from(r"\\srv\share"));
+        assert_eq!(
+            plain_path(Path::new(r"\\?\C:\work\a")),
+            PathBuf::from(r"C:\work\a")
+        );
+        assert_eq!(
+            plain_path(Path::new(r"\\?\UNC\srv\share")),
+            PathBuf::from(r"\\srv\share")
+        );
         assert_eq!(plain_path(Path::new(r"C:\work")), PathBuf::from(r"C:\work"));
     }
 
     #[test]
     fn routing_env_is_applied_as_launch_variables() {
         let f = crate::testing::Fixture::new();
-        let request = f.request(thinkrail_core::BackendKind::Pi, None, false, crate::testing::secret_routing());
+        let request = f.request(
+            thinkrail_core::BackendKind::Pi,
+            None,
+            false,
+            crate::testing::secret_routing(),
+        );
         let Launch::External { executable, .. } = &request.launch;
         std::fs::write(executable, b"").unwrap();
         let host_env = routing_env(&request.routing).collect();
@@ -384,7 +497,10 @@ mod tests {
             host_env,
         };
         let command = command(&spec).unwrap();
-        let envs: Vec<_> = command.get_envs().map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned))).collect();
+        let envs: Vec<_> = command
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(ToOwned::to_owned)))
+            .collect();
         for (name, value) in crate::testing::routing_vars(&request.routing) {
             assert!(envs.contains(&(name.clone().into(), Some(value))), "{name}");
         }

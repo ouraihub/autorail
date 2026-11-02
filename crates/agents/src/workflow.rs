@@ -47,7 +47,10 @@ pub(crate) const WORKFLOW_RULE: &str = "At the start of a new piece of work, rea
 pub(crate) const SPEC_RULE: &str = "Specs are this project's ground truth.\n- Consult the relevant spec when work is governed by or may alter a documented boundary, contract, invariant, behavior, or architecture decision; localized work need not read unrelated specs.\n- Treat applicable decisions and contracts as authoritative; reconcile contradictions instead of diverging.\n- When a change alters a boundary, contract, invariant, or decision, update the owning spec as part of that change.";
 
 /// Section names as the original registers them (`systemPromptOptions.sections[...]`).
-pub(crate) const RULES: [(&str, &str); 2] = [("pi-thinkrail-workflow", WORKFLOW_RULE), ("pi-spec-graph", SPEC_RULE)];
+pub(crate) const RULES: [(&str, &str); 2] = [
+    ("pi-thinkrail-workflow", WORKFLOW_RULE),
+    ("pi-spec-graph", SPEC_RULE),
+];
 
 /// Writes the bundled skills under `support_dir/skills` (unchanged files are left alone) and
 /// returns that directory for the engine's skill path.

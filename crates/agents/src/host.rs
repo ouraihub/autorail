@@ -19,7 +19,10 @@ pub(crate) const TOKEN_VAR: &str = "THINKRAIL_HOST_TOKEN";
 /// Variables every engine launch gets when host tools are on.
 pub(crate) fn env(access: &HostToolAccess) -> Vec<(String, OsString)> {
     vec![
-        ("THINKRAIL_HOST_EXE".to_owned(), plain_path(&access.executable).into_os_string()),
+        (
+            "THINKRAIL_HOST_EXE".to_owned(),
+            plain_path(&access.executable).into_os_string(),
+        ),
         (PIPE_VAR.to_owned(), access.pipe.clone().into()),
         (TOKEN_VAR.to_owned(), access.token.clone().into()),
     ]
@@ -43,7 +46,10 @@ pub(crate) fn write_support(dir: &Path, name: &str, content: &str) -> Result<Pat
 pub(crate) fn acp_server(access: &HostToolAccess) -> Result<Value> {
     let command = plain_path(&access.executable);
     if !command.is_absolute() {
-        return Err(Error::new(ErrorKind::BackendUnavailable, "宿主可执行文件路径不是绝对路径"));
+        return Err(Error::new(
+            ErrorKind::BackendUnavailable,
+            "宿主可执行文件路径不是绝对路径",
+        ));
     }
     Ok(json!({
         "name": SERVER,

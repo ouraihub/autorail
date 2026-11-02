@@ -84,9 +84,22 @@ pub struct Ansi {
 impl Ansi {
     pub fn colors(&self) -> [Rgba; 16] {
         [
-            self.black, self.red, self.green, self.yellow, self.blue, self.magenta, self.cyan, self.white,
-            self.bright_black, self.bright_red, self.bright_green, self.bright_yellow, self.bright_blue,
-            self.bright_magenta, self.bright_cyan, self.bright_white,
+            self.black,
+            self.red,
+            self.green,
+            self.yellow,
+            self.blue,
+            self.magenta,
+            self.cyan,
+            self.white,
+            self.bright_black,
+            self.bright_red,
+            self.bright_green,
+            self.bright_yellow,
+            self.bright_blue,
+            self.bright_magenta,
+            self.bright_cyan,
+            self.bright_white,
         ]
     }
 }
@@ -171,7 +184,12 @@ pub struct Roles {
 impl Roles {
     pub fn derive(p: &Palette, appearance: Appearance) -> Self {
         let mix = |c: Rgba, f: f32| c.opacity(f);
-        let black = |a: f32| Rgba { r: 0., g: 0., b: 0., a };
+        let black = |a: f32| Rgba {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+            a,
+        };
         Self {
             text_default: p.text,
             text_muted: p.muted,
@@ -233,7 +251,11 @@ impl Roles {
             editor_selection_highlight_bg: mix(p.editor_selection, alpha::SOFT),
             editor_find_match_bg: mix(p.warning, alpha::MUTED),
             widget_shadow: mix(p.text, alpha::SOFT),
-            sunken: black(if appearance == Appearance::Dark { 0.12 } else { 0.05 }),
+            sunken: black(if appearance == Appearance::Dark {
+                0.12
+            } else {
+                0.05
+            }),
             overlay: black(0.5),
         }
     }
@@ -255,14 +277,21 @@ impl ThinkrailTheme {
     fn parse(json: &str) -> Result<Self, serde_json::Error> {
         let manifest: Manifest = serde_json::from_str(json)?;
         let roles = Roles::derive(&manifest.colors, manifest.appearance);
-        Ok(Self { id: manifest.id, appearance: manifest.appearance, palette: manifest.colors, ansi: manifest.ansi, roles })
+        Ok(Self {
+            id: manifest.id,
+            appearance: manifest.appearance,
+            palette: manifest.colors,
+            ansi: manifest.ansi,
+            roles,
+        })
     }
 
     /// The bundled dark or light theme. The manifests are compiled in and pinned by tests.
     pub fn bundled(appearance: Appearance) -> Result<&'static Self, &'static str> {
         type Loaded = Result<ThinkrailTheme, String>;
         static THEMES: LazyLock<[Loaded; 2]> = LazyLock::new(|| {
-            let load = |json| ThinkrailTheme::parse(json).map_err(|e| format!("内置主题无法解析：{e}"));
+            let load =
+                |json| ThinkrailTheme::parse(json).map_err(|e| format!("内置主题无法解析：{e}"));
             [load(DARK), load(LIGHT)]
         });
         let index = match appearance {
@@ -277,7 +306,11 @@ impl ThinkrailTheme {
     }
 
     /// Installs the theme as the app global and maps it onto the component library's colors.
-    pub fn install(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) -> Result<(), &'static str> {
+    pub fn install(
+        appearance: Appearance,
+        window: Option<&mut Window>,
+        cx: &mut App,
+    ) -> Result<(), &'static str> {
         let theme = Self::bundled(appearance)?.clone();
         let mode = match appearance {
             Appearance::Dark => gpui_kit::component::ThemeMode::Dark,

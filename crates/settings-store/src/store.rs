@@ -26,6 +26,10 @@ impl SqliteSettingsStore {
     /// directory when missing and migrating an empty database. A database written by a newer
     /// version fails with `Corrupt` and is left untouched.
     pub fn open(path: &Path) -> Result<Self> {
-        Ok(Self { db: db::open(path)?, writer: Mutex::new(()), cursor: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            db: db::open(path)?,
+            writer: Mutex::new(()),
+            cursor: Mutex::new(HashMap::new()),
+        })
     }
 }

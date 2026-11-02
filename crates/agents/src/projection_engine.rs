@@ -6,8 +6,8 @@
 
 use serde_json::{Value, json};
 use thinkrail_core::{
-    EngineRouting, EnvBinding, Error, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel, ProjectedProvider,
-    Protocol, Result, ThinkingLevel,
+    EngineRouting, EnvBinding, Error, ProjectedMcpServer, ProjectedMcpTransport, ProjectedModel,
+    ProjectedProvider, Protocol, Result, ThinkingLevel,
 };
 
 /// Generated file names under `StartSession.support_dir` (04 §6.2–6.4).
@@ -59,7 +59,12 @@ pub(crate) fn pi_thinking_level_map(model: &ProjectedModel) -> Option<Vec<LevelE
     model.reasoning.then(|| {
         LEVELS
             .iter()
-            .map(|&level| (level_name(level), model.efforts.contains(&level).then(|| level_name(level))))
+            .map(|&level| {
+                (
+                    level_name(level),
+                    model.efforts.contains(&level).then(|| level_name(level)),
+                )
+            })
             .collect()
     })
 }
@@ -71,7 +76,12 @@ pub(crate) fn dsh_reasoning_efforts(model: &ProjectedModel) -> Option<Vec<LevelE
         LEVELS
             .iter()
             .filter(|level| model.efforts.contains(level))
-            .map(|&level| (level_name(level), (level != ThinkingLevel::Off).then(|| level_name(level))))
+            .map(|&level| {
+                (
+                    level_name(level),
+                    (level != ThinkingLevel::Off).then(|| level_name(level)),
+                )
+            })
             .collect()
     })
 }
@@ -89,17 +99,37 @@ fn list<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
 
 /// `{ "k": v, … }` with the keys quoted and the values already rendered; `{}` when empty.
 fn object(entries: impl IntoIterator<Item = (String, String)>) -> String {
-    let entries: Vec<String> = entries.into_iter().map(|(key, value)| format!("{}: {value}", quote(&key))).collect();
-    if entries.is_empty() { "{}".to_owned() } else { format!("{{ {} }}", entries.join(", ")) }
+    let entries: Vec<String> = entries
+        .into_iter()
+        .map(|(key, value)| format!("{}: {value}", quote(&key)))
+        .collect();
+    if entries.is_empty() {
+        "{}".to_owned()
+    } else {
+        format!("{{ {} }}", entries.join(", "))
+    }
 }
 
 /// A level map: `null` for `None`, else the quoted value.
 fn level_map(entries: &[LevelEntry]) -> String {
-    object(entries.iter().map(|(key, value)| ((*key).to_owned(), value.map_or_else(|| "null".to_owned(), quote))))
+    object(entries.iter().map(|(key, value)| {
+        (
+            (*key).to_owned(),
+            value.map_or_else(|| "null".to_owned(), quote),
+        )
+    }))
 }
 
 fn input(model: &ProjectedModel) -> String {
-    list(if model.vision { &["text", "image"][..] } else { &["text"][..] }.iter().copied())
+    list(
+        if model.vision {
+            &["text", "image"][..]
+        } else {
+            &["text"][..]
+        }
+        .iter()
+        .copied(),
+    )
 }
 
 /// Default model as the engines spell it: `<route>/<model id>`.
@@ -127,7 +157,11 @@ fn pi_reference(var: &str) -> String {
 }
 
 fn pi_bindings(bindings: &[EnvBinding]) -> String {
-    object(bindings.iter().map(|b| (b.name.clone(), pi_reference(&b.var))))
+    object(
+        bindings
+            .iter()
+            .map(|b| (b.name.clone(), pi_reference(&b.var))),
+    )
 }
 
 fn pi_model(model: &ProjectedModel) -> String {
@@ -147,7 +181,11 @@ fn pi_model(model: &ProjectedModel) -> String {
 }
 
 fn pi_provider(provider: &ProjectedProvider) -> String {
-    let models: Vec<String> = provider.models.iter().map(|m| format!("\t\t\t{},\n", pi_model(m))).collect();
+    let models: Vec<String> = provider
+        .models
+        .iter()
+        .map(|m| format!("\t\t\t{},\n", pi_model(m)))
+        .collect();
     let mut out = format!(
         "\tpi.registerProvider({}, {{\n\t\tname: {},\n\t\tbaseUrl: {},\n\t\tapi: {},\n\t\tapiKey: {},\n",
         quote(&provider.route),
@@ -157,16 +195,25 @@ fn pi_provider(provider: &ProjectedProvider) -> String {
         quote(&format!("${}", provider.key_var)),
     );
     if !provider.headers.is_empty() {
-        out.push_str(&format!("\t\theaders: {},\n", pi_bindings(&provider.headers)));
+        out.push_str(&format!(
+            "\t\theaders: {},\n",
+            pi_bindings(&provider.headers)
+        ));
     }
-    out.push_str(&format!("\t\tmodels: [\n{}\t\t],\n\t}});\n", models.concat()));
+    out.push_str(&format!(
+        "\t\tmodels: [\n{}\t\t],\n\t}});\n",
+        models.concat()
+    ));
     out
 }
 
 fn pi_mcp(server: &ProjectedMcpServer) -> String {
     let config = match &server.transport {
         ProjectedMcpTransport::Stdio { command, args, env } => {
-            let mut fields = vec![format!("command: {}", quote(command)), format!("args: {}", list(args.iter().map(String::as_str)))];
+            let mut fields = vec![
+                format!("command: {}", quote(command)),
+                format!("args: {}", list(args.iter().map(String::as_str))),
+            ];
             if !env.is_empty() {
                 fields.push(format!("env: {}", pi_bindings(env)));
             }
@@ -180,7 +227,11 @@ fn pi_mcp(server: &ProjectedMcpServer) -> String {
             fields
         }
     };
-    format!("\tpi.registerMcpServer({}, {{ {} }});\n", quote(&server.name), config.join(", "))
+    format!(
+        "\tpi.registerMcpServer({}, {{ {} }});\n",
+        quote(&server.name),
+        config.join(", ")
+    )
 }
 
 /// The original extensions' `before_agent_start` hook: the workflow and spec rules as named
@@ -188,9 +239,18 @@ fn pi_mcp(server: &ProjectedMcpServer) -> String {
 fn pi_rules() -> String {
     let sections: Vec<String> = crate::workflow::RULES
         .iter()
-        .map(|(name, rule)| format!("\t\tevent.systemPromptOptions.sections[{}] = {};\n", quote(name), quote(rule)))
+        .map(|(name, rule)| {
+            format!(
+                "\t\tevent.systemPromptOptions.sections[{}] = {};\n",
+                quote(name),
+                quote(rule)
+            )
+        })
         .collect();
-    format!("\tpi.on(\"before_agent_start\", (event) => {{\n{}\t}});\n", sections.concat())
+    format!(
+        "\tpi.on(\"before_agent_start\", (event) => {{\n{}\t}});\n",
+        sections.concat()
+    )
 }
 
 /// `pi-thinkrail.js` (04 §6.2): the workflow rules, host tools (when on), then providers, then
@@ -209,8 +269,13 @@ pub(crate) fn pi_extension(host_tools: bool, routing: &EngineRouting) -> String 
 
 /// pi arguments for the default model (new sessions only; a resumed session keeps its own).
 pub(crate) fn pi_model_args(routing: &EngineRouting) -> Vec<String> {
-    let Some(default) = &routing.default_model else { return Vec::new() };
-    let mut args = vec!["--model".to_owned(), model_ref(&default.route, &default.model_id)];
+    let Some(default) = &routing.default_model else {
+        return Vec::new();
+    };
+    let mut args = vec![
+        "--model".to_owned(),
+        model_ref(&default.route, &default.model_id),
+    ];
     if let Some(effort) = default.effort {
         args.extend(["--thinking".to_owned(), level_name(effort).to_owned()]);
     }
@@ -240,7 +305,11 @@ fn omp_model(model: &ProjectedModel) -> String {
 /// OMP builds `anthropic-messages` requests the OAuth way. Header values are read when the
 /// extension loads and live only in OMP's memory.
 fn omp_provider(provider: &ProjectedProvider) -> String {
-    let models: Vec<String> = provider.models.iter().map(|m| format!("\t\t\t{},\n", omp_model(m))).collect();
+    let models: Vec<String> = provider
+        .models
+        .iter()
+        .map(|m| format!("\t\t\t{},\n", omp_model(m)))
+        .collect();
     let mut out = format!(
         "\tpi.registerProvider({}, {{\n\t\tbaseUrl: {},\n\t\tapi: {},\n\t\tapiKey: {},\n\t\tauth: \"apiKey\",\n\t\tauthHeader: true,\n",
         quote(&provider.route),
@@ -249,10 +318,18 @@ fn omp_provider(provider: &ProjectedProvider) -> String {
         quote(&provider.key_var),
     );
     if !provider.headers.is_empty() {
-        let headers = object(provider.headers.iter().map(|b| (b.name.clone(), format!("process.env.{} ?? \"\"", b.var))));
+        let headers = object(
+            provider
+                .headers
+                .iter()
+                .map(|b| (b.name.clone(), format!("process.env.{} ?? \"\"", b.var))),
+        );
         out.push_str(&format!("\t\theaders: {headers},\n"));
     }
-    out.push_str(&format!("\t\tmodels: [\n{}\t\t],\n\t}});\n", models.concat()));
+    out.push_str(&format!(
+        "\t\tmodels: [\n{}\t\t],\n\t}});\n",
+        models.concat()
+    ));
     out
 }
 
@@ -260,7 +337,10 @@ fn omp_provider(provider: &ProjectedProvider) -> String {
 /// (`before_agent_start` → `systemPrompt`), then provider registrations (host tools travel over RPC).
 pub(crate) fn omp_extension(routing: &EngineRouting) -> String {
     let mut body = OMP_EXTENSION_HEAD.to_owned();
-    let rules: Vec<String> = crate::workflow::RULES.iter().map(|(name, rule)| quote(&format!("<{name}>\n{rule}\n</{name}>"))).collect();
+    let rules: Vec<String> = crate::workflow::RULES
+        .iter()
+        .map(|(name, rule)| quote(&format!("<{name}>\n{rule}\n</{name}>")))
+        .collect();
     body.push_str(&format!(
         "\tpi.on(\"before_agent_start\", (event) => ({{ systemPrompt: [...event.systemPrompt, {}] }}));\n",
         rules.join(", ")
@@ -273,7 +353,10 @@ pub(crate) fn omp_extension(routing: &EngineRouting) -> String {
 /// `omp-thinkrail.yml` (04 §6.3), loaded with `--config`: the bundled skills directory, project
 /// MCP configs off when there are host MCP servers, and the default model as `modelRoles.default`.
 pub(crate) fn omp_overlay(routing: &EngineRouting, skills: &std::path::Path) -> String {
-    let mut body = format!("skills:\n  customDirectories:\n    - {}\n", quote(&skills.display().to_string()));
+    let mut body = format!(
+        "skills:\n  customDirectories:\n    - {}\n",
+        quote(&skills.display().to_string())
+    );
     if !routing.mcp.is_empty() || routing.default_model.is_some() {
         body.push_str("mcp:\n  enableProjectConfig: false\n");
     }
@@ -288,7 +371,8 @@ pub(crate) fn omp_overlay(routing: &EngineRouting, skills: &std::path::Path) -> 
 }
 
 fn dsh_model(model: &ProjectedModel) -> String {
-    let efforts = dsh_reasoning_efforts(model).map_or_else(|| "false".to_owned(), |map| level_map(&map));
+    let efforts =
+        dsh_reasoning_efforts(model).map_or_else(|| "false".to_owned(), |map| level_map(&map));
     format!(
         "          - id: {}\n            name: {}\n            contextWindow: {}\n            maxTokens: {}\n            input: {}\n            reasoningEfforts: {efforts}\n",
         quote(&model.id),
@@ -307,9 +391,19 @@ const DSH_ACP_PERSONA: &str = "You are a coding agent powered by the {{model}} m
 /// the built-in TODO tool off (host tools on), the providers merged into `llm-pi-ai`, and the
 /// `acp` default model. Providers carry no headers: DSH cannot reference header values by
 /// variable, so `prepare` routes such providers through the gateway.
-pub(crate) fn dsh_patch(host_tools: bool, routing: &EngineRouting, skills: &std::path::Path) -> Result<String> {
-    let mut body = format!("- id: skill-filesystem\n  config:\n    customSkillDirs:\n      - {}\n", quote(&skills.display().to_string()));
-    let rules: Vec<String> = crate::workflow::RULES.iter().map(|(name, rule)| format!("<{name}>\n{rule}\n</{name}>")).collect();
+pub(crate) fn dsh_patch(
+    host_tools: bool,
+    routing: &EngineRouting,
+    skills: &std::path::Path,
+) -> Result<String> {
+    let mut body = format!(
+        "- id: skill-filesystem\n  config:\n    customSkillDirs:\n      - {}\n",
+        quote(&skills.display().to_string())
+    );
+    let rules: Vec<String> = crate::workflow::RULES
+        .iter()
+        .map(|(name, rule)| format!("<{name}>\n{rule}\n</{name}>"))
+        .collect();
     body.push_str(&format!(
         "- id: system-prompt\n  config:\n    personaPrefix: {}\n    personaSuffix: {}\n",
         quote(DSH_ACP_PERSONA),
@@ -322,7 +416,10 @@ pub(crate) fn dsh_patch(host_tools: bool, routing: &EngineRouting, skills: &std:
         body.push_str("- id: llm-pi-ai\n  config:\n    providers:\n");
         for provider in &routing.providers {
             if !provider.headers.is_empty() {
-                return Err(Error::invalid(format!("DSH 不能投影提供方 {} 的额外请求头，应改走网关", provider.display_name)));
+                return Err(Error::invalid(format!(
+                    "DSH 不能投影提供方 {} 的额外请求头，应改走网关",
+                    provider.display_name
+                )));
             }
             body.push_str(&format!(
                 "      {}:\n        displayName: {}\n        api: {}\n        baseURL: {}\n        apiKeyEnv: {}\n        models:\n",
@@ -354,7 +451,9 @@ fn acp_values(server: &str, bindings: &[EnvBinding], routing: &EngineRouting) ->
                 .iter()
                 .find(|(name, _)| *name == binding.var)
                 .map(|(_, value)| value.expose())
-                .ok_or_else(|| Error::invalid(format!("MCP 服务器 {server} 缺少变量 {} 的值", binding.var)))?;
+                .ok_or_else(|| {
+                    Error::invalid(format!("MCP 服务器 {server} 缺少变量 {} 的值", binding.var))
+                })?;
             Ok(json!({"name": binding.name, "value": value}))
         })
         .collect::<Result<Vec<_>>>()

@@ -7,8 +7,17 @@ use std::{
 
 use super::model::{Frontmatter, is_spec, parse_frontmatter};
 
-const IGNORED_DIRS: [&str; 9] =
-    ["node_modules", ".git", "dist", "build", ".claude", ".superpowers", ".gsd", ".mockups", ".playwright-mcp"];
+const IGNORED_DIRS: [&str; 9] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".claude",
+    ".superpowers",
+    ".gsd",
+    ".mockups",
+    ".playwright-mcp",
+];
 const EXTENSION: &str = ".md";
 
 #[derive(Debug)]
@@ -50,13 +59,22 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<SpecFile>) {
     candidates.sort();
     for (name, directory) in candidates {
         let abs = dir.join(&name);
-        let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
         if directory {
             walk(&abs, &rel, out);
         } else if let Ok(content) = fs::read_to_string(&abs)
             && let Some(fm) = parse_frontmatter(&content).filter(is_spec)
         {
-            out.push(SpecFile { rel, abs, content, fm });
+            out.push(SpecFile {
+                rel,
+                abs,
+                content,
+                fm,
+            });
         }
     }
 }
@@ -71,7 +89,11 @@ fn resolve_segment(entries: &[String], segment: &str, exists: bool) -> Result<St
         let folded = fold(segment);
         let matches: Vec<&String> = entries.iter().filter(|e| fold(e) == folded).collect();
         match matches.as_slice() {
-            [] => return Err(format!("Path component \"{segment}\" resolves to no entry its parent directory lists")),
+            [] => {
+                return Err(format!(
+                    "Path component \"{segment}\" resolves to no entry its parent directory lists"
+                ));
+            }
             [only] => name = (*only).clone(),
             [first, rest @ ..] => {
                 let rest: Vec<&str> = rest.iter().map(|s| s.as_str()).collect();
@@ -83,7 +105,9 @@ fn resolve_segment(entries: &[String], segment: &str, exists: bool) -> Result<St
         }
     }
     if IGNORED_DIRS.contains(&fold(&name).as_str()) {
-        return Err(format!("Path is inside an ignored directory (\"{name}\") and would not be indexed"));
+        return Err(format!(
+            "Path is inside an ignored directory (\"{name}\") and would not be indexed"
+        ));
     }
     Ok(name)
 }
@@ -99,7 +123,9 @@ pub(super) fn resolve_spec_path(root: &Path, path: &str) -> Result<(String, Path
         return Err(format!("Path must be root-relative, not absolute: {path}"));
     }
     if cfg!(windows) && path.contains(':') {
-        return Err(format!("Path must not use Windows drive or stream syntax: {path}"));
+        return Err(format!(
+            "Path must not use Windows drive or stream syntax: {path}"
+        ));
     }
     if !path.ends_with(EXTENSION) {
         return Err(format!("Spec files must end in {EXTENSION}: {path}"));
@@ -120,7 +146,9 @@ pub(super) fn resolve_spec_path(root: &Path, path: &str) -> Result<(String, Path
     }
     // Win32 silently strips a trailing dot/space, so `dir./SPEC.md` would land in `dir/`.
     if cfg!(windows) && segments.iter().any(|s| s.ends_with(['.', ' '])) {
-        return Err(format!("Path components must not end in a dot or space on Windows: {path}"));
+        return Err(format!(
+            "Path components must not end in a dot or space on Windows: {path}"
+        ));
     }
     if !root.is_dir() {
         return Err(format!("Project root does not exist: {}", root.display()));
@@ -133,16 +161,24 @@ pub(super) fn resolve_spec_path(root: &Path, path: &str) -> Result<(String, Path
         let mut entries = Vec::new();
         if walked_exists {
             let Ok(read) = fs::read_dir(&walked) else {
-                return Err(format!("Path passes through a directory the index cannot list: {path}"));
+                return Err(format!(
+                    "Path passes through a directory the index cannot list: {path}"
+                ));
             };
-            entries = read.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+            entries = read
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok())
+                .collect();
         }
         let exists = walked_exists && fs::symlink_metadata(walked.join(segment)).is_ok();
-        let name = resolve_segment(&entries, segment, exists).map_err(|error| format!("{error}: {path}"))?;
+        let name = resolve_segment(&entries, segment, exists)
+            .map_err(|error| format!("{error}: {path}"))?;
         walked.push(&name);
         // `is_symlink` also covers Windows junctions (name-surrogate reparse points).
         if fs::symlink_metadata(&walked).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(format!("Path passes through a symlink, which the index never follows: {path}"));
+            return Err(format!(
+                "Path passes through a symlink, which the index never follows: {path}"
+            ));
         }
         canonical.push(name);
         walked_exists = exists;

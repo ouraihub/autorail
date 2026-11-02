@@ -11,7 +11,10 @@ fn theme(appearance: Appearance) -> &'static ThinkrailTheme {
 fn same(actual: Rgba, expected: Rgba) {
     let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
     assert!(
-        close(actual.r, expected.r) && close(actual.g, expected.g) && close(actual.b, expected.b) && close(actual.a, expected.a),
+        close(actual.r, expected.r)
+            && close(actual.g, expected.g)
+            && close(actual.b, expected.b)
+            && close(actual.a, expected.a),
         "{actual:?} != {expected:?}"
     );
 }
@@ -48,18 +51,70 @@ fn roles_follow_the_original_derivations() {
     same(dark.control_bg_selected, rgba(0x27272aff));
     same(dark.control_primary_bg, rgba(0x8dff4fff));
     // color-mix(in srgb, X n%, transparent) keeps the hue and scales alpha.
-    same(dark.text_disabled, Rgba { a: 0.6, ..rgba(0xf4f4f5ff) });
-    same(dark.primary_subtle, Rgba { a: 0.1, ..rgba(0x8dff4fff) });
-    same(dark.feedback_error_subtle, Rgba { a: 0.12, ..rgba(0xff4b75ff) });
-    same(dark.bubble_user_border, Rgba { a: 0.4, ..rgba(0x8dff4fff) });
-    same(dark.selection_bg_muted, Rgba { a: 0.4 * (0x26 as f32 / 255.), ..rgba(0x6ac8ffff) });
-    same(dark.sunken, Rgba { r: 0., g: 0., b: 0., a: 0.12 });
+    same(
+        dark.text_disabled,
+        Rgba {
+            a: 0.6,
+            ..rgba(0xf4f4f5ff)
+        },
+    );
+    same(
+        dark.primary_subtle,
+        Rgba {
+            a: 0.1,
+            ..rgba(0x8dff4fff)
+        },
+    );
+    same(
+        dark.feedback_error_subtle,
+        Rgba {
+            a: 0.12,
+            ..rgba(0xff4b75ff)
+        },
+    );
+    same(
+        dark.bubble_user_border,
+        Rgba {
+            a: 0.4,
+            ..rgba(0x8dff4fff)
+        },
+    );
+    same(
+        dark.selection_bg_muted,
+        Rgba {
+            a: 0.4 * (0x26 as f32 / 255.),
+            ..rgba(0x6ac8ffff)
+        },
+    );
+    same(
+        dark.sunken,
+        Rgba {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+            a: 0.12,
+        },
+    );
 
     let light = &theme(Appearance::Light).roles;
     // Light keeps the bright solid primary fill but tints from its own darker accent.
     same(light.control_primary_bg, rgba(0x8dff4fff));
-    same(light.primary_soft, Rgba { a: 0.2, ..rgba(0x2a7314ff) });
-    same(light.sunken, Rgba { r: 0., g: 0., b: 0., a: 0.05 });
+    same(
+        light.primary_soft,
+        Rgba {
+            a: 0.2,
+            ..rgba(0x2a7314ff)
+        },
+    );
+    same(
+        light.sunken,
+        Rgba {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+            a: 0.05,
+        },
+    );
 }
 
 #[test]

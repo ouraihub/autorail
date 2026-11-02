@@ -12,7 +12,10 @@ use crate::{db::Conn, providers, validate};
 fn input(preset: &ProviderPreset) -> ProviderInput {
     ProviderInput {
         name: preset.name.to_owned(),
-        endpoints: vec![Endpoint { protocol: preset.protocol, base_url: preset.base_url.to_owned() }],
+        endpoints: vec![Endpoint {
+            protocol: preset.protocol,
+            base_url: preset.base_url.to_owned(),
+        }],
         default_protocol: preset.protocol,
         headers: Vec::new(),
         access: Access::Direct,
@@ -26,11 +29,20 @@ fn input(preset: &ProviderPreset) -> ProviderInput {
 pub(crate) fn seed(conn: &Conn) -> Result<usize> {
     let mut seeded = 0;
     for preset in PROVIDER_PRESETS {
-        if conn.row("SELECT 1 FROM providers WHERE preset_id = ?1", (preset.id,))?.is_some() {
+        if conn
+            .row("SELECT 1 FROM providers WHERE preset_id = ?1", (preset.id,))?
+            .is_some()
+        {
             continue;
         }
-        if conn.row("SELECT 1 FROM providers WHERE name = ?1", (preset.name,))?.is_some() {
-            warn!(preset = preset.id, "preset skipped: a provider with its name exists");
+        if conn
+            .row("SELECT 1 FROM providers WHERE name = ?1", (preset.name,))?
+            .is_some()
+        {
+            warn!(
+                preset = preset.id,
+                "preset skipped: a provider with its name exists"
+            );
             continue;
         }
         providers::insert(conn, &validate::provider(input(preset))?, Some(preset.id))?;

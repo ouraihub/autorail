@@ -11,8 +11,8 @@ use std::{
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
-    ContentBlock, Error, ErrorKind, Interaction, InteractionAnswer, InteractionKind, InteractionOption, Message,
-    ModelInfo, Result, Role, ThinkingLevel, ToolStatus,
+    ContentBlock, Error, ErrorKind, Interaction, InteractionAnswer, InteractionKind,
+    InteractionOption, Message, ModelInfo, Result, Role, ThinkingLevel, ToolStatus,
 };
 use tracing::debug;
 
@@ -41,7 +41,9 @@ impl Stream {
     }
 
     pub(crate) fn message_start(&mut self, p: &mut Projection, frame: &Value) {
-        let id = frame["messageId"].as_str().map_or_else(new_id, str::to_owned);
+        let id = frame["messageId"]
+            .as_str()
+            .map_or_else(new_id, str::to_owned);
         self.current = Some(id.clone());
         self.blocks.clear();
         if let Some(blocks) = put(p, &frame["message"], id, false) {
@@ -59,7 +61,9 @@ impl Stream {
     pub(crate) fn message_update(&mut self, p: &mut Projection, frame: &Value) {
         let id = self.id(frame);
         let event = &frame["assistantMessageEvent"];
-        let index = event["contentIndex"].as_u64().and_then(|i| usize::try_from(i).ok());
+        let index = event["contentIndex"]
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok());
         let kind = event["type"].as_str().unwrap_or("");
         if kind == "start" {
             if let Some(blocks) = put(p, &event["message"], id, false) {
@@ -68,21 +72,53 @@ impl Stream {
             return;
         }
         if !p.contains(&id) {
-            p.upsert(Message { id: id.clone(), role: Role::Assistant, content: Vec::new() });
+            p.upsert(Message {
+                id: id.clone(),
+                role: Role::Assistant,
+                content: Vec::new(),
+            });
         }
         let Some(index) = index else { return };
         let block = &event["block"];
         match kind {
             "text_start" => {
-                self.open(p, &id, index, ContentBlock::Text { text: str_of(&block["text"]) });
+                self.open(
+                    p,
+                    &id,
+                    index,
+                    ContentBlock::Text {
+                        text: str_of(&block["text"]),
+                    },
+                );
             }
             "thinking_start" => {
-                self.open(p, &id, index, ContentBlock::Thinking { text: str_of(&block["thinking"]) });
+                self.open(
+                    p,
+                    &id,
+                    index,
+                    ContentBlock::Thinking {
+                        text: str_of(&block["thinking"]),
+                    },
+                );
             }
             "toolcall_start" => {
-                let tool_call_id = event["id"].as_str().or(block["id"].as_str()).unwrap_or_default().to_owned();
-                let name = event["toolName"].as_str().or(block["name"].as_str()).unwrap_or_default().to_owned();
-                let tool = ContentBlock::Tool { tool_call_id, name, status: ToolStatus::Running, input: None, output: None };
+                let tool_call_id = event["id"]
+                    .as_str()
+                    .or(block["id"].as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let name = event["toolName"]
+                    .as_str()
+                    .or(block["name"].as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let tool = ContentBlock::Tool {
+                    tool_call_id,
+                    name,
+                    status: ToolStatus::Running,
+                    input: None,
+                    output: None,
+                };
                 self.open(p, &id, index, tool);
             }
             "text_delta" | "thinking_delta" => {
@@ -91,9 +127,13 @@ impl Stream {
                     Some(&target) => target,
                     None => {
                         let empty = if kind == "text_delta" {
-                            ContentBlock::Text { text: String::new() }
+                            ContentBlock::Text {
+                                text: String::new(),
+                            }
                         } else {
-                            ContentBlock::Thinking { text: String::new() }
+                            ContentBlock::Thinking {
+                                text: String::new(),
+                            }
                         };
                         self.open(p, &id, index, empty)
                     }
@@ -101,9 +141,12 @@ impl Stream {
                 p.append(&id, target, delta);
             }
             "text_end" | "thinking_end" => {
-                if let (Some(&target), Some(content)) = (self.blocks.get(&index), event["content"].as_str()) {
+                if let (Some(&target), Some(content)) =
+                    (self.blocks.get(&index), event["content"].as_str())
+                {
                     p.update(&id, |m| {
-                        if let Some(ContentBlock::Text { text } | ContentBlock::Thinking { text }) = m.content.get_mut(target)
+                        if let Some(ContentBlock::Text { text } | ContentBlock::Thinking { text }) =
+                            m.content.get_mut(target)
                             && text != content
                         {
                             content.clone_into(text);
@@ -138,16 +181,26 @@ impl Stream {
 
 /// Applies a tool execution event (pi and OMP share them).
 pub(crate) fn tool_event(p: &mut Projection, frame: &Value) {
-    let Some(id) = frame["toolCallId"].as_str() else { return };
+    let Some(id) = frame["toolCallId"].as_str() else {
+        return;
+    };
     match frame["type"].as_str() {
         Some("tool_execution_start") => {
             p.set_tool(id, ToolStatus::Running, None);
         }
         Some("tool_execution_update") => {
-            p.set_tool(id, ToolStatus::Running, Some(result_text(&frame["partialResult"])));
+            p.set_tool(
+                id,
+                ToolStatus::Running,
+                Some(result_text(&frame["partialResult"])),
+            );
         }
         Some("tool_execution_end") => {
-            let status = if frame["isError"] == true { ToolStatus::Failed } else { ToolStatus::Completed };
+            let status = if frame["isError"] == true {
+                ToolStatus::Failed
+            } else {
+                ToolStatus::Completed
+            };
             p.set_tool(id, status, Some(result_text(&frame["result"])));
         }
         _ => {}
@@ -164,35 +217,74 @@ pub(crate) fn replay(p: &mut Projection, messages: &[Value], first: usize) {
 /// Projects one engine message. Tool results merge into the tool block that called them; an
 /// assistant failure becomes a visible system note (and, when `live`, the session's last error).
 /// Returns the content-index map of the projected message.
-fn put(p: &mut Projection, message: &Value, id: String, live: bool) -> Option<HashMap<usize, usize>> {
+fn put(
+    p: &mut Projection,
+    message: &Value,
+    id: String,
+    live: bool,
+) -> Option<HashMap<usize, usize>> {
     let role = message["role"].as_str()?;
     if role == "toolResult" {
         let tool_call_id = message["toolCallId"].as_str()?;
-        let status = if message["isError"] == true { ToolStatus::Failed } else { ToolStatus::Completed };
+        let status = if message["isError"] == true {
+            ToolStatus::Failed
+        } else {
+            ToolStatus::Completed
+        };
         p.set_tool(tool_call_id, status, Some(result_text(message)));
         return None;
     }
     let (role, content, blocks) = match role {
-        "user" => (Role::User, content_blocks(&message["content"]), HashMap::new()),
+        "user" => (
+            Role::User,
+            content_blocks(&message["content"]),
+            HashMap::new(),
+        ),
         "assistant" => {
             let (content, blocks) = assistant_blocks(&message["content"]);
             (Role::Assistant, content, blocks)
         }
         "custom" if message["display"] != true => return None,
-        "custom" => (Role::System, content_blocks(&message["content"]), HashMap::new()),
+        "custom" => (
+            Role::System,
+            content_blocks(&message["content"]),
+            HashMap::new(),
+        ),
         "bashExecution" => {
-            let text = format!("$ {}\n{}", str_of(&message["command"]), str_of(&message["output"]));
-            (Role::System, vec![ContentBlock::Text { text }], HashMap::new())
+            let text = format!(
+                "$ {}\n{}",
+                str_of(&message["command"]),
+                str_of(&message["output"])
+            );
+            (
+                Role::System,
+                vec![ContentBlock::Text { text }],
+                HashMap::new(),
+            )
         }
-        "compactionSummary" | "branchSummary" => {
-            (Role::System, vec![ContentBlock::Text { text: str_of(&message["summary"]) }], HashMap::new())
-        }
+        "compactionSummary" | "branchSummary" => (
+            Role::System,
+            vec![ContentBlock::Text {
+                text: str_of(&message["summary"]),
+            }],
+            HashMap::new(),
+        ),
         _ => return None,
     };
-    p.upsert(Message { id: id.clone(), role, content });
+    p.upsert(Message {
+        id: id.clone(),
+        role,
+        content,
+    });
     if message["stopReason"] == "error" {
         let error = engine_error(message["errorMessage"].as_str().unwrap_or("模型请求失败"));
-        let note = Message { id: format!("{id}-error"), role: Role::System, content: vec![ContentBlock::Text { text: error.to_string() }] };
+        let note = Message {
+            id: format!("{id}-error"),
+            role: Role::System,
+            content: vec![ContentBlock::Text {
+                text: error.to_string(),
+            }],
+        };
         p.upsert(note);
         if live {
             p.error(session_error(&error));
@@ -206,9 +298,15 @@ fn assistant_blocks(content: &Value) -> (Vec<ContentBlock>, HashMap<usize, usize
     let mut map = HashMap::new();
     for (index, block) in content.as_array().into_iter().flatten().enumerate() {
         let projected = match block["type"].as_str() {
-            Some("text") => ContentBlock::Text { text: str_of(&block["text"]) },
-            Some("thinking") => ContentBlock::Thinking { text: str_of(&block["thinking"]) },
-            Some("image") => ContentBlock::Image { mime_type: str_of(&block["mimeType"]) },
+            Some("text") => ContentBlock::Text {
+                text: str_of(&block["text"]),
+            },
+            Some("thinking") => ContentBlock::Thinking {
+                text: str_of(&block["thinking"]),
+            },
+            Some("image") => ContentBlock::Image {
+                mime_type: str_of(&block["mimeType"]),
+            },
             Some("toolCall") => ContentBlock::Tool {
                 tool_call_id: str_of(&block["id"]),
                 name: str_of(&block["name"]),
@@ -226,15 +324,21 @@ fn assistant_blocks(content: &Value) -> (Vec<ContentBlock>, HashMap<usize, usize
 
 fn content_blocks(content: &Value) -> Vec<ContentBlock> {
     if let Some(text) = content.as_str() {
-        return vec![ContentBlock::Text { text: text.to_owned() }];
+        return vec![ContentBlock::Text {
+            text: text.to_owned(),
+        }];
     }
     content
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|block| match block["type"].as_str() {
-            Some("text") => Some(ContentBlock::Text { text: str_of(&block["text"]) }),
-            Some("image") => Some(ContentBlock::Image { mime_type: str_of(&block["mimeType"]) }),
+            Some("text") => Some(ContentBlock::Text {
+                text: str_of(&block["text"]),
+            }),
+            Some("image") => Some(ContentBlock::Image {
+                mime_type: str_of(&block["mimeType"]),
+            }),
             _ => None,
         })
         .collect()
@@ -276,8 +380,15 @@ pub(crate) fn thinking_level(name: &str) -> Option<ThinkingLevel> {
 
 /// The pi-family commands (without `type`/`id`) that switch this session's model: `set_model`,
 /// then `set_thinking_level` when a level is given. Nothing is persisted (RPC sends no `persist`).
-pub(crate) fn switch_commands(provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Vec<(&'static str, Value)> {
-    let mut commands = vec![("set_model", json!({"provider": provider, "modelId": model_id}))];
+pub(crate) fn switch_commands(
+    provider: &str,
+    model_id: &str,
+    effort: Option<ThinkingLevel>,
+) -> Vec<(&'static str, Value)> {
+    let mut commands = vec![(
+        "set_model",
+        json!({"provider": provider, "modelId": model_id}),
+    )];
     if let Some(level) = effort {
         commands.push(("set_thinking_level", json!({"level": level_name(level)})));
     }
@@ -309,10 +420,16 @@ pub(crate) fn model_event(p: &mut Projection, frame: &Value) {
         p.set_model(model(frame));
         return;
     }
-    let level = frame.get("thinkingLevel").or_else(|| frame.get("level")).and_then(Value::as_str);
+    let level = frame
+        .get("thinkingLevel")
+        .or_else(|| frame.get("level"))
+        .and_then(Value::as_str);
     let Some(level) = level else { return };
     if let Some(current) = p.model() {
-        let updated = ModelInfo { effort: thinking_level(level), ..current.clone() };
+        let updated = ModelInfo {
+            effort: thinking_level(level),
+            ..current.clone()
+        };
         p.set_model(Some(updated));
     }
 }
@@ -329,7 +446,9 @@ pub(crate) enum UiRequest {
 pub(crate) fn ui_request(frame: &Value) -> Result<UiRequest> {
     let method = frame["method"].as_str().unwrap_or("");
     if method == "cancel" {
-        return Ok(frame["targetId"].as_str().map_or(UiRequest::Ignore, |t| UiRequest::Withdraw(t.to_owned())));
+        return Ok(frame["targetId"]
+            .as_str()
+            .map_or(UiRequest::Ignore, |t| UiRequest::Withdraw(t.to_owned())));
     }
     let kind = match method {
         "select" => InteractionKind::Select,
@@ -339,18 +458,25 @@ pub(crate) fn ui_request(frame: &Value) -> Result<UiRequest> {
         "ask" => InteractionKind::Ask,
         _ => return Ok(UiRequest::Ignore),
     };
-    let request_id = frame["id"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| Error::protocol("交互请求缺少 id"))?;
+    let request_id = frame["id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::protocol("交互请求缺少 id"))?;
     let options = match kind {
         InteractionKind::Select => frame["options"]
             .as_array()
             .ok_or_else(|| Error::protocol("select 请求缺少 options"))?
             .iter()
             .enumerate()
-            .map(|(index, label)| InteractionOption { id: index.to_string(), label: str_of(label) })
+            .map(|(index, label)| InteractionOption {
+                id: index.to_string(),
+                label: str_of(label),
+            })
             .collect(),
         _ => Vec::new(),
     };
-    if kind == InteractionKind::Ask && !frame["questions"].as_array().is_some_and(|q| !q.is_empty()) {
+    if kind == InteractionKind::Ask && !frame["questions"].as_array().is_some_and(|q| !q.is_empty())
+    {
         return Err(Error::protocol("ask 请求缺少 questions"));
     }
     let message = match kind {
@@ -367,7 +493,10 @@ pub(crate) fn ui_request(frame: &Value) -> Result<UiRequest> {
         options,
         detail: frame.clone(),
     };
-    let timeout = frame["timeout"].as_u64().filter(|&ms| ms > 0).map(Duration::from_millis);
+    let timeout = frame["timeout"]
+        .as_u64()
+        .filter(|&ms| ms > 0)
+        .map(Duration::from_millis);
     Ok(UiRequest::Show(interaction, timeout))
 }
 
@@ -381,16 +510,24 @@ pub(crate) fn ui_response(interaction: &Interaction, answer: &InteractionAnswer)
             json!({"type":"extension_ui_response","id":id,"confirmed":confirmed})
         }
         (InteractionKind::Select, InteractionAnswer::Select { option_id }) => {
-            let option = interaction.options.iter().find(|o| &o.id == option_id).ok_or_else(wrong)?;
+            let option = interaction
+                .options
+                .iter()
+                .find(|o| &o.id == option_id)
+                .ok_or_else(wrong)?;
             json!({"type":"extension_ui_response","id":id,"value":option.label})
         }
         (InteractionKind::Input | InteractionKind::Editor, InteractionAnswer::Text { text }) => {
             json!({"type":"extension_ui_response","id":id,"value":text})
         }
         (InteractionKind::Ask, InteractionAnswer::Answers { answers }) => {
-            let expected = interaction.detail["questions"].as_array().map_or(0, Vec::len);
+            let expected = interaction.detail["questions"]
+                .as_array()
+                .map_or(0, Vec::len);
             if answers.as_array().map(Vec::len) != Some(expected) {
-                return Err(Error::invalid(format!("需要按顺序回答全部 {expected} 个问题")));
+                return Err(Error::invalid(format!(
+                    "需要按顺序回答全部 {expected} 个问题"
+                )));
             }
             json!({"type":"extension_ui_response","id":id,"answers":answers})
         }
@@ -414,7 +551,9 @@ impl Dialogs {
         match ui_request(frame)? {
             UiRequest::Show(interaction, timeout) => {
                 if let Some(timeout) = timeout {
-                    self.deadlines.lock().insert(interaction.request_id.clone(), Instant::now() + timeout);
+                    self.deadlines
+                        .lock()
+                        .insert(interaction.request_id.clone(), Instant::now() + timeout);
                     expire_later(live, interaction.request_id.clone(), timeout);
                 }
                 live.state.lock().add_interaction(interaction);
@@ -432,9 +571,18 @@ impl Dialogs {
     }
 
     /// Sends the user's answer; the card leaves only once the engine has it.
-    pub(crate) fn respond(&self, live: &Live, request_id: &str, answer: &InteractionAnswer) -> Result<()> {
+    pub(crate) fn respond(
+        &self,
+        live: &Live,
+        request_id: &str,
+        answer: &InteractionAnswer,
+    ) -> Result<()> {
         live.ensure_open()?;
-        let expired = self.deadlines.lock().get(request_id).is_some_and(|d| *d <= Instant::now());
+        let expired = self
+            .deadlines
+            .lock()
+            .get(request_id)
+            .is_some_and(|d| *d <= Instant::now());
         let mut p = live.state.lock();
         let Some(interaction) = p.take_interaction(request_id) else {
             return Err(expired_error());
@@ -467,15 +615,17 @@ impl Dialogs {
 
 fn expire_later(live: &Arc<Live>, id: String, timeout: Duration) {
     let live = Arc::downgrade(live);
-    let spawned = thread::Builder::new().name("agent-dialog-timeout".into()).spawn(move || {
-        thread::sleep(timeout);
-        if let Some(live) = live.upgrade() {
-            let mut p = live.state.lock();
-            if p.take_interaction(&id).is_some() {
-                p.publish();
+    let spawned = thread::Builder::new()
+        .name("agent-dialog-timeout".into())
+        .spawn(move || {
+            thread::sleep(timeout);
+            if let Some(live) = live.upgrade() {
+                let mut p = live.state.lock();
+                if p.take_interaction(&id).is_some() {
+                    p.publish();
+                }
             }
-        }
-    });
+        });
     if let Err(error) = spawned {
         debug!(%error, "cannot schedule dialog expiry; the card stays until answered");
     }

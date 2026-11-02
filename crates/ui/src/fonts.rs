@@ -23,7 +23,8 @@ const FILES: [&[u8]; 7] = [
 
 /// Registers the bundled faces with the platform text system.
 pub fn register(cx: &App) -> anyhow::Result<()> {
-    cx.text_system().add_fonts(FILES.iter().map(|bytes| Cow::Borrowed(*bytes)).collect())
+    cx.text_system()
+        .add_fonts(FILES.iter().map(|bytes| Cow::Borrowed(*bytes)).collect())
 }
 
 pub fn family(family: Family) -> &'static str {
@@ -46,7 +47,12 @@ pub fn face_weight(style: &TextStyle) -> FontWeight {
     let nearest = shipped
         .iter()
         .copied()
-        .min_by(|a, b| (a - target).abs().total_cmp(&(b - target).abs()).then(b.total_cmp(a)))
+        .min_by(|a, b| {
+            (a - target)
+                .abs()
+                .total_cmp(&(b - target).abs())
+                .then(b.total_cmp(a))
+        })
         .unwrap_or(target);
     FontWeight(nearest)
 }

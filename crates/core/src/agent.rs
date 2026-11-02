@@ -2,23 +2,41 @@ use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BackendKind, ChatId, EngineRouting, HostToolAccess, Launch, NativeSessionKey, Result, ThinkingLevel, WorkspaceId};
+use crate::{
+    BackendKind, ChatId, EngineRouting, HostToolAccess, Launch, NativeSessionKey, Result,
+    ThinkingLevel, WorkspaceId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Role { User, Assistant, Tool, System }
+pub enum Role {
+    User,
+    Assistant,
+    Tool,
+    System,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ToolStatus { Running, Completed, Failed }
+pub enum ToolStatus {
+    Running,
+    Completed,
+    Failed,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ContentBlock {
-    Text { text: String },
-    Thinking { text: String },
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+    },
     /// Images are announced by type only; the engine owns the bytes.
-    Image { mime_type: String },
+    Image {
+        mime_type: String,
+    },
     Tool {
         tool_call_id: String,
         name: String,
@@ -53,7 +71,14 @@ pub enum SessionPhase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum InteractionKind { Permission, Confirm, Select, Input, Editor, Ask }
+pub enum InteractionKind {
+    Permission,
+    Confirm,
+    Select,
+    Input,
+    Editor,
+    Ask,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,12 +104,20 @@ pub struct Interaction {
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum InteractionAnswer {
     Cancel,
-    Confirm { confirmed: bool },
+    Confirm {
+        confirmed: bool,
+    },
     /// An option id from [`Interaction::options`].
-    Select { option_id: String },
-    Text { text: String },
+    Select {
+        option_id: String,
+    },
+    Text {
+        text: String,
+    },
     /// OMP structured questionnaire answers, passed through verbatim.
-    Answers { answers: serde_json::Value },
+    Answers {
+        answers: serde_json::Value,
+    },
 }
 
 /// What a backend can actually do. The UI offers only what is true here.
@@ -141,19 +174,37 @@ pub struct SessionSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum SessionEvent {
-    Snapshot { snapshot: Box<SessionSnapshot> },
+    Snapshot {
+        snapshot: Box<SessionSnapshot>,
+    },
     /// Insert or replace a message by id.
-    Message { chat: ChatId, revision: u64, message: Message },
+    Message {
+        chat: ChatId,
+        revision: u64,
+        message: Message,
+    },
     /// Append streamed text to `content[block]` of a message (a text or thinking block).
-    Delta { chat: ChatId, revision: u64, message_id: String, block: usize, text: String },
-    Error { chat: ChatId, revision: u64, error: SessionError },
+    Delta {
+        chat: ChatId,
+        revision: u64,
+        message_id: String,
+        block: usize,
+        text: String,
+    },
+    Error {
+        chat: ChatId,
+        revision: u64,
+        error: SessionError,
+    },
 }
 
 impl SessionEvent {
     pub fn chat(&self) -> &ChatId {
         match self {
             Self::Snapshot { snapshot } => &snapshot.id,
-            Self::Message { chat, .. } | Self::Delta { chat, .. } | Self::Error { chat, .. } => chat,
+            Self::Message { chat, .. } | Self::Delta { chat, .. } | Self::Error { chat, .. } => {
+                chat
+            }
         }
     }
 }
@@ -196,7 +247,12 @@ pub trait AgentSession: Send + Sync {
     fn dispose(&self) -> Result<()>;
     /// Applies to this session only; never written back to engine config. `provider` is
     /// `ProjectedProvider.route`.
-    fn set_model(&self, provider: &str, model_id: &str, effort: Option<ThinkingLevel>) -> Result<()>;
+    fn set_model(
+        &self,
+        provider: &str,
+        model_id: &str,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<()>;
 }
 
 /// An engine family's process protocol (pi RPC, OMP RPC, DSH ACP).
@@ -206,5 +262,9 @@ pub trait AgentSession: Send + Sync {
 pub trait AgentRuntime: Send + Sync {
     fn backend(&self) -> BackendKind;
     fn capabilities(&self) -> Capabilities;
-    fn start(&self, request: StartSession, sink: Arc<dyn SessionSink>) -> Result<Arc<dyn AgentSession>>;
+    fn start(
+        &self,
+        request: StartSession,
+        sink: Arc<dyn SessionSink>,
+    ) -> Result<Arc<dyn AgentSession>>;
 }

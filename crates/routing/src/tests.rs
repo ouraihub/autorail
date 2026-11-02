@@ -1,21 +1,24 @@
-use std::{
-    io,
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
-use hyper::{Request, Response, body::{Frame, Incoming}, service::service_fn};
-use hyper_util::{rt::{TokioExecutor, TokioIo}, server::conn::auto};
+use hyper::{
+    Request, Response,
+    body::{Frame, Incoming},
+    service::service_fn,
+};
+use hyper_util::{
+    rt::{TokioExecutor, TokioIo},
+    server::conn::auto,
+};
 use parking_lot::Mutex;
 use tempfile::TempDir;
 use thinkrail_core::{
-    Access, BackendKind, ChatId, Endpoint, EngineRouting, EnvValue, ErrorKind, Header, McpScope, McpServerInput,
-    McpService, McpTransport, ModelPrefService, ModelRef, ModelRouter, ProbeTarget, ProjectId, ProjectedMcpTransport,
-    Protocol, Provider, ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe, ModelType,
-    ProviderService, Result, RouteRequest, Secret, ThinkingLevel, EngineProvider,
+    Access, BackendKind, ChatId, Endpoint, EngineProvider, EngineRouting, EnvValue, ErrorKind,
+    Header, McpScope, McpServerInput, McpService, McpTransport, ModelPrefService, ModelRef,
+    ModelRouter, ModelType, ProbeTarget, ProjectId, ProjectedMcpTransport, Protocol, Provider,
+    ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe,
+    ProviderService, Result, RouteRequest, Secret, ThinkingLevel,
 };
 use thinkrail_settings_store::SqliteSettingsStore;
 
@@ -55,8 +58,14 @@ fn model(id: &str, protocols: &[Protocol]) -> ProviderModel {
 
 fn endpoints(openai: &str, anthropic: &str) -> Vec<Endpoint> {
     vec![
-        Endpoint { protocol: Protocol::OpenaiChat, base_url: openai.into() },
-        Endpoint { protocol: Protocol::AnthropicMessages, base_url: anthropic.into() },
+        Endpoint {
+            protocol: Protocol::OpenaiChat,
+            base_url: openai.into(),
+        },
+        Endpoint {
+            protocol: Protocol::AnthropicMessages,
+            base_url: anthropic.into(),
+        },
     ]
 }
 
@@ -65,25 +74,41 @@ fn input(name: &str, access: Access) -> ProviderInput {
         name: name.into(),
         endpoints: endpoints("https://relay.example/v1", "https://relay.example/v1"),
         default_protocol: Protocol::OpenaiChat,
-        headers: vec![Header { name: "X-Trace".into(), value: HEADER_VALUE.into() }],
+        headers: vec![Header {
+            name: "X-Trace".into(),
+            value: HEADER_VALUE.into(),
+        }],
         access,
         enabled: true,
-        models: vec![model("gpt-test", &[Protocol::OpenaiChat]), model("claude-test", &[Protocol::AnthropicMessages])],
+        models: vec![
+            model("gpt-test", &[Protocol::OpenaiChat]),
+            model("claude-test", &[Protocol::AnthropicMessages]),
+        ],
     }
 }
 
 fn create(fx: &Fixture, input: ProviderInput, keys: &[&str]) -> Provider {
     let mut provider = ProviderService::create(&*fx.store, input).unwrap();
     for key in keys {
-        let key = ProviderKeyInput { label: None, key: Secret::new(*key), enabled: true };
+        let key = ProviderKeyInput {
+            label: None,
+            key: Secret::new(*key),
+            enabled: true,
+        };
         provider = fx.store.add_key(&provider.id, key).unwrap();
     }
     provider
 }
 
 fn set_key_enabled(fx: &Fixture, provider: &Provider, index: usize, enabled: bool) -> Provider {
-    let update = ProviderKeyUpdate { label: None, key: None, enabled };
-    fx.store.update_key(&provider.id, &provider.keys[index].id, update).unwrap()
+    let update = ProviderKeyUpdate {
+        label: None,
+        key: None,
+        enabled,
+    };
+    fx.store
+        .update_key(&provider.id, &provider.keys[index].id, update)
+        .unwrap()
 }
 
 fn short(provider: &Provider) -> String {
@@ -122,15 +147,29 @@ impl GatewayRoutes for FakeGateway {
 }
 
 fn router(fx: &Fixture, gateway: Arc<dyn GatewayRoutes>) -> Router {
-    Router::new(fx.store.clone(), fx.store.clone(), fx.store.clone(), gateway)
+    Router::new(
+        fx.store.clone(),
+        fx.store.clone(),
+        fx.store.clone(),
+        gateway,
+    )
 }
 
 fn request(backend: BackendKind, new_session: bool) -> RouteRequest {
-    RouteRequest { chat: ChatId::from("chat-1"), project: ProjectId::from("project-1"), backend, new_session }
+    RouteRequest {
+        chat: ChatId::from("chat-1"),
+        project: ProjectId::from("project-1"),
+        backend,
+        new_session,
+    }
 }
 
 fn env<'a>(routing: &'a EngineRouting, var: &str) -> Option<&'a str> {
-    routing.env.iter().find(|(name, _)| name == var).map(|(_, value)| value.expose())
+    routing
+        .env
+        .iter()
+        .find(|(name, _)| name == var)
+        .map(|(_, value)| value.expose())
 }
 
 /// Everything except `env`, serialized: must never carry a secret.
@@ -143,7 +182,11 @@ fn assert_no_secret_outside_env(routing: &EngineRouting) {
         "signature": routing.signature,
     })
     .to_string();
-    for secret in KEYS.iter().copied().chain([HEADER_VALUE, "mcp-secret-value"]) {
+    for secret in KEYS
+        .iter()
+        .copied()
+        .chain([HEADER_VALUE, "mcp-secret-value"])
+    {
         assert!(!public.contains(secret), "{secret} leaked outside env");
     }
     assert!(!format!("{routing:?}").contains("sk-test"));
@@ -159,26 +202,52 @@ fn base_url_normalization_matrix() {
         ("https://a.com/", "https://a.com/v1", "https://a.com"),
         ("https://a.com/v1", "https://a.com/v1", "https://a.com"),
         ("https://a.com/v1/", "https://a.com/v1", "https://a.com"),
-        ("https://a.com/api/v3", "https://a.com/api/v3", "https://a.com/api"),
+        (
+            "https://a.com/api/v3",
+            "https://a.com/api/v3",
+            "https://a.com/api",
+        ),
         ("https://a.com/v1#", "https://a.com/v1", "https://a.com/v1"),
-        ("https://a.com/anthropic", "https://a.com/anthropic/v1", "https://a.com/anthropic"),
+        (
+            "https://a.com/anthropic",
+            "https://a.com/anthropic/v1",
+            "https://a.com/anthropic",
+        ),
     ];
     for (raw, openai, anthropic) in cases {
         assert_eq!(base_url(raw, Oc), openai, "{raw} openai-chat");
         assert_eq!(base_url(raw, Or), openai, "{raw} openai-responses");
         assert_eq!(base_url(raw, Am), anthropic, "{raw} anthropic");
     }
-    assert_eq!(base_url("  https://a.com/v1beta/ ", Oc), "https://a.com/v1beta");
+    assert_eq!(
+        base_url("  https://a.com/v1beta/ ", Oc),
+        "https://a.com/v1beta"
+    );
     assert_eq!(base_url("https://a.com/v2alpha", Am), "https://a.com");
 }
 
 #[test]
 fn preview_shows_the_full_request_address() {
-    assert_eq!(preview("https://a.com", Protocol::OpenaiChat), "https://a.com/v1/chat/completions");
-    assert_eq!(preview("https://a.com/v1/", Protocol::OpenaiResponses), "https://a.com/v1/responses");
-    assert_eq!(preview("https://a.com/v1", Protocol::AnthropicMessages), "https://a.com/v1/messages");
-    assert_eq!(preview("https://a.com/custom/chat#", Protocol::OpenaiChat), "https://a.com/custom/chat/chat/completions");
-    assert_eq!(preview("https://a.com/anthropic#", Protocol::AnthropicMessages), "https://a.com/anthropic/v1/messages");
+    assert_eq!(
+        preview("https://a.com", Protocol::OpenaiChat),
+        "https://a.com/v1/chat/completions"
+    );
+    assert_eq!(
+        preview("https://a.com/v1/", Protocol::OpenaiResponses),
+        "https://a.com/v1/responses"
+    );
+    assert_eq!(
+        preview("https://a.com/v1", Protocol::AnthropicMessages),
+        "https://a.com/v1/messages"
+    );
+    assert_eq!(
+        preview("https://a.com/custom/chat#", Protocol::OpenaiChat),
+        "https://a.com/custom/chat/chat/completions"
+    );
+    assert_eq!(
+        preview("https://a.com/anthropic#", Protocol::AnthropicMessages),
+        "https://a.com/anthropic/v1/messages"
+    );
 }
 
 // ---------- T3: prepare ----------
@@ -187,7 +256,9 @@ fn preview_shows_the_full_request_address() {
 fn empty_store_gives_empty_routing() {
     let fx = fixture();
     let gateway = Arc::new(FakeGateway::default());
-    let routing = router(&fx, gateway.clone()).prepare(&request(BackendKind::Pi, true)).unwrap();
+    let routing = router(&fx, gateway.clone())
+        .prepare(&request(BackendKind::Pi, true))
+        .unwrap();
     assert!(routing.is_empty());
     assert!(!routing.signature.is_empty());
     assert!(gateway.registered.lock().is_empty());
@@ -199,26 +270,45 @@ fn one_provider_with_two_protocols_projects_two_routes() {
     let provider = create(&fx, input("Relay", Access::Direct), &KEYS[..1]);
     let short = short(&provider);
     let upper = short.to_uppercase();
-    let routing = router(&fx, Arc::new(FakeGateway::default())).prepare(&request(BackendKind::Pi, true)).unwrap();
+    let routing = router(&fx, Arc::new(FakeGateway::default()))
+        .prepare(&request(BackendKind::Pi, true))
+        .unwrap();
 
     assert_eq!(routing.providers.len(), 2);
     let oc = &routing.providers[0];
     assert_eq!(oc.route, format!("thinkrail-{short}-oc"));
     assert_eq!(oc.protocol, Protocol::OpenaiChat);
     assert_eq!(oc.base_url, "https://relay.example/v1");
-    assert_eq!(oc.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gpt-test"]);
-    assert_eq!((oc.models[0].context_window, oc.models[0].max_tokens), (128_000, 8_000));
+    assert_eq!(
+        oc.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["gpt-test"]
+    );
+    assert_eq!(
+        (oc.models[0].context_window, oc.models[0].max_tokens),
+        (128_000, 8_000)
+    );
     let am = &routing.providers[1];
     assert_eq!(am.route, format!("thinkrail-{short}-am"));
     assert_eq!(am.base_url, "https://relay.example");
-    assert_eq!(am.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["claude-test"]);
+    assert_eq!(
+        am.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["claude-test"]
+    );
 
     let key_var = format!("THINKRAIL_PROVIDER_{upper}_KEY");
-    assert!(routing.providers.iter().all(|p| p.key_var == key_var && p.display_name == "Relay"));
+    assert!(
+        routing
+            .providers
+            .iter()
+            .all(|p| p.key_var == key_var && p.display_name == "Relay")
+    );
     assert_eq!(oc.headers[0].name, "X-Trace");
     assert_eq!(oc.headers[0].var, format!("THINKRAIL_HDR_{upper}_0"));
     assert_eq!(env(&routing, &key_var), Some(KEYS[0]));
-    assert_eq!(env(&routing, &format!("THINKRAIL_HDR_{upper}_0")), Some(HEADER_VALUE));
+    assert_eq!(
+        env(&routing, &format!("THINKRAIL_HDR_{upper}_0")),
+        Some(HEADER_VALUE)
+    );
     assert_eq!(routing.env.len(), 2);
     assert_no_secret_outside_env(&routing);
 }
@@ -254,9 +344,17 @@ fn editing_a_direct_key_invalidates_the_launch_without_rotating_it() {
     let router = router(&fx, Arc::new(FakeGateway::default()));
     let req = request(BackendKind::Pi, false);
     let before = router.prepare(&req).unwrap().signature;
-    fx.store.update_key(&provider.id, &provider.keys[0].id, ProviderKeyUpdate {
-        label: None, key: Some(Secret::new(KEYS[1])), enabled: true,
-    }).unwrap();
+    fx.store
+        .update_key(
+            &provider.id,
+            &provider.keys[0].id,
+            ProviderKeyUpdate {
+                label: None,
+                key: Some(Secret::new(KEYS[1])),
+                enabled: true,
+            },
+        )
+        .unwrap();
     assert_ne!(router.signature(&req).unwrap(), before);
     let routing = router.prepare(&req).unwrap();
     let key_var = format!("THINKRAIL_PROVIDER_{}_KEY", short(&provider).to_uppercase());
@@ -276,7 +374,10 @@ fn all_keys_disabled_is_invalid_and_no_keys_uses_the_placeholder() {
     let relay = create(&fx, input("Relay", Access::Direct), &KEYS[..1]);
     set_key_enabled(&fx, &relay, 0, false);
     let message = kind(router.prepare(&req), ErrorKind::Invalid);
-    assert!(message.contains("提供方 Relay 没有启用的 API 密钥"), "{message}");
+    assert!(
+        message.contains("提供方 Relay 没有启用的 API 密钥"),
+        "{message}"
+    );
     kind(router.signature(&req), ErrorKind::Invalid);
 }
 
@@ -290,12 +391,21 @@ fn gateway_mode_uses_gateway_addresses_and_tokens() {
     let req = request(BackendKind::Pi, true);
     let routing = router.prepare(&req).unwrap();
 
-    assert_eq!(routing.providers[0].base_url, format!("http://gateway.test/p/thinkrail-{short}-oc"));
-    assert_eq!(routing.providers[1].base_url, format!("http://gateway.test/p/thinkrail-{short}-am"));
+    assert_eq!(
+        routing.providers[0].base_url,
+        format!("http://gateway.test/p/thinkrail-{short}-oc")
+    );
+    assert_eq!(
+        routing.providers[1].base_url,
+        format!("http://gateway.test/p/thinkrail-{short}-am")
+    );
     assert!(routing.providers.iter().all(|p| p.headers.is_empty()));
     assert_eq!(
         *gateway.base_urls.lock(),
-        [(format!("thinkrail-{short}-oc"), Protocol::OpenaiChat), (format!("thinkrail-{short}-am"), Protocol::AnthropicMessages)]
+        [
+            (format!("thinkrail-{short}-oc"), Protocol::OpenaiChat),
+            (format!("thinkrail-{short}-am"), Protocol::AnthropicMessages)
+        ]
     );
     // One token per chat, shared by all routes; the real key never enters the environment.
     assert_eq!(*gateway.registered.lock(), std::slice::from_ref(&req.chat));
@@ -324,29 +434,65 @@ fn dsh_with_extra_headers_switches_a_direct_provider_to_the_gateway() {
 
     let routing = router.prepare(&request(BackendKind::Dsh, true)).unwrap();
     let short = short(&provider);
-    let relay: Vec<_> = routing.providers.iter().filter(|p| p.route.contains(&short)).collect();
-    assert!(relay.iter().all(|p| p.base_url.starts_with("http://gateway.test/") && p.headers.is_empty()));
-    let others: Vec<_> = routing.providers.iter().filter(|p| !p.route.contains(&short)).collect();
-    assert!(others.iter().all(|p| p.base_url.starts_with("https://relay.example")));
-    assert_eq!(env(&routing, &format!("THINKRAIL_PROVIDER_{}_KEY", short.to_uppercase())), Some("gw-token-1"));
+    let relay: Vec<_> = routing
+        .providers
+        .iter()
+        .filter(|p| p.route.contains(&short))
+        .collect();
+    assert!(
+        relay
+            .iter()
+            .all(|p| p.base_url.starts_with("http://gateway.test/") && p.headers.is_empty())
+    );
+    let others: Vec<_> = routing
+        .providers
+        .iter()
+        .filter(|p| !p.route.contains(&short))
+        .collect();
+    assert!(
+        others
+            .iter()
+            .all(|p| p.base_url.starts_with("https://relay.example"))
+    );
+    assert_eq!(
+        env(
+            &routing,
+            &format!("THINKRAIL_PROVIDER_{}_KEY", short.to_uppercase())
+        ),
+        Some("gw-token-1")
+    );
     assert_no_secret_outside_env(&routing);
 
     // pi keeps the same provider direct.
     let pi = router.prepare(&request(BackendKind::Pi, true)).unwrap();
-    assert!(pi.providers.iter().all(|p| !p.base_url.starts_with("http://gateway.test/")));
+    assert!(
+        pi.providers
+            .iter()
+            .all(|p| !p.base_url.starts_with("http://gateway.test/"))
+    );
 }
 
 #[test]
 fn default_model_only_for_new_sessions_with_clamped_effort() {
     let fx = fixture();
     let mut relay = input("Relay", Access::Direct);
-    relay.models.push(ProviderModel { reasoning: false, efforts: vec![], ..model("plain", &[Protocol::OpenaiChat]) });
-    relay.models.push(model("both", &[Protocol::AnthropicMessages, Protocol::OpenaiChat]));
+    relay.models.push(ProviderModel {
+        reasoning: false,
+        efforts: vec![],
+        ..model("plain", &[Protocol::OpenaiChat])
+    });
+    relay.models.push(model(
+        "both",
+        &[Protocol::AnthropicMessages, Protocol::OpenaiChat],
+    ));
     let provider = create(&fx, relay, &KEYS[..1]);
     let short = short(&provider);
     let router = router(&fx, Arc::new(FakeGateway::default()));
     let pick = |id: &str, effort| {
-        let model = ModelRef { provider: provider.id.clone(), model_id: id.into() };
+        let model = ModelRef {
+            provider: provider.id.clone(),
+            model_id: id.into(),
+        };
         fx.store.set_default(Some(model), Some(effort)).unwrap();
     };
 
@@ -354,31 +500,67 @@ fn default_model_only_for_new_sessions_with_clamped_effort() {
     let routing = router.prepare(&request(BackendKind::Pi, true)).unwrap();
     let default = routing.default_model.unwrap();
     assert_eq!(default.route, format!("thinkrail-{short}-am"));
-    assert_eq!((default.model_id.as_str(), default.effort), ("both", Some(ThinkingLevel::High)));
-    assert!(router.prepare(&request(BackendKind::Pi, false)).unwrap().default_model.is_none());
+    assert_eq!(
+        (default.model_id.as_str(), default.effort),
+        ("both", Some(ThinkingLevel::High))
+    );
+    assert!(
+        router
+            .prepare(&request(BackendKind::Pi, false))
+            .unwrap()
+            .default_model
+            .is_none()
+    );
 
     pick("both", ThinkingLevel::Medium);
-    let effort = router.prepare(&request(BackendKind::Pi, true)).unwrap().default_model.unwrap().effort;
+    let effort = router
+        .prepare(&request(BackendKind::Pi, true))
+        .unwrap()
+        .default_model
+        .unwrap()
+        .effort;
     assert_eq!(effort, Some(ThinkingLevel::Low));
 
     pick("plain", ThinkingLevel::High);
-    let default = router.prepare(&request(BackendKind::Pi, true)).unwrap().default_model.unwrap();
-    assert_eq!((default.route, default.effort), (format!("thinkrail-{short}-oc"), None));
+    let default = router
+        .prepare(&request(BackendKind::Pi, true))
+        .unwrap()
+        .default_model
+        .unwrap();
+    assert_eq!(
+        (default.route, default.effort),
+        (format!("thinkrail-{short}-oc"), None)
+    );
 
     // The model is deleted: the preference stays, the launch has no default.
     let current = fx.store.provider(&provider.id).unwrap();
     let mut edited = current.input.clone();
     edited.models.retain(|m| m.model_id != "plain");
     ProviderService::update(&*fx.store, &provider.id, current.revision, edited).unwrap();
-    assert!(router.prepare(&request(BackendKind::Pi, true)).unwrap().default_model.is_none());
+    assert!(
+        router
+            .prepare(&request(BackendKind::Pi, true))
+            .unwrap()
+            .default_model
+            .is_none()
+    );
 }
 
 fn mcp_input(name: &str, transport: McpTransport) -> McpServerInput {
-    McpServerInput { name: name.into(), scope: McpScope::Global, transport, enabled: true, description: None }
+    McpServerInput {
+        name: name.into(),
+        scope: McpScope::Global,
+        transport,
+        enabled: true,
+        description: None,
+    }
 }
 
 fn value(name: &str, value: &str) -> EnvValue {
-    EnvValue { name: name.into(), value: value.into() }
+    EnvValue {
+        name: name.into(),
+        value: value.into(),
+    }
 }
 
 #[test]
@@ -391,26 +573,61 @@ fn mcp_values_resolve_into_env_under_id_derived_names() {
             McpTransport::Stdio {
                 command: "docs-mcp".into(),
                 args: vec!["--stdio".into()],
-                env: vec![value("TOKEN", "mcp-secret-value"), value("SEARCH", "$PATH"), value("ALSO", "${PATH}")],
+                env: vec![
+                    value("TOKEN", "mcp-secret-value"),
+                    value("SEARCH", "$PATH"),
+                    value("ALSO", "${PATH}"),
+                ],
             },
         ),
     )
     .unwrap();
     let web = McpService::create(
         &*fx.store,
-        mcp_input("web", McpTransport::Http { url: "https://mcp.example/".into(), headers: vec![value("X-Key", "abc")] }),
+        mcp_input(
+            "web",
+            McpTransport::Http {
+                url: "https://mcp.example/".into(),
+                headers: vec![value("X-Key", "abc")],
+            },
+        ),
     )
     .unwrap();
     let router = router(&fx, Arc::new(FakeGateway::default()));
     let routing = router.prepare(&request(BackendKind::Omp, true)).unwrap();
 
-    let docs_short = docs.id.as_str().chars().take(8).collect::<String>().to_uppercase();
-    let web_short = web.id.as_str().chars().take(8).collect::<String>().to_uppercase();
+    let docs_short = docs
+        .id
+        .as_str()
+        .chars()
+        .take(8)
+        .collect::<String>()
+        .to_uppercase();
+    let web_short = web
+        .id
+        .as_str()
+        .chars()
+        .take(8)
+        .collect::<String>()
+        .to_uppercase();
     assert_eq!(routing.mcp.len(), 2);
     assert_eq!(routing.mcp[0].name, "thinkrail-docs");
-    let ProjectedMcpTransport::Stdio { command, args, env: bindings } = &routing.mcp[0].transport else { panic!() };
-    assert_eq!((command.as_str(), args.as_slice()), ("docs-mcp", ["--stdio".to_owned()].as_slice()));
-    let vars: Vec<_> = bindings.iter().map(|b| (b.name.as_str(), b.var.clone())).collect();
+    let ProjectedMcpTransport::Stdio {
+        command,
+        args,
+        env: bindings,
+    } = &routing.mcp[0].transport
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (command.as_str(), args.as_slice()),
+        ("docs-mcp", ["--stdio".to_owned()].as_slice())
+    );
+    let vars: Vec<_> = bindings
+        .iter()
+        .map(|b| (b.name.as_str(), b.var.clone()))
+        .collect();
     assert_eq!(
         vars,
         [
@@ -420,10 +637,21 @@ fn mcp_values_resolve_into_env_under_id_derived_names() {
         ]
     );
     let path = std::env::var("PATH").unwrap();
-    assert_eq!(env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E0")), Some("mcp-secret-value"));
-    assert_eq!(env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E1")), Some(path.as_str()));
-    assert_eq!(env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E2")), Some(path.as_str()));
-    let ProjectedMcpTransport::Http { headers, .. } = &routing.mcp[1].transport else { panic!() };
+    assert_eq!(
+        env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E0")),
+        Some("mcp-secret-value")
+    );
+    assert_eq!(
+        env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E1")),
+        Some(path.as_str())
+    );
+    assert_eq!(
+        env(&routing, &format!("THINKRAIL_MCP_{docs_short}_E2")),
+        Some(path.as_str())
+    );
+    let ProjectedMcpTransport::Http { headers, .. } = &routing.mcp[1].transport else {
+        panic!()
+    };
     assert_eq!(headers[0].var, format!("THINKRAIL_MCP_{web_short}_H0"));
     // Only referenced values: three stdio env values + one header, nothing else.
     assert_eq!(routing.env.len(), 4);
@@ -432,9 +660,18 @@ fn mcp_values_resolve_into_env_under_id_derived_names() {
 
     // A changed MCP value changes the signature.
     let before = routing.signature;
-    let edited = mcp_input("web", McpTransport::Http { url: "https://mcp.example/".into(), headers: vec![value("X-Key", "abd")] });
+    let edited = mcp_input(
+        "web",
+        McpTransport::Http {
+            url: "https://mcp.example/".into(),
+            headers: vec![value("X-Key", "abd")],
+        },
+    );
     McpService::update(&*fx.store, &web.id, web.revision, edited).unwrap();
-    assert_ne!(router.signature(&request(BackendKind::Omp, true)).unwrap(), before);
+    assert_ne!(
+        router.signature(&request(BackendKind::Omp, true)).unwrap(),
+        before
+    );
 }
 
 #[test]
@@ -446,28 +683,69 @@ fn missing_mcp_variable_is_invalid() {
         env: vec![value("TOKEN", "${THINKRAIL_TEST_SURELY_UNSET_VARIABLE}")],
     };
     McpService::create(&*fx.store, mcp_input("broken", transport)).unwrap();
-    let message = kind(router(&fx, Arc::new(FakeGateway::default())).prepare(&request(BackendKind::Pi, true)), ErrorKind::Invalid);
-    assert!(message.contains("MCP 服务器 broken 引用的环境变量 THINKRAIL_TEST_SURELY_UNSET_VARIABLE 未设置"), "{message}");
+    let message = kind(
+        router(&fx, Arc::new(FakeGateway::default())).prepare(&request(BackendKind::Pi, true)),
+        ErrorKind::Invalid,
+    );
+    assert!(
+        message.contains(
+            "MCP 服务器 broken 引用的环境变量 THINKRAIL_TEST_SURELY_UNSET_VARIABLE 未设置"
+        ),
+        "{message}"
+    );
 }
 
 #[test]
 fn catalog_hides_hidden_models_and_lists_each_model_once() {
     let fx = fixture();
     let mut relay = input("Relay", Access::Direct);
-    relay.models.push(model("both", &[Protocol::AnthropicMessages, Protocol::OpenaiChat]));
-    relay.models.push(ProviderModel { enabled: false, ..model("off", &[Protocol::OpenaiChat]) });
-    relay.models.push(ProviderModel { model_type: ModelType::Image, ..model("painter", &[Protocol::OpenaiChat]) });
+    relay.models.push(model(
+        "both",
+        &[Protocol::AnthropicMessages, Protocol::OpenaiChat],
+    ));
+    relay.models.push(ProviderModel {
+        enabled: false,
+        ..model("off", &[Protocol::OpenaiChat])
+    });
+    relay.models.push(ProviderModel {
+        model_type: ModelType::Image,
+        ..model("painter", &[Protocol::OpenaiChat])
+    });
     let provider = create(&fx, relay, &[]);
     let mut disabled = input("Disabled", Access::Direct);
     disabled.enabled = false;
     create(&fx, disabled, &[]);
-    fx.store.set_hidden(&ModelRef { provider: provider.id.clone(), model_id: "gpt-test".into() }, true).unwrap();
+    fx.store
+        .set_hidden(
+            &ModelRef {
+                provider: provider.id.clone(),
+                model_id: "gpt-test".into(),
+            },
+            true,
+        )
+        .unwrap();
 
-    let catalog = router(&fx, Arc::new(FakeGateway::default())).catalog(BackendKind::Dsh).unwrap();
+    let catalog = router(&fx, Arc::new(FakeGateway::default()))
+        .catalog(BackendKind::Dsh)
+        .unwrap();
     let short = short(&provider);
-    let listed: Vec<_> = catalog.iter().map(|c| (c.model.id.as_str(), c.route.clone())).collect();
-    assert_eq!(listed, [("claude-test", format!("thinkrail-{short}-am")), ("both", format!("thinkrail-{short}-am"))], "disabled and non-chat models stay out");
-    assert!(catalog.iter().all(|c| c.provider == provider.id && c.provider_name == "Relay"));
+    let listed: Vec<_> = catalog
+        .iter()
+        .map(|c| (c.model.id.as_str(), c.route.clone()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("claude-test", format!("thinkrail-{short}-am")),
+            ("both", format!("thinkrail-{short}-am"))
+        ],
+        "disabled and non-chat models stay out"
+    );
+    assert!(
+        catalog
+            .iter()
+            .all(|c| c.provider == provider.id && c.provider_name == "Relay")
+    );
 }
 
 // ---------- loopback fake upstream ----------
@@ -506,9 +784,15 @@ impl Upstream {
 
 async fn answer(reply: Reply) -> Response<TestBody> {
     let full = |status: u16, body: &'static str| {
-        let mut response = Response::new(Full::new(Bytes::from_static(body.as_bytes())).map_err(|never| match never {}).boxed());
+        let mut response = Response::new(
+            Full::new(Bytes::from_static(body.as_bytes()))
+                .map_err(|never| match never {})
+                .boxed(),
+        );
         *response.status_mut() = hyper::StatusCode::from_u16(status).unwrap();
-        response.headers_mut().insert("content-type", "application/json".parse().unwrap());
+        response
+            .headers_mut()
+            .insert("content-type", "application/json".parse().unwrap());
         response
     };
     match reply {
@@ -521,7 +805,10 @@ async fn answer(reply: Reply) -> Response<TestBody> {
             let stream = futures_util::stream::unfold(chunks.into_iter(), |mut rest| async move {
                 let chunk = rest.next()?;
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                Some((Ok::<_, io::Error>(Frame::data(Bytes::from_static(chunk.as_bytes()))), rest))
+                Some((
+                    Ok::<_, io::Error>(Frame::data(Bytes::from_static(chunk.as_bytes()))),
+                    rest,
+                ))
             });
             Response::new(StreamBody::new(stream).boxed())
         }
@@ -530,13 +817,18 @@ async fn answer(reply: Reply) -> Response<TestBody> {
 
 fn upstream(reply: Reply) -> Upstream {
     let rt = runtime::get().unwrap();
-    let listener = rt.tokio.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+    let listener = rt
+        .tokio
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let record = seen.clone();
     rt.tokio.spawn(async move {
         loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
             let record = record.clone();
             let reply = reply.clone();
             tokio::spawn(async move {
@@ -544,12 +836,21 @@ fn upstream(reply: Reply) -> Upstream {
                     let record = record.clone();
                     let reply = reply.clone();
                     async move {
-                        let path = request.uri().path_and_query().map(|p| p.to_string()).unwrap_or_default();
-                        record.lock().push(Seen { path, headers: request.headers().clone() });
+                        let path = request
+                            .uri()
+                            .path_and_query()
+                            .map(|p| p.to_string())
+                            .unwrap_or_default();
+                        record.lock().push(Seen {
+                            path,
+                            headers: request.headers().clone(),
+                        });
                         Ok::<_, std::convert::Infallible>(answer(reply).await)
                     }
                 });
-                let _ = auto::Builder::new(TokioExecutor::new()).serve_connection(TokioIo::new(stream), service).await;
+                let _ = auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
             });
         }
     });
@@ -608,7 +909,15 @@ fn gateway_rejects_missing_wrong_and_released_tokens() {
     let up = upstream(Reply::Json(200, "{}"));
     let provider = gateway_provider(&fx, &up.url(""), &up.url(""), &KEYS[..1]);
     let gateway = Gateway::new(fx.store.clone());
-    let url = format!("{}/chat/completions", gateway.base_url(&format!("thinkrail-{}-oc", short(&provider)), Protocol::OpenaiChat).unwrap());
+    let url = format!(
+        "{}/chat/completions",
+        gateway
+            .base_url(
+                &format!("thinkrail-{}-oc", short(&provider)),
+                Protocol::OpenaiChat
+            )
+            .unwrap()
+    );
     let token = gateway.register(&chat());
 
     let (status, body) = post(&url, &[]);
@@ -616,7 +925,14 @@ fn gateway_rejects_missing_wrong_and_released_tokens() {
     assert!(joined(&body).contains("invalid ThinkRail gateway token"));
     assert_eq!(post(&url, &[("authorization", "Bearer nope")]).0, 401);
     assert_eq!(post(&url, &[("x-api-key", token.expose())]).0, 200);
-    assert_eq!(post(&url, &[("authorization", &format!("Bearer {}", token.expose()))]).0, 200);
+    assert_eq!(
+        post(
+            &url,
+            &[("authorization", &format!("Bearer {}", token.expose()))]
+        )
+        .0,
+        200
+    );
 
     // A new registration replaces the old token; release revokes it.
     let renewed = gateway.register(&chat());
@@ -633,9 +949,18 @@ fn gateway_404s_outside_the_whitelist_and_for_unknown_routes() {
     let provider = gateway_provider(&fx, &up.url(""), &up.url(""), &KEYS[..1]);
     let gateway = Gateway::new(fx.store.clone());
     let short = short(&provider);
-    let oc = gateway.base_url(&format!("thinkrail-{short}-oc"), Protocol::OpenaiChat).unwrap();
-    let am = gateway.base_url(&format!("thinkrail-{short}-am"), Protocol::AnthropicMessages).unwrap();
-    let or = gateway.base_url(&format!("thinkrail-{short}-or"), Protocol::OpenaiResponses).unwrap();
+    let oc = gateway
+        .base_url(&format!("thinkrail-{short}-oc"), Protocol::OpenaiChat)
+        .unwrap();
+    let am = gateway
+        .base_url(
+            &format!("thinkrail-{short}-am"),
+            Protocol::AnthropicMessages,
+        )
+        .unwrap();
+    let or = gateway
+        .base_url(&format!("thinkrail-{short}-or"), Protocol::OpenaiResponses)
+        .unwrap();
     let token = gateway.register(&chat());
     let auth = [("x-api-key", token.expose())];
 
@@ -663,14 +988,29 @@ fn gateway_forwards_paths_keys_and_headers() {
     let provider = gateway_provider(&fx, &up.url("/relay"), &up.url("/claude/v1"), &KEYS[..1]);
     let gateway = Gateway::new(fx.store.clone());
     let sid = short(&provider);
-    let oc = gateway.base_url(&format!("thinkrail-{sid}-oc"), Protocol::OpenaiChat).unwrap();
-    let am = gateway.base_url(&format!("thinkrail-{sid}-am"), Protocol::AnthropicMessages).unwrap();
+    let oc = gateway
+        .base_url(&format!("thinkrail-{sid}-oc"), Protocol::OpenaiChat)
+        .unwrap();
+    let am = gateway
+        .base_url(&format!("thinkrail-{sid}-am"), Protocol::AnthropicMessages)
+        .unwrap();
     assert!(oc.ends_with("/v1") && !am.ends_with("/v1"));
     let token = gateway.register(&chat());
     let bearer = format!("Bearer {}", token.expose());
 
-    assert_eq!(post(&format!("{oc}/chat/completions?stream=true"), &[("authorization", &bearer)]).0, 200);
-    let auth = [("x-api-key", token.expose()), ("anthropic-version", "2023-06-01"), ("anthropic-beta", "tools")];
+    assert_eq!(
+        post(
+            &format!("{oc}/chat/completions?stream=true"),
+            &[("authorization", &bearer)]
+        )
+        .0,
+        200
+    );
+    let auth = [
+        ("x-api-key", token.expose()),
+        ("anthropic-version", "2023-06-01"),
+        ("anthropic-beta", "tools"),
+    ];
     assert_eq!(post(&format!("{am}/v1/messages"), &auth).0, 200);
 
     // Second gateway base: address with `/v1`, Anthropic without one.
@@ -678,14 +1018,42 @@ fn gateway_forwards_paths_keys_and_headers() {
     let p2 = gateway_provider(&fx2, &up.url("/v1"), &up.url(""), &[]);
     let g2 = Gateway::new(fx2.store.clone());
     let token2 = g2.register(&chat());
-    let oc2 = g2.base_url(&format!("thinkrail-{}-oc", short(&p2)), Protocol::OpenaiChat).unwrap();
-    let am2 = g2.base_url(&format!("thinkrail-{}-am", short(&p2)), Protocol::AnthropicMessages).unwrap();
-    assert_eq!(post(&format!("{oc2}/models"), &[("x-api-key", token2.expose())]).0, 200);
-    assert_eq!(post(&format!("{am2}/v1/messages/count_tokens"), &[("x-api-key", token2.expose())]).0, 200);
+    let oc2 = g2
+        .base_url(
+            &format!("thinkrail-{}-oc", short(&p2)),
+            Protocol::OpenaiChat,
+        )
+        .unwrap();
+    let am2 = g2
+        .base_url(
+            &format!("thinkrail-{}-am", short(&p2)),
+            Protocol::AnthropicMessages,
+        )
+        .unwrap();
+    assert_eq!(
+        post(&format!("{oc2}/models"), &[("x-api-key", token2.expose())]).0,
+        200
+    );
+    assert_eq!(
+        post(
+            &format!("{am2}/v1/messages/count_tokens"),
+            &[("x-api-key", token2.expose())]
+        )
+        .0,
+        200
+    );
 
     let seen = up.seen();
     let paths: Vec<_> = seen.iter().map(|s| s.path.as_str()).collect();
-    assert_eq!(paths, ["/relay/v1/chat/completions?stream=true", "/claude/v1/messages", "/v1/models", "/v1/messages/count_tokens"]);
+    assert_eq!(
+        paths,
+        [
+            "/relay/v1/chat/completions?stream=true",
+            "/claude/v1/messages",
+            "/v1/models",
+            "/v1/messages/count_tokens"
+        ]
+    );
 
     // OpenAI: real key as bearer, no x-api-key; provider header added.
     assert_eq!(header(&seen[0], "authorization"), Some("Bearer sk-test-a"));
@@ -696,13 +1064,16 @@ fn gateway_forwards_paths_keys_and_headers() {
     assert_eq!(header(&seen[1], "authorization"), Some("Bearer sk-test-a"));
     assert_eq!(header(&seen[1], "anthropic-version"), Some("2023-06-01"));
     assert_eq!(header(&seen[1], "anthropic-beta"), Some("tools"));
-    let leaked = |s: &Seen| s.headers.values().any(|v| v.to_str().is_ok_and(|v| v.contains(token.expose())));
+    let leaked = |s: &Seen| {
+        s.headers
+            .values()
+            .any(|v| v.to_str().is_ok_and(|v| v.contains(token.expose())))
+    };
     assert!(!seen.iter().any(leaked));
     // No keys: no auth header at all, and the token never leaves the host.
     assert_eq!(header(&seen[2], "x-api-key"), None);
     assert_eq!(header(&seen[2], "authorization"), None);
 }
-
 
 #[test]
 fn gateway_rotates_keys_per_request() {
@@ -710,31 +1081,67 @@ fn gateway_rotates_keys_per_request() {
     let up = upstream(Reply::Json(200, "{}"));
     let provider = gateway_provider(&fx, &up.url(""), &up.url(""), &KEYS[..2]);
     let gateway = Gateway::new(fx.store.clone());
-    let url = format!("{}/chat/completions", gateway.base_url(&format!("thinkrail-{}-oc", short(&provider)), Protocol::OpenaiChat).unwrap());
+    let url = format!(
+        "{}/chat/completions",
+        gateway
+            .base_url(
+                &format!("thinkrail-{}-oc", short(&provider)),
+                Protocol::OpenaiChat
+            )
+            .unwrap()
+    );
     let token = gateway.register(&chat());
     for _ in 0..3 {
         assert_eq!(post(&url, &[("x-api-key", token.expose())]).0, 200);
     }
-    let keys: Vec<_> = up.seen().iter().map(|s| header(s, "authorization").unwrap_or_default().to_owned()).collect();
-    assert_eq!(keys, ["Bearer sk-test-a", "Bearer sk-test-b", "Bearer sk-test-a"]);
+    let keys: Vec<_> = up
+        .seen()
+        .iter()
+        .map(|s| header(s, "authorization").unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(
+        keys,
+        ["Bearer sk-test-a", "Bearer sk-test-b", "Bearer sk-test-a"]
+    );
 }
 
 #[test]
 fn gateway_streams_chunks_and_reports_unreachable_upstreams() {
     let fx = fixture();
-    let up = upstream(Reply::Chunks(vec!["data: one\n\n", "data: two\n\n", "data: three\n\n"]));
+    let up = upstream(Reply::Chunks(vec![
+        "data: one\n\n",
+        "data: two\n\n",
+        "data: three\n\n",
+    ]));
     let provider = gateway_provider(&fx, &up.url(""), &closed_port(), &KEYS[..1]);
     let gateway = Gateway::new(fx.store.clone());
     let short = short(&provider);
     let token = gateway.register(&chat());
-    let oc = gateway.base_url(&format!("thinkrail-{short}-oc"), Protocol::OpenaiChat).unwrap();
-    let (status, chunks) = post(&format!("{oc}/chat/completions"), &[("x-api-key", token.expose())]);
+    let oc = gateway
+        .base_url(&format!("thinkrail-{short}-oc"), Protocol::OpenaiChat)
+        .unwrap();
+    let (status, chunks) = post(
+        &format!("{oc}/chat/completions"),
+        &[("x-api-key", token.expose())],
+    );
     assert_eq!(status, 200);
-    assert!(chunks.len() > 1, "expected streamed chunks, got {}", chunks.len());
+    assert!(
+        chunks.len() > 1,
+        "expected streamed chunks, got {}",
+        chunks.len()
+    );
     assert_eq!(joined(&chunks), "data: one\n\ndata: two\n\ndata: three\n\n");
 
-    let am = gateway.base_url(&format!("thinkrail-{short}-am"), Protocol::AnthropicMessages).unwrap();
-    let (status, body) = post(&format!("{am}/v1/messages"), &[("x-api-key", token.expose())]);
+    let am = gateway
+        .base_url(
+            &format!("thinkrail-{short}-am"),
+            Protocol::AnthropicMessages,
+        )
+        .unwrap();
+    let (status, body) = post(
+        &format!("{am}/v1/messages"),
+        &[("x-api-key", token.expose())],
+    );
     assert_eq!(status, 502);
     let body = joined(&body);
     assert!(body.contains("上游不可达"), "{body}");
@@ -744,7 +1151,11 @@ fn gateway_streams_chunks_and_reports_unreachable_upstreams() {
 // ---------- T5: probe ----------
 
 fn target(protocol: Protocol, base_url: String, key: Option<&str>) -> ProbeTarget {
-    ProbeTarget { endpoint: Endpoint { protocol, base_url }, headers: vec![], key: key.map(Secret::new) }
+    ProbeTarget {
+        endpoint: Endpoint { protocol, base_url },
+        headers: vec![],
+        key: key.map(Secret::new),
+    }
 }
 
 fn probe(fx: &Fixture) -> Probe {
@@ -754,17 +1165,44 @@ fn probe(fx: &Fixture) -> Probe {
 #[test]
 fn probe_parses_openai_and_anthropic_model_lists() {
     let fx = fixture();
-    let openai = upstream(Reply::Json(200, r#"{"object":"list","data":[{"id":"gpt-4o","context_length":128000},{"id":"o3"}]}"#));
-    let models = probe(&fx).list_models(&target(Protocol::OpenaiChat, openai.url("/v1"), Some(KEYS[0]))).unwrap();
-    assert_eq!(models.iter().map(|m| (m.id.as_str(), m.context_window)).collect::<Vec<_>>(), [("gpt-4o", Some(128_000)), ("o3", None)]);
+    let openai = upstream(Reply::Json(
+        200,
+        r#"{"object":"list","data":[{"id":"gpt-4o","context_length":128000},{"id":"o3"}]}"#,
+    ));
+    let models = probe(&fx)
+        .list_models(&target(
+            Protocol::OpenaiChat,
+            openai.url("/v1"),
+            Some(KEYS[0]),
+        ))
+        .unwrap();
+    assert_eq!(
+        models
+            .iter()
+            .map(|m| (m.id.as_str(), m.context_window))
+            .collect::<Vec<_>>(),
+        [("gpt-4o", Some(128_000)), ("o3", None)]
+    );
     let seen = openai.seen();
     assert_eq!(seen[0].path, "/v1/models");
     assert_eq!(header(&seen[0], "authorization"), Some("Bearer sk-test-a"));
     assert_eq!(header(&seen[0], "anthropic-version"), None);
 
-    let anthropic = upstream(Reply::Json(200, r#"{"data":[{"id":"claude-x","display_name":"Claude X","type":"model"}],"has_more":false}"#));
-    let models = probe(&fx).list_models(&target(Protocol::AnthropicMessages, anthropic.url("/v1"), Some(KEYS[1]))).unwrap();
-    assert_eq!((models[0].id.as_str(), models[0].name.as_deref()), ("claude-x", Some("Claude X")));
+    let anthropic = upstream(Reply::Json(
+        200,
+        r#"{"data":[{"id":"claude-x","display_name":"Claude X","type":"model"}],"has_more":false}"#,
+    ));
+    let models = probe(&fx)
+        .list_models(&target(
+            Protocol::AnthropicMessages,
+            anthropic.url("/v1"),
+            Some(KEYS[1]),
+        ))
+        .unwrap();
+    assert_eq!(
+        (models[0].id.as_str(), models[0].name.as_deref()),
+        ("claude-x", Some("Claude X"))
+    );
     let seen = anthropic.seen();
     assert_eq!(seen[0].path, "/v1/models");
     assert_eq!(header(&seen[0], "x-api-key"), Some("sk-test-b"));
@@ -775,36 +1213,87 @@ fn probe_parses_openai_and_anthropic_model_lists() {
 #[test]
 fn probe_classifies_failures() {
     let fx = fixture();
-    let rejected = upstream(Reply::Json(401, r#"{"error":{"message":"bad key sk-test-a"}}"#));
-    let message = kind(probe(&fx).list_models(&target(Protocol::OpenaiChat, rejected.url(""), Some(KEYS[0]))), ErrorKind::External);
-    assert!(message.contains("服务器拒绝了该 API 密钥。") && !message.contains("sk-test"), "{message}");
+    let rejected = upstream(Reply::Json(
+        401,
+        r#"{"error":{"message":"bad key sk-test-a"}}"#,
+    ));
+    let message = kind(
+        probe(&fx).list_models(&target(
+            Protocol::OpenaiChat,
+            rejected.url(""),
+            Some(KEYS[0]),
+        )),
+        ErrorKind::External,
+    );
+    assert!(
+        message.contains("服务器拒绝了该 API 密钥。") && !message.contains("sk-test"),
+        "{message}"
+    );
 
-    let failing = upstream(Reply::Json(500, r#"{"error":{"message":"boom for sk-test-a"}}"#));
-    let message = kind(probe(&fx).check(&target(Protocol::OpenaiChat, failing.url(""), Some(KEYS[0])), "m"), ErrorKind::External);
-    assert!(message.contains("服务器返回 HTTP 500。") && message.contains("boom") && !message.contains("sk-test"), "{message}");
+    let failing = upstream(Reply::Json(
+        500,
+        r#"{"error":{"message":"boom for sk-test-a"}}"#,
+    ));
+    let message = kind(
+        probe(&fx).check(
+            &target(Protocol::OpenaiChat, failing.url(""), Some(KEYS[0])),
+            "m",
+        ),
+        ErrorKind::External,
+    );
+    assert!(
+        message.contains("服务器返回 HTTP 500。")
+            && message.contains("boom")
+            && !message.contains("sk-test"),
+        "{message}"
+    );
 
-    let echoed = upstream(Reply::Json(500, r#"{"error":{"message":"echo sensitive-deployment-header"}}"#));
+    let echoed = upstream(Reply::Json(
+        500,
+        r#"{"error":{"message":"echo sensitive-deployment-header"}}"#,
+    ));
     let mut with_header = target(Protocol::OpenaiChat, echoed.url(""), Some(KEYS[0]));
-    with_header.headers.push(Header { name: "x-private".into(), value: "sensitive-deployment-header".into() });
+    with_header.headers.push(Header {
+        name: "x-private".into(),
+        value: "sensitive-deployment-header".into(),
+    });
     let message = kind(probe(&fx).check(&with_header, "m"), ErrorKind::External);
     assert!(!message.contains("sensitive-deployment-header"));
 
     let html = upstream(Reply::Json(200, "<html>nope</html>"));
-    let message = kind(probe(&fx).list_models(&target(Protocol::OpenaiChat, html.url(""), None)), ErrorKind::Protocol);
-    assert!(message.contains("这不是兼容 OpenAI 或 Anthropic 的模型列表响应。"), "{message}");
+    let message = kind(
+        probe(&fx).list_models(&target(Protocol::OpenaiChat, html.url(""), None)),
+        ErrorKind::Protocol,
+    );
+    assert!(
+        message.contains("这不是兼容 OpenAI 或 Anthropic 的模型列表响应。"),
+        "{message}"
+    );
 
     let empty = upstream(Reply::Json(200, r#"{"data":[]}"#));
-    let message = kind(probe(&fx).list_models(&target(Protocol::OpenaiChat, empty.url(""), None)), ErrorKind::External);
+    let message = kind(
+        probe(&fx).list_models(&target(Protocol::OpenaiChat, empty.url(""), None)),
+        ErrorKind::External,
+    );
     assert!(message.contains("服务器未返回任何模型。"), "{message}");
 
     let slow = upstream(Reply::Delay(Duration::from_secs(2)));
     let quick = Probe::with_timeout(fx.store.clone(), Duration::from_millis(200));
-    let message = kind(quick.list_models(&target(Protocol::OpenaiChat, slow.url(""), None)), ErrorKind::Timeout);
+    let message = kind(
+        quick.list_models(&target(Protocol::OpenaiChat, slow.url(""), None)),
+        ErrorKind::Timeout,
+    );
     assert!(message.contains("服务器未及时响应。"), "{message}");
 
-    let message = kind(probe(&fx).list_models(&target(Protocol::OpenaiChat, closed_port(), None)), ErrorKind::External);
+    let message = kind(
+        probe(&fx).list_models(&target(Protocol::OpenaiChat, closed_port(), None)),
+        ErrorKind::External,
+    );
     assert!(message.contains("无法连接到服务器。"), "{message}");
-    kind(probe(&fx).list_models(&target(Protocol::OpenaiChat, "not a url".into(), None)), ErrorKind::Invalid);
+    kind(
+        probe(&fx).list_models(&target(Protocol::OpenaiChat, "not a url".into(), None)),
+        ErrorKind::Invalid,
+    );
 }
 
 #[test]
@@ -812,31 +1301,68 @@ fn probe_check_sends_minimal_requests() {
     let fx = fixture();
     let up = upstream(Reply::Json(200, "{}"));
     let probe = probe(&fx);
-    for protocol in [Protocol::OpenaiChat, Protocol::OpenaiResponses, Protocol::AnthropicMessages] {
-        probe.check(&target(protocol, up.url(""), Some(KEYS[0])), "m").unwrap();
+    for protocol in [
+        Protocol::OpenaiChat,
+        Protocol::OpenaiResponses,
+        Protocol::AnthropicMessages,
+    ] {
+        probe
+            .check(&target(protocol, up.url(""), Some(KEYS[0])), "m")
+            .unwrap();
     }
     let paths: Vec<_> = up.seen().iter().map(|s| s.path.clone()).collect();
-    assert_eq!(paths, ["/v1/chat/completions", "/v1/responses", "/v1/messages"]);
+    assert_eq!(
+        paths,
+        ["/v1/chat/completions", "/v1/responses", "/v1/messages"]
+    );
 }
 
 #[test]
 fn check_keys_lists_models_once_per_enabled_key_without_rotating() {
     let fx = fixture();
-    let up = upstream(Reply::Json(200, r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#));
+    let up = upstream(Reply::Json(
+        200,
+        r#"{"data":[{"id":"claude-a"},{"id":"claude-b"}]}"#,
+    ));
     let mut relay = input("Relay", Access::Direct);
     relay.endpoints = endpoints(&up.url(""), &up.url(""));
     let provider = create(&fx, relay, &KEYS);
     let provider = set_key_enabled(&fx, &provider, 1, false);
 
-    let checks = probe(&fx).check_keys(&provider.id, Protocol::AnthropicMessages).unwrap();
+    let checks = probe(&fx)
+        .check_keys(&provider.id, Protocol::AnthropicMessages)
+        .unwrap();
     let summary: Vec<_> = checks.iter().map(|c| (c.key.clone(), c.models)).collect();
-    assert_eq!(summary, [(provider.keys[0].id.clone(), Some(2)), (provider.keys[2].id.clone(), Some(2))], "disabled keys are skipped");
+    assert_eq!(
+        summary,
+        [
+            (provider.keys[0].id.clone(), Some(2)),
+            (provider.keys[2].id.clone(), Some(2))
+        ],
+        "disabled keys are skipped"
+    );
     let seen = up.seen();
-    assert_eq!(seen.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(), ["/v1/models", "/v1/models"]);
-    assert_eq!(seen.iter().map(|s| header(s, "x-api-key").unwrap_or_default()).collect::<Vec<_>>(), [KEYS[0], KEYS[2]]);
+    assert_eq!(
+        seen.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(),
+        ["/v1/models", "/v1/models"]
+    );
+    assert_eq!(
+        seen.iter()
+            .map(|s| header(s, "x-api-key").unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [KEYS[0], KEYS[2]]
+    );
     assert_eq!(header(&seen[0], "x-trace"), Some(HEADER_VALUE));
     // Rotation untouched: the next launch still starts with the first key.
-    assert_eq!(fx.store.next_key(&provider.id).unwrap().unwrap().value.expose(), KEYS[0]);
+    assert_eq!(
+        fx.store
+            .next_key(&provider.id)
+            .unwrap()
+            .unwrap()
+            .value
+            .expose(),
+        KEYS[0]
+    );
 }
 
 #[test]
@@ -846,13 +1372,19 @@ fn check_keys_reports_a_rejected_key_without_its_value() {
     let mut relay = input("Relay", Access::Direct);
     relay.endpoints = endpoints(&up.url(""), &up.url(""));
     let provider = create(&fx, relay, &KEYS[..1]);
-    let checks = probe(&fx).check_keys(&provider.id, Protocol::OpenaiChat).unwrap();
+    let checks = probe(&fx)
+        .check_keys(&provider.id, Protocol::OpenaiChat)
+        .unwrap();
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0].models, None);
     let error = checks[0].error.as_deref().unwrap();
     assert!(!error.contains(KEYS[0]), "{error}");
     let missing = probe(&fx).check_keys(&provider.id, Protocol::OpenaiResponses);
-    assert_eq!(missing.unwrap_err().kind(), Some(ErrorKind::Invalid), "a line the provider lacks is refused");
+    assert_eq!(
+        missing.unwrap_err().kind(),
+        Some(ErrorKind::Invalid),
+        "a line the provider lacks is refused"
+    );
 }
 
 #[test]
@@ -861,7 +1393,15 @@ fn gateway_refuses_requests_after_the_last_key_is_disabled() {
     let up = upstream(Reply::Json(200, "{}"));
     let provider = gateway_provider(&fx, &up.url(""), &up.url(""), &KEYS[..1]);
     let gateway = Gateway::new(fx.store.clone());
-    let url = format!("{}/chat/completions", gateway.base_url(&format!("thinkrail-{}-oc", short(&provider)), Protocol::OpenaiChat).unwrap());
+    let url = format!(
+        "{}/chat/completions",
+        gateway
+            .base_url(
+                &format!("thinkrail-{}-oc", short(&provider)),
+                Protocol::OpenaiChat
+            )
+            .unwrap()
+    );
     let token = gateway.register(&chat());
     set_key_enabled(&fx, &provider, 0, false);
     assert_eq!(post(&url, &[("x-api-key", token.expose())]).0, 502);
@@ -876,25 +1416,54 @@ fn engine_choice_picks_gateway_official_or_one_provider() {
     let router = router(&fx, Arc::new(FakeGateway::default()));
     let pi = request(BackendKind::Pi, true);
     let names = |routing: &EngineRouting| {
-        let mut names: Vec<_> = routing.providers.iter().map(|p| p.display_name.clone()).collect();
+        let mut names: Vec<_> = routing
+            .providers
+            .iter()
+            .map(|p| p.display_name.clone())
+            .collect();
         names.dedup();
         names
     };
 
-    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Gateway).unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Pi, EngineProvider::Gateway)
+        .unwrap();
     let routing = router.prepare(&pi).unwrap();
     assert_eq!(names(&routing), ["Relay", "Other"]);
-    assert!(routing.providers.iter().all(|p| p.base_url.starts_with("http://gateway.test/")), "统一网关 forces the gateway");
+    assert!(
+        routing
+            .providers
+            .iter()
+            .all(|p| p.base_url.starts_with("http://gateway.test/")),
+        "统一网关 forces the gateway"
+    );
 
-    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Official).unwrap();
-    assert!(router.prepare(&pi).unwrap().providers.is_empty(), "官方 projects nothing");
+    fx.store
+        .set_engine_provider(BackendKind::Pi, EngineProvider::Official)
+        .unwrap();
+    assert!(
+        router.prepare(&pi).unwrap().providers.is_empty(),
+        "官方 projects nothing"
+    );
     assert!(router.catalog(BackendKind::Pi).unwrap().is_empty());
 
-    fx.store.set_engine_provider(BackendKind::Pi, EngineProvider::Provider(other.id.clone())).unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Pi, EngineProvider::Provider(other.id.clone()))
+        .unwrap();
     let routing = router.prepare(&pi).unwrap();
     assert_eq!(names(&routing), ["Other"]);
-    assert!(routing.providers.iter().all(|p| p.base_url.starts_with("https://relay.example")), "the provider keeps direct access");
-    assert_eq!(names(&router.prepare(&request(BackendKind::Omp, true)).unwrap()), ["Relay", "Other"], "other engines keep no choice");
+    assert!(
+        routing
+            .providers
+            .iter()
+            .all(|p| p.base_url.starts_with("https://relay.example")),
+        "the provider keeps direct access"
+    );
+    assert_eq!(
+        names(&router.prepare(&request(BackendKind::Omp, true)).unwrap()),
+        ["Relay", "Other"],
+        "other engines keep no choice"
+    );
 
     ProviderService::delete(&*fx.store, &other.id, other.revision).unwrap();
     kind(router.prepare(&pi), ErrorKind::Invalid);

@@ -1,14 +1,15 @@
 //! Projects panel: open/close projects, list workspaces, create and remove managed worktrees.
 
-use gpui_kit::component::{button::{Button, ButtonVariants as _}, menu::{DropdownMenu as _, PopupMenuItem}, Sizable as _};
+use gpui_kit::component::{
+    Sizable as _,
+    button::{Button, ButtonVariants as _},
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 use gpui_kit::{
-    Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    StatefulInteractiveElement as _, Subscription, Window,
-    assets::IconName,
-    base::v_flex,
-    prelude::FluentBuilder as _,
-    px,
+    Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, assets::IconName,
+    base::v_flex, prelude::FluentBuilder as _, px,
 };
 use thinkrail_core::{ProjectId, WorkspaceKind};
 use thinkrail_ui::{
@@ -31,7 +32,11 @@ pub struct ProjectsPanel {
 impl ProjectsPanel {
     pub fn new(state: Entity<AppState>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let subscriptions = vec![cx.subscribe(&state, |_, _, _: &AppEvent, cx| cx.notify())];
-        Self { state, collapsed: Vec::new(), _subscriptions: subscriptions }
+        Self {
+            state,
+            collapsed: Vec::new(),
+            _subscriptions: subscriptions,
+        }
     }
 
     fn toggle(&mut self, project: &ProjectId, cx: &mut Context<Self>) {
@@ -49,11 +54,28 @@ impl Render for ProjectsPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
         let (create, open) = (self.state.clone(), self.state.clone());
-        let add = Button::new("project-open").ghost().xsmall().icon(IconName::Plus).tooltip(s::OPEN).dropdown_menu(move |menu, _, _| {
-            let (create, open) = (create.clone(), open.clone());
-            menu.item(PopupMenuItem::new(s::CREATE_TITLE).icon(IconName::Sparkles).on_click(move |_, window, cx| super::open_project::create(create.clone(), window, cx)))
-                .item(PopupMenuItem::new(s::OPEN).icon(IconName::FolderOpen).on_click(move |_, window, cx| super::open_project::open(open.clone(), window, cx)))
-        });
+        let add = Button::new("project-open")
+            .ghost()
+            .xsmall()
+            .icon(IconName::Plus)
+            .tooltip(s::OPEN)
+            .dropdown_menu(move |menu, _, _| {
+                let (create, open) = (create.clone(), open.clone());
+                menu.item(
+                    PopupMenuItem::new(s::CREATE_TITLE)
+                        .icon(IconName::Sparkles)
+                        .on_click(move |_, window, cx| {
+                            super::open_project::create(create.clone(), window, cx)
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new(s::OPEN)
+                        .icon(IconName::FolderOpen)
+                        .on_click(move |_, window, cx| {
+                            super::open_project::open(open.clone(), window, cx)
+                        }),
+                )
+            });
         let header = PanelHeader::new(s::TITLE).action(add);
         let state = self.state.read(cx);
         let selected = state.workspace.clone();
@@ -64,20 +86,30 @@ impl Render for ProjectsPanel {
             let (toggle_id, new_id, close_id) = (id.clone(), id.clone(), id.clone());
             rows.push(
                 TreeRow::new(format!("project-{}", project.id), project.name.clone())
-                    .icon(if open { IconName::FolderOpen } else { IconName::Folder })
+                    .icon(if open {
+                        IconName::FolderOpen
+                    } else {
+                        IconName::Folder
+                    })
                     .expanded(Some(open))
-                    .trailing(IconButton::new(format!("ws-new-{}", project.id), IconName::Plus).tooltip(s::NEW_WORKSPACE).on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            let project = new_id.clone();
-                            this.state.update(cx, |state, cx| state.create_workspace(project, cx));
-                        }),
-                    ))
-                    .trailing(IconButton::new(format!("project-close-{}", project.id), IconName::X).tooltip(s::CLOSE).on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            let project = close_id.clone();
-                            this.state.update(cx, |state, cx| state.close_project(project, cx));
-                        }),
-                    ))
+                    .trailing(
+                        IconButton::new(format!("ws-new-{}", project.id), IconName::Plus)
+                            .tooltip(s::NEW_WORKSPACE)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let project = new_id.clone();
+                                this.state
+                                    .update(cx, |state, cx| state.create_workspace(project, cx));
+                            })),
+                    )
+                    .trailing(
+                        IconButton::new(format!("project-close-{}", project.id), IconName::X)
+                            .tooltip(s::CLOSE)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let project = close_id.clone();
+                                this.state
+                                    .update(cx, |state, cx| state.close_project(project, cx));
+                            })),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(&toggle_id, cx)))
                     .into_any_element(),
             );
@@ -86,12 +118,20 @@ impl Render for ProjectsPanel {
             }
             for workspace in state.workspaces_of(&project.id) {
                 let is_default = workspace.kind == WorkspaceKind::Default;
-                let name = if is_default { s::DEFAULT_WORKSPACE.to_owned() } else { workspace.name.clone() };
+                let name = if is_default {
+                    s::DEFAULT_WORKSPACE.to_owned()
+                } else {
+                    workspace.name.clone()
+                };
                 let (select_id, remove_id) = (workspace.id.clone(), workspace.id.clone());
                 rows.push(
                     TreeRow::new(format!("workspace-{}", workspace.id), name)
                         .depth(1)
-                        .icon(if is_default { IconName::Folder } else { IconName::GitBranch })
+                        .icon(if is_default {
+                            IconName::Folder
+                        } else {
+                            IconName::GitBranch
+                        })
                         .detail(workspace.branch.clone())
                         .selected(selected.as_ref() == Some(&workspace.id))
                         .when(!is_default, |row| {
@@ -100,13 +140,15 @@ impl Render for ProjectsPanel {
                                     .tooltip(s::REMOVE_WORKSPACE)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         let id = remove_id.clone();
-                                        this.state.update(cx, |state, cx| state.remove_workspace(id, cx));
+                                        this.state
+                                            .update(cx, |state, cx| state.remove_workspace(id, cx));
                                     })),
                             )
                         })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let id = select_id.clone();
-                            this.state.update(cx, |state, cx| state.select_workspace(id, cx));
+                            this.state
+                                .update(cx, |state, cx| state.select_workspace(id, cx));
                         }))
                         .into_any_element(),
                 );
@@ -129,7 +171,11 @@ impl Render for ProjectsPanel {
                     .gap(space::S2)
                     .children(rows)
                     .when(empty, |list| {
-                        list.child(label(text::METADATA, s::EMPTY).p(size::PANEL_PADDING).text_color(r.text_subtle))
+                        list.child(
+                            label(text::METADATA, s::EMPTY)
+                                .p(size::PANEL_PADDING)
+                                .text_color(r.text_subtle),
+                        )
                     }),
             )
     }

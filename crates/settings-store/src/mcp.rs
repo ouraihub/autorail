@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 
 use thinkrail_core::{
-    EffectiveMcpServer, Error, McpOrigin, McpScope, McpServer, McpServerId, McpServerInput, McpService, ProjectId,
-    Result,
+    EffectiveMcpServer, Error, McpOrigin, McpScope, McpServer, McpServerId, McpServerInput,
+    McpService, ProjectId, Result,
 };
 use tracing::info;
 use turso::Row;
@@ -32,7 +32,13 @@ fn missing() -> Error {
 
 fn decode(row: &Row) -> Result<McpServer> {
     let project = db::text(row, 2)?;
-    let scope = if project.is_empty() { McpScope::Global } else { McpScope::Project { project: project.into() } };
+    let scope = if project.is_empty() {
+        McpScope::Global
+    } else {
+        McpScope::Project {
+            project: project.into(),
+        }
+    };
     Ok(McpServer {
         id: db::text(row, 0)?.into(),
         revision: db::revision(row, 6)?,
@@ -47,7 +53,8 @@ fn decode(row: &Row) -> Result<McpServer> {
 }
 
 fn list(conn: &Conn, project: &str) -> Result<Vec<McpServer>> {
-    let sql = format!("SELECT {COLUMNS} FROM mcp_servers WHERE project_id = ?1 ORDER BY sort, name");
+    let sql =
+        format!("SELECT {COLUMNS} FROM mcp_servers WHERE project_id = ?1 ORDER BY sort, name");
     conn.rows(&sql, (project,))?.iter().map(decode).collect()
 }
 
@@ -56,11 +63,21 @@ fn load(conn: &Conn, id: &McpServerId) -> Result<McpServer> {
     decode(&conn.row(&sql, (id.as_str(),))?.ok_or_else(missing)?)
 }
 
-fn ensure_unique_name(conn: &Conn, input: &McpServerInput, except: Option<&McpServerId>) -> Result<()> {
+fn ensure_unique_name(
+    conn: &Conn,
+    input: &McpServerInput,
+    except: Option<&McpServerId>,
+) -> Result<()> {
     let except = except.map_or("", McpServerId::as_str);
     let sql = "SELECT 1 FROM mcp_servers WHERE project_id = ?1 AND name = ?2 AND id <> ?3";
-    if conn.row(sql, (scope_key(&input.scope), input.name.as_str(), except))?.is_some() {
-        return Err(Error::conflict(format!("同一范围内已有名为 {} 的 MCP 服务器。", input.name)));
+    if conn
+        .row(sql, (scope_key(&input.scope), input.name.as_str(), except))?
+        .is_some()
+    {
+        return Err(Error::conflict(format!(
+            "同一范围内已有名为 {} 的 MCP 服务器。",
+            input.name
+        )));
     }
     Ok(())
 }
@@ -76,25 +93,45 @@ impl McpService for SqliteSettingsStore {
         validate::project(project)?;
         let (global, local, overrides) = self.read(|conn| {
             let overrides = conn
-                .rows("SELECT server_id, enabled FROM mcp_overrides WHERE project_id = ?1", (project.as_str(),))?
+                .rows(
+                    "SELECT server_id, enabled FROM mcp_overrides WHERE project_id = ?1",
+                    (project.as_str(),),
+                )?
                 .iter()
                 .map(|row| Ok((McpServerId::from(db::text(row, 0)?), db::flag(row, 1)?)))
                 .collect::<Result<HashMap<_, _>>>()?;
             Ok((list(conn, "")?, list(conn, project.as_str())?, overrides))
         })?;
-        let local_names: HashSet<&str> = local.iter().map(|server| server.input.name.as_str()).collect();
+        let local_names: HashSet<&str> = local
+            .iter()
+            .map(|server| server.input.name.as_str())
+            .collect();
         let mut effective = Vec::with_capacity(global.len() + local.len());
         for server in global {
             let (origin, enabled) = if local_names.contains(server.input.name.as_str()) {
                 (McpOrigin::GlobalOverridden, false)
             } else {
-                (McpOrigin::Global, overrides.get(&server.id).copied().unwrap_or(server.input.enabled))
+                (
+                    McpOrigin::Global,
+                    overrides
+                        .get(&server.id)
+                        .copied()
+                        .unwrap_or(server.input.enabled),
+                )
             };
-            effective.push(EffectiveMcpServer { server, origin, enabled });
+            effective.push(EffectiveMcpServer {
+                server,
+                origin,
+                enabled,
+            });
         }
         for server in local {
             let enabled = server.input.enabled;
-            effective.push(EffectiveMcpServer { server, origin: McpOrigin::Project, enabled });
+            effective.push(EffectiveMcpServer {
+                server,
+                origin: McpOrigin::Project,
+                enabled,
+            });
         }
         Ok(effective)
     }
@@ -124,7 +161,12 @@ impl McpService for SqliteSettingsStore {
         Ok(server)
     }
 
-    fn update(&self, id: &McpServerId, expect_revision: u64, input: McpServerInput) -> Result<McpServer> {
+    fn update(
+        &self,
+        id: &McpServerId,
+        expect_revision: u64,
+        input: McpServerInput,
+    ) -> Result<McpServer> {
         let input = validate::mcp(input)?;
         let server = self.write(|conn| {
             if load(conn, id)?.revision != expect_revision {
@@ -166,7 +208,12 @@ impl McpService for SqliteSettingsStore {
         Ok(())
     }
 
-    fn set_override(&self, project: &ProjectId, server: &McpServerId, enabled: Option<bool>) -> Result<()> {
+    fn set_override(
+        &self,
+        project: &ProjectId,
+        server: &McpServerId,
+        enabled: Option<bool>,
+    ) -> Result<()> {
         validate::project(project)?;
         self.write(|conn| {
             if load(conn, server)?.input.scope != McpScope::Global {

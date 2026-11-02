@@ -6,11 +6,13 @@ mod diff;
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Rgba, Styled as _,
-    Subscription, Window,
+    AnyElement, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    Rgba, Styled as _, Subscription, Window,
     assets::IconName,
     base::{h_flex, v_flex},
-    div, prelude::FluentBuilder as _, px, uniform_list,
+    div,
+    prelude::FluentBuilder as _,
+    px, uniform_list,
 };
 use thinkrail_core::{DiffRequest, FileContent, WorkspaceId};
 use thinkrail_ui::{
@@ -70,7 +72,13 @@ impl FilePanel {
             }
         })];
         let workspace = state.read(cx).workspace.clone();
-        Self { state, workspace, docs: Vec::new(), active: 0, _subscriptions: subscriptions }
+        Self {
+            state,
+            workspace,
+            docs: Vec::new(),
+            active: 0,
+            _subscriptions: subscriptions,
+        }
     }
 
     pub fn open_file(&mut self, path: String, cx: &mut Context<Self>) {
@@ -83,11 +91,21 @@ impl FilePanel {
 
     /// Focuses an open document or opens it; always reloads, the worktree may have changed.
     fn open(&mut self, path: String, kind: DocKind, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.clone() else { return };
-        let index = match self.docs.iter().position(|d| d.path == path && d.kind == kind) {
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let index = match self
+            .docs
+            .iter()
+            .position(|d| d.path == path && d.kind == kind)
+        {
             Some(index) => index,
             None => {
-                self.docs.push(Doc { path: path.clone(), kind: kind.clone(), body: Body::Loading });
+                self.docs.push(Doc {
+                    path: path.clone(),
+                    kind: kind.clone(),
+                    body: Body::Loading,
+                });
                 self.docs.len() - 1
             }
         };
@@ -103,7 +121,13 @@ impl FilePanel {
             move || match request_kind {
                 DocKind::File => Ok(file_rows(service.read_file(&for_workspace, &request_path)?)),
                 DocKind::Diff { staged } => {
-                    let text = service.git_diff(&for_workspace, &DiffRequest { path: Some(request_path), staged })?;
+                    let text = service.git_diff(
+                        &for_workspace,
+                        &DiffRequest {
+                            path: Some(request_path),
+                            staged,
+                        },
+                    )?;
                     Ok(diff_rows(&text))
                 }
             },
@@ -111,7 +135,13 @@ impl FilePanel {
                 if this.workspace.as_ref() != Some(&workspace) {
                     return;
                 }
-                let Some(doc) = this.docs.iter_mut().find(|d| d.path == path && d.kind == kind) else { return };
+                let Some(doc) = this
+                    .docs
+                    .iter_mut()
+                    .find(|d| d.path == path && d.kind == kind)
+                else {
+                    return;
+                };
                 match result {
                     Ok(rows) => doc.body = Body::Rows(Rc::new(rows)),
                     Err(error) => {
@@ -135,16 +165,29 @@ impl FilePanel {
 
 fn file_rows(content: FileContent) -> Vec<Row> {
     match content {
-        FileContent::Text(text) => {
-            text.lines().enumerate().map(|(i, line)| Row::Code { number: i as u32 + 1, text: line.to_owned() }).collect()
-        }
-        FileContent::Binary { byte_len } => vec![Row::Note(format!("{}（{byte_len} {}）", s::BINARY, s::BYTES))],
+        FileContent::Text(text) => text
+            .lines()
+            .enumerate()
+            .map(|(i, line)| Row::Code {
+                number: i as u32 + 1,
+                text: line.to_owned(),
+            })
+            .collect(),
+        FileContent::Binary { byte_len } => vec![Row::Note(format!(
+            "{}（{byte_len} {}）",
+            s::BINARY,
+            s::BYTES
+        ))],
     }
 }
 
 fn diff_rows(text: &str) -> Vec<Row> {
     let files = diff::parse(text);
-    if files.is_empty() || files.iter().all(|f| f.hunks.is_empty() && !f.binary && f.old_path.is_none()) {
+    if files.is_empty()
+        || files
+            .iter()
+            .all(|f| f.hunks.is_empty() && !f.binary && f.old_path.is_none())
+    {
         return vec![Row::Note(s::NO_DIFF.to_owned())];
     }
     let several = files.len() > 1;
@@ -181,11 +224,32 @@ fn render_row(row: &Row, r: &Roles) -> AnyElement {
             .child(div().w(px(40.)).flex().justify_end().child(old))
             .child(div().w(px(40.)).flex().justify_end().child(new))
     };
-    let line = |content: String, color: Rgba| div().flex_1().min_w(px(0.)).overflow_hidden().whitespace_nowrap().text_color(color).child(content);
-    let base = h_flex().w_full().h(size::ROW).px(space::S8).text_style(text::CODE_DOCUMENT);
+    let line = |content: String, color: Rgba| {
+        div()
+            .flex_1()
+            .min_w(px(0.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_color(color)
+            .child(content)
+    };
+    let base = h_flex()
+        .w_full()
+        .h(size::ROW)
+        .px(space::S8)
+        .text_style(text::CODE_DOCUMENT);
     match row {
         Row::Code { number: n, text: t } => base
-            .child(div().flex_none().w(px(56.)).pr(space::S12).flex().justify_end().text_color(r.text_subtle).child(n.to_string()))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(56.))
+                    .pr(space::S12)
+                    .flex()
+                    .justify_end()
+                    .text_color(r.text_subtle)
+                    .child(n.to_string()),
+            )
             .child(line(t.clone(), r.text_default))
             .into_any_element(),
         Row::Diff(l) => {
@@ -198,15 +262,32 @@ fn render_row(row: &Row, r: &Roles) -> AnyElement {
             base.when_some(bg, |d, bg| d.bg(bg))
                 .child(gutter(number(l.old), number(l.new)))
                 .child(div().flex_none().w(space::S16).text_color(fg).child(sign))
-                .child(line(l.text.clone(), if l.kind == diff::Kind::Context { r.text_default } else { fg }))
+                .child(line(
+                    l.text.clone(),
+                    if l.kind == diff::Kind::Context {
+                        r.text_default
+                    } else {
+                        fg
+                    },
+                ))
                 .into_any_element()
         }
-        Row::Hunk(header) => base.bg(r.container_content_bg).child(line(header.clone(), r.text_subtle)).into_any_element(),
+        Row::Hunk(header) => base
+            .bg(r.container_content_bg)
+            .child(line(header.clone(), r.text_subtle))
+            .into_any_element(),
         Row::FileHeader(path) => base
             .bg(r.container_header_bg)
-            .child(div().text_style(text::TITLE_COMPACT).text_color(r.text_default).child(path.clone()))
+            .child(
+                div()
+                    .text_style(text::TITLE_COMPACT)
+                    .text_color(r.text_default)
+                    .child(path.clone()),
+            )
             .into_any_element(),
-        Row::Note(note) => base.child(line(note.clone(), r.text_subtle)).into_any_element(),
+        Row::Note(note) => base
+            .child(line(note.clone(), r.text_subtle))
+            .into_any_element(),
     }
 }
 
@@ -216,7 +297,11 @@ impl Render for FilePanel {
         let mut strip = TabStrip::new();
         for (index, doc) in self.docs.iter().enumerate() {
             let name = doc.path.rsplit('/').next().unwrap_or(&doc.path).to_owned();
-            let icon = if doc.kind == DocKind::File { IconName::FileText } else { IconName::FileDiff };
+            let icon = if doc.kind == DocKind::File {
+                IconName::FileText
+            } else {
+                IconName::FileDiff
+            };
             strip = strip.tab(
                 Tab::new(format!("doc-{index}"), name)
                     .icon(icon)
@@ -229,11 +314,22 @@ impl Render for FilePanel {
             );
         }
         let body: AnyElement = match self.docs.get(self.active) {
-            None => div().p(space::S16).child(label(text::METADATA, s::EMPTY).text_color(r.text_subtle)).into_any_element(),
-            Some(Doc { body: Body::Loading, .. }) => {
-                div().p(space::S16).child(label(text::METADATA, s::LOADING).text_color(r.text_subtle)).into_any_element()
-            }
-            Some(Doc { body: Body::Rows(rows), path, kind }) => {
+            None => div()
+                .p(space::S16)
+                .child(label(text::METADATA, s::EMPTY).text_color(r.text_subtle))
+                .into_any_element(),
+            Some(Doc {
+                body: Body::Loading,
+                ..
+            }) => div()
+                .p(space::S16)
+                .child(label(text::METADATA, s::LOADING).text_color(r.text_subtle))
+                .into_any_element(),
+            Some(Doc {
+                body: Body::Rows(rows),
+                path,
+                kind,
+            }) => {
                 let rows = rows.clone();
                 let count = rows.len();
                 let (path, kind) = (path.clone(), kind.clone());
@@ -245,14 +341,23 @@ impl Render for FilePanel {
                     .gap(space::S8)
                     .border_b_1()
                     .border_color(r.border_muted)
-                    .child(label(text::CODE_TEXT, path.clone()).flex_1().truncate().text_color(r.text_muted))
+                    .child(
+                        label(text::CODE_TEXT, path.clone())
+                            .flex_1()
+                            .truncate()
+                            .text_color(r.text_muted),
+                    )
                     .when(matches!(kind, DocKind::Diff { staged: true }), |d| {
                         d.child(label(text::METADATA, s::STAGED).text_color(r.text_subtle))
                     })
                     .when(open_full, |d| {
-                        d.child(IconButton::new("doc-open-full", IconName::FileText).tooltip(s::OPEN_FILE).on_click(
-                            cx.listener(move |this, _, _, cx| this.open_file(path.clone(), cx)),
-                        ))
+                        d.child(
+                            IconButton::new("doc-open-full", IconName::FileText)
+                                .tooltip(s::OPEN_FILE)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.open_file(path.clone(), cx)
+                                })),
+                        )
                     });
                 v_flex()
                     .size_full()
@@ -260,7 +365,10 @@ impl Render for FilePanel {
                     .child(
                         uniform_list("doc-rows", count, move |range, _, cx| {
                             let r = ThinkrailTheme::global(cx).roles;
-                            rows[range].iter().map(|row| render_row(row, &r)).collect::<Vec<_>>()
+                            rows[range]
+                                .iter()
+                                .map(|row| render_row(row, &r))
+                                .collect::<Vec<_>>()
                         })
                         .flex_1()
                         .min_h(px(0.)),

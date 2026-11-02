@@ -5,7 +5,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BackendKind, ChatId, Endpoint, Header, ProjectId, Protocol, ProviderId, ProviderKeyId, Result, Secret, ThinkingLevel};
+use crate::{
+    BackendKind, ChatId, Endpoint, Header, ProjectId, Protocol, ProviderId, ProviderKeyId, Result,
+    Secret, ThinkingLevel,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +36,10 @@ pub struct EngineRouting {
 impl EngineRouting {
     /// True when nothing is projected: the adapter must behave exactly as without routing.
     pub fn is_empty(&self) -> bool {
-        self.providers.is_empty() && self.mcp.is_empty() && self.env.is_empty() && self.default_model.is_none()
+        self.providers.is_empty()
+            && self.mcp.is_empty()
+            && self.env.is_empty()
+            && self.default_model.is_none()
     }
 }
 
@@ -106,8 +112,15 @@ pub struct ProjectedMcpServer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ProjectedMcpTransport {
-    Stdio { command: String, args: Vec<String>, env: Vec<EnvBinding> },
-    Http { url: String, headers: Vec<EnvBinding> },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        env: Vec<EnvBinding>,
+    },
+    Http {
+        url: String,
+        headers: Vec<EnvBinding>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

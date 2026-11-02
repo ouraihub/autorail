@@ -8,8 +8,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use thinkrail_core::{
-    Error, IoContext, NewReviewComment, Plan, PlanReviewService, PlanScope, Result, ReviewComment, ReviewId,
-    ReviewPackage, ReviewState, WorkspaceRoots,
+    Error, IoContext, NewReviewComment, Plan, PlanReviewService, PlanScope, Result, ReviewComment,
+    ReviewId, ReviewPackage, ReviewState, WorkspaceRoots,
 };
 use tracing::info;
 
@@ -37,11 +37,18 @@ struct ScopeData {
 
 impl Document {
     fn get(&self, scope: &PlanScope) -> ScopeData {
-        self.scopes.get(scope.workspace.as_str()).and_then(|chats| chats.get(scope.chat.as_str())).cloned().unwrap_or_default()
+        self.scopes
+            .get(scope.workspace.as_str())
+            .and_then(|chats| chats.get(scope.chat.as_str()))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn put(&mut self, scope: &PlanScope, data: ScopeData) {
-        self.scopes.entry(scope.workspace.to_string()).or_default().insert(scope.chat.to_string(), data);
+        self.scopes
+            .entry(scope.workspace.to_string())
+            .or_default()
+            .insert(scope.chat.to_string(), data);
     }
 }
 
@@ -54,7 +61,9 @@ pub struct JsonPlanReviewStore {
 
 impl std::fmt::Debug for JsonPlanReviewStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JsonPlanReviewStore").field("dir", &self.dir).finish_non_exhaustive()
+        f.debug_struct("JsonPlanReviewStore")
+            .field("dir", &self.dir)
+            .finish_non_exhaustive()
     }
 }
 
@@ -62,7 +71,10 @@ impl JsonPlanReviewStore {
     /// Damaged storage fails with `Corrupt` and is left untouched.
     pub fn open(data_dir: &Path, roots: Arc<dyn WorkspaceRoots>) -> Result<Self> {
         fs::create_dir_all(data_dir).context("创建数据目录")?;
-        let store = Self { dir: data_dir.to_path_buf(), roots };
+        let store = Self {
+            dir: data_dir.to_path_buf(),
+            roots,
+        };
         store.read()?;
         Ok(store)
     }
@@ -72,26 +84,43 @@ impl JsonPlanReviewStore {
         let file = match File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Document { schema_version: SCHEMA_VERSION, ..Document::default() });
+                return Ok(Document {
+                    schema_version: SCHEMA_VERSION,
+                    ..Document::default()
+                });
             }
-            Err(error) => return Err(Error::Io { context: "读取计划与评审数据".into(), source: error }),
+            Err(error) => {
+                return Err(Error::Io {
+                    context: "读取计划与评审数据".into(),
+                    source: error,
+                });
+            }
         };
         let mut bytes = Vec::new();
-        file.take(MAX_BYTES + 1).read_to_end(&mut bytes).context("读取计划与评审数据")?;
+        file.take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .context("读取计划与评审数据")?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(Error::corrupt("计划与评审数据超过 64 MiB"));
         }
-        let document: Document =
-            serde_json::from_slice(&bytes).map_err(|e| Error::corrupt(format!("计划与评审数据无法解析：{e}")))?;
+        let document: Document = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::corrupt(format!("计划与评审数据无法解析：{e}")))?;
         if document.schema_version != SCHEMA_VERSION {
-            return Err(Error::corrupt(format!("计划与评审数据版本 {} 不受支持", document.schema_version)));
+            return Err(Error::corrupt(format!(
+                "计划与评审数据版本 {} 不受支持",
+                document.schema_version
+            )));
         }
         Ok(document)
     }
 
     /// Lock → re-read → change one scope → validate → atomic replace. Nothing is written if the
     /// change fails.
-    fn mutate<T>(&self, scope: &PlanScope, change: impl FnOnce(&mut ScopeData) -> Result<T>) -> Result<T> {
+    fn mutate<T>(
+        &self,
+        scope: &PlanScope,
+        change: impl FnOnce(&mut ScopeData) -> Result<T>,
+    ) -> Result<T> {
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -111,11 +140,17 @@ impl JsonPlanReviewStore {
     }
 
     fn write(&self, document: &Document) -> Result<()> {
-        let bytes = serde_json::to_vec_pretty(document).map_err(|e| Error::invalid(format!("无法序列化：{e}")))?;
+        let bytes = serde_json::to_vec_pretty(document)
+            .map_err(|e| Error::invalid(format!("无法序列化：{e}")))?;
         let target = self.dir.join(FILE_NAME);
-        let temporary = self.dir.join(format!("{FILE_NAME}.{}.tmp", uuid::Uuid::new_v4().simple()));
+        let temporary = self
+            .dir
+            .join(format!("{FILE_NAME}.{}.tmp", uuid::Uuid::new_v4().simple()));
         let result = (|| {
-            let mut file = OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
             drop(file);
@@ -131,7 +166,10 @@ impl JsonPlanReviewStore {
     }
 
     fn find(reviews: &mut [ReviewComment], id: &ReviewId) -> Result<usize> {
-        reviews.iter().position(|r| &r.id == id).ok_or_else(|| Error::not_found("评审评论"))
+        reviews
+            .iter()
+            .position(|r| &r.id == id)
+            .ok_or_else(|| Error::not_found("评审评论"))
     }
 }
 
@@ -140,7 +178,11 @@ impl PlanReviewService for JsonPlanReviewStore {
         Ok(self.read()?.get(scope).plan)
     }
 
-    fn update_plan(&self, scope: &PlanScope, change: &mut dyn FnMut(&mut Plan) -> Result<()>) -> Result<Plan> {
+    fn update_plan(
+        &self,
+        scope: &PlanScope,
+        change: &mut dyn FnMut(&mut Plan) -> Result<()>,
+    ) -> Result<Plan> {
         self.mutate(scope, |data| {
             change(&mut data.plan)?;
             Ok(())
@@ -159,7 +201,12 @@ impl PlanReviewService for JsonPlanReviewStore {
 
     fn add_review(&self, scope: &PlanScope, comment: NewReviewComment) -> Result<ReviewComment> {
         let root = self.roots.workspace_root(&scope.workspace)?;
-        let captured = anchor::capture(&root, &comment.path, comment.line, comment.text_quote.as_deref())?;
+        let captured = anchor::capture(
+            &root,
+            &comment.path,
+            comment.line,
+            comment.text_quote.as_deref(),
+        )?;
         let now = plan_ops::now_ms();
         let created = ReviewComment {
             id: ReviewId::generate(),
@@ -180,7 +227,12 @@ impl PlanReviewService for JsonPlanReviewStore {
         })
     }
 
-    fn update_review(&self, scope: &PlanScope, id: &ReviewId, body: String) -> Result<ReviewComment> {
+    fn update_review(
+        &self,
+        scope: &PlanScope,
+        id: &ReviewId,
+        body: String,
+    ) -> Result<ReviewComment> {
         self.mutate(scope, |data| {
             let index = Self::find(&mut data.reviews, id)?;
             let comment = &mut data.reviews[index];

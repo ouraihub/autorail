@@ -6,7 +6,8 @@
 use std::collections::HashSet;
 
 use thinkrail_core::{
-    Error, EnvValue, McpScope, McpServerInput, McpTransport, ProjectId, Protocol, ProviderInput, Result, Secret,
+    EnvValue, Error, McpScope, McpServerInput, McpTransport, ProjectId, Protocol, ProviderInput,
+    Result, Secret,
 };
 
 const MAX_NAME: usize = 64;
@@ -42,16 +43,24 @@ pub(crate) fn provider(mut input: ProviderInput) -> Result<ProviderInput> {
         endpoint.base_url = endpoint.base_url.trim().to_owned();
         http_url(&endpoint.base_url, "API 地址")?;
     }
-    input.endpoints.sort_by_key(|endpoint| protocol_rank(endpoint.protocol));
+    input
+        .endpoints
+        .sort_by_key(|endpoint| protocol_rank(endpoint.protocol));
     if !protocols.contains(&input.default_protocol) {
         return Err(Error::invalid("默认协议没有对应的 API 地址。"));
     }
     for header in &input.headers {
         if !is_header_name(&header.name) {
-            return Err(Error::invalid(format!("请求头名称 {} 不合法。", header.name.escape_debug())));
+            return Err(Error::invalid(format!(
+                "请求头名称 {} 不合法。",
+                header.name.escape_debug()
+            )));
         }
         if RESERVED_HEADERS.contains(&header.name.to_ascii_lowercase().as_str()) {
-            return Err(Error::invalid(format!("请求头 {} 由 ThinkRail 管理，不能自定义。", header.name)));
+            return Err(Error::invalid(format!(
+                "请求头 {} 由 ThinkRail 管理，不能自定义。",
+                header.name
+            )));
         }
     }
     if input.models.len() > MAX_MODELS {
@@ -66,11 +75,22 @@ pub(crate) fn provider(mut input: ProviderInput) -> Result<ProviderInput> {
         if !model_ids.insert(model.model_id.clone()) {
             return Err(Error::invalid(format!("模型 {} 重复。", model.model_id)));
         }
-        if model.protocols.is_empty() || model.protocols.iter().any(|protocol| !protocols.contains(protocol)) {
-            return Err(Error::invalid(format!("模型 {} 的端点类型没有对应的 API 地址。", model.model_id)));
+        if model.protocols.is_empty()
+            || model
+                .protocols
+                .iter()
+                .any(|protocol| !protocols.contains(protocol))
+        {
+            return Err(Error::invalid(format!(
+                "模型 {} 的端点类型没有对应的 API 地址。",
+                model.model_id
+            )));
         }
         if !model.reasoning && !model.efforts.is_empty() {
-            return Err(Error::invalid(format!("模型 {} 未开启推理，不能设置推理档位。", model.model_id)));
+            return Err(Error::invalid(format!(
+                "模型 {} 未开启推理，不能设置推理档位。",
+                model.model_id
+            )));
         }
     }
     Ok(input)
@@ -106,9 +126,13 @@ pub(crate) fn mcp(mut input: McpServerInput) -> Result<McpServerInput> {
     let name = &input.name;
     if name.is_empty()
         || name.len() > MAX_MCP_NAME
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(Error::invalid("MCP 服务器名称只能包含字母、数字、- 和 _，最多 32 个字符。"));
+        return Err(Error::invalid(
+            "MCP 服务器名称只能包含字母、数字、- 和 _，最多 32 个字符。",
+        ));
     }
     if let McpScope::Project { project: id } = &input.scope {
         project(id)?;
@@ -127,7 +151,10 @@ pub(crate) fn mcp(mut input: McpServerInput) -> Result<McpServerInput> {
             env_names(headers)?;
         }
     }
-    input.description = input.description.map(|text| text.trim().to_owned()).filter(|text| !text.is_empty());
+    input.description = input
+        .description
+        .map(|text| text.trim().to_owned())
+        .filter(|text| !text.is_empty());
     Ok(input)
 }
 
@@ -141,8 +168,13 @@ fn env_names(values: &[EnvValue]) -> Result<()> {
 /// `http://` or `https://`, a non-empty host, and no user name or password.
 fn http_url(url: &str, what: &str) -> Result<()> {
     let lower = url.to_ascii_lowercase();
-    let Some(rest) = lower.strip_prefix("http://").or_else(|| lower.strip_prefix("https://")) else {
-        return Err(Error::invalid(format!("{what}需要以 http:// 或 https:// 开头。")));
+    let Some(rest) = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+    else {
+        return Err(Error::invalid(format!(
+            "{what}需要以 http:// 或 https:// 开头。"
+        )));
     };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     if authority.contains('@') {
@@ -156,5 +188,8 @@ fn http_url(url: &str, what: &str) -> Result<()> {
 
 /// RFC 9110 `token`: one or more visible ASCII characters other than delimiters.
 fn is_header_name(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
 }

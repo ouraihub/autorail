@@ -35,7 +35,10 @@ const TYPES: &[(&[&str], ModelType)] = &[
 /// The type an id suggests; anything without a type keyword is `Chat`.
 pub fn model_type(model_id: &str) -> ModelType {
     let id = model_id.to_ascii_lowercase();
-    TYPES.iter().find(|(words, _)| words.iter().any(|w| id.contains(w))).map_or(ModelType::Chat, |&(_, t)| t)
+    TYPES
+        .iter()
+        .find(|(words, _)| words.iter().any(|w| id.contains(w)))
+        .map_or(ModelType::Chat, |&(_, t)| t)
 }
 
 /// `(prefix, context window, max output, vision)`; known variants before their family default.
@@ -70,20 +73,33 @@ pub fn model_hints(model_id: &str) -> ModelHints {
         .map(|&(_, context, output, vision)| (context, output, vision))
         .or_else(|| {
             let mut chars = name.chars();
-            (chars.next() == Some('o') && chars.next().is_some_and(|c| c.is_ascii_digit())).then_some(O_SERIES)
+            (chars.next() == Some('o') && chars.next().is_some_and(|c| c.is_ascii_digit()))
+                .then_some(O_SERIES)
         });
     match family {
-        Some((context, output, vision)) if chat => {
-            ModelHints { context_window: Some(context), max_tokens: Some(output), vision: vision || marked, tools: true }
-        }
-        _ => ModelHints { context_window: None, max_tokens: None, vision: chat && marked, tools: chat },
+        Some((context, output, vision)) if chat => ModelHints {
+            context_window: Some(context),
+            max_tokens: Some(output),
+            vision: vision || marked,
+            tools: true,
+        },
+        _ => ModelHints {
+            context_window: None,
+            max_tokens: None,
+            vision: chat && marked,
+            tools: chat,
+        },
     }
 }
 
 /// A new, enabled model for `found` on the line `protocol`, filled from the probe and the hints.
 pub fn model_from_discovery(found: &DiscoveredModel, protocol: Protocol) -> ProviderModel {
     let hints = model_hints(&found.id);
-    let name = found.name.as_deref().map(str::trim).filter(|name| !name.is_empty());
+    let name = found
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
     ProviderModel {
         model_id: found.id.clone(),
         model_type: model_type(&found.id),
@@ -130,7 +146,10 @@ pub fn merge_picked(
                 model.protocols.push(protocol);
             }
             if model.context_window.is_none() {
-                model.context_window = discovered.iter().find(|f| f.id == model.model_id).and_then(|f| f.context_window);
+                model.context_window = discovered
+                    .iter()
+                    .find(|f| f.id == model.model_id)
+                    .and_then(|f| f.context_window);
             }
         } else if on_line {
             model.protocols.retain(|item| *item != protocol);

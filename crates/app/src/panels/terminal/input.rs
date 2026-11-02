@@ -18,7 +18,9 @@ pub fn utf16_byte(text: &str, offset: usize) -> usize {
 
 /// Replaces a UTF-16 `range` of the composition with `text` (`None` replaces it all).
 pub fn replace_composition(previous: &str, range: Option<Range<usize>>, text: &str) -> String {
-    let Some(range) = range else { return text.to_owned() };
+    let Some(range) = range else {
+        return text.to_owned();
+    };
     let start = utf16_byte(previous, range.start);
     let end = utf16_byte(previous, range.end).max(start);
     let mut result = String::with_capacity(start + text.len() + previous.len() - end);
@@ -68,7 +70,11 @@ pub fn encode_key(key: &Keystroke, application_cursor: bool) -> Option<String> {
         _ => None,
     };
     if let Some(code) = tilde {
-        return Some(if modifier > 1 { format!("\x1b[{code};{modifier}~") } else { format!("\x1b[{code}~") });
+        return Some(if modifier > 1 {
+            format!("\x1b[{code};{modifier}~")
+        } else {
+            format!("\x1b[{code}~")
+        });
     }
     let function = match key.key.as_str() {
         "f1" => Some('P'),
@@ -78,7 +84,11 @@ pub fn encode_key(key: &Keystroke, application_cursor: bool) -> Option<String> {
         _ => None,
     };
     if let Some(code) = function {
-        return Some(if modifier > 1 { format!("\x1b[1;{modifier}{code}") } else { format!("\x1bO{code}") });
+        return Some(if modifier > 1 {
+            format!("\x1b[1;{modifier}{code}")
+        } else {
+            format!("\x1bO{code}")
+        });
     }
     let mut text: String = match key.key.as_str() {
         "enter" => "\r".into(),
@@ -118,11 +128,21 @@ mod tests {
         assert_eq!(encode_key(&key("ctrl-c"), false).as_deref(), Some("\x03"));
         assert_eq!(encode_key(&key("up"), true).as_deref(), Some("\x1bOA"));
         assert_eq!(encode_key(&key("up"), false).as_deref(), Some("\x1b[A"));
-        assert_eq!(encode_key(&key("ctrl-right"), false).as_deref(), Some("\x1b[1;5C"));
-        assert_eq!(encode_key(&key("shift-tab"), false).as_deref(), Some("\x1b[Z"));
+        assert_eq!(
+            encode_key(&key("ctrl-right"), false).as_deref(),
+            Some("\x1b[1;5C")
+        );
+        assert_eq!(
+            encode_key(&key("shift-tab"), false).as_deref(),
+            Some("\x1b[Z")
+        );
         assert_eq!(encode_key(&key("f5"), false).as_deref(), Some("\x1b[15~"));
         assert_eq!(encode_key(&key("alt-b"), false).as_deref(), Some("\x1bb"));
-        assert_eq!(encode_key(&key("a"), false), None, "printable text comes from the IME");
+        assert_eq!(
+            encode_key(&key("a"), false),
+            None,
+            "printable text comes from the IME"
+        );
     }
 
     #[test]

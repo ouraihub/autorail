@@ -11,7 +11,9 @@ use std::{
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use thinkrail_core::{BackendKind, EngineInstall, EngineSetup, EngineSource, Error, Launch, Result};
+use thinkrail_core::{
+    BackendKind, EngineInstall, EngineSetup, EngineSource, Error, Launch, Result,
+};
 use tracing::info;
 
 /// A runtime archive: official URL, its SHA-256 and the executable inside it.
@@ -49,9 +51,24 @@ struct Package {
 
 fn package(backend: BackendKind) -> Package {
     match backend {
-        BackendKind::Pi => Package { name: "@earendil-works/pi-coding-agent", version: "1.4.0", runtime: &NODE, command: "pi" },
-        BackendKind::Omp => Package { name: "@oh-my-pi/pi-coding-agent", version: "18.14.2", runtime: &BUN, command: "omp" },
-        BackendKind::Dsh => Package { name: "@deepseek-ai/dsh", version: "0.2.1-rc.5", runtime: &NODE, command: "dsh" },
+        BackendKind::Pi => Package {
+            name: "@earendil-works/pi-coding-agent",
+            version: "1.4.0",
+            runtime: &NODE,
+            command: "pi",
+        },
+        BackendKind::Omp => Package {
+            name: "@oh-my-pi/pi-coding-agent",
+            version: "18.14.2",
+            runtime: &BUN,
+            command: "omp",
+        },
+        BackendKind::Dsh => Package {
+            name: "@deepseek-ai/dsh",
+            version: "0.2.1-rc.5",
+            runtime: &NODE,
+            command: "dsh",
+        },
     }
 }
 
@@ -63,11 +80,16 @@ pub struct ManagedEngines {
 
 impl ManagedEngines {
     pub fn new(data_dir: &Path) -> Self {
-        Self { root: data_dir.join("coding") }
+        Self {
+            root: data_dir.join("coding"),
+        }
     }
 
     fn runtime_exe(&self, runtime: &Runtime) -> PathBuf {
-        self.root.join("runtimes").join(runtime.name).join(runtime.exe)
+        self.root
+            .join("runtimes")
+            .join(runtime.name)
+            .join(runtime.exe)
     }
 
     fn engine_dir(&self, backend: BackendKind) -> PathBuf {
@@ -78,22 +100,33 @@ impl ManagedEngines {
     fn managed(&self, backend: BackendKind) -> Result<Option<EngineInstall>> {
         let pkg = package(backend);
         let exe = self.runtime_exe(pkg.runtime);
-        let manifest = self.engine_dir(backend).join("node_modules").join(pkg.name).join("package.json");
+        let manifest = self
+            .engine_dir(backend)
+            .join("node_modules")
+            .join(pkg.name)
+            .join("package.json");
         if !exe.is_file() || !manifest.is_file() {
             return Ok(None);
         }
-        let text = fs::read_to_string(&manifest).map_err(|e| Error::external(format!("无法读取 {}：{e}", manifest.display())))?;
-        let json: Value = serde_json::from_str(&text).map_err(|_| Error::corrupt(format!("{} 不是有效的 JSON。", manifest.display())))?;
+        let text = fs::read_to_string(&manifest)
+            .map_err(|e| Error::external(format!("无法读取 {}：{e}", manifest.display())))?;
+        let json: Value = serde_json::from_str(&text)
+            .map_err(|_| Error::corrupt(format!("{} 不是有效的 JSON。", manifest.display())))?;
         let bin = match &json["bin"] {
             Value::String(path) => Some(path.as_str()),
             Value::Object(map) => map.get(pkg.command).and_then(Value::as_str),
             _ => None,
         };
-        let Some(bin) = bin else { return Err(Error::corrupt(format!("{} 没有声明命令入口。", pkg.name))) };
+        let Some(bin) = bin else {
+            return Err(Error::corrupt(format!("{} 没有声明命令入口。", pkg.name)));
+        };
         let entry = manifest.parent().unwrap_or(&self.root).join(bin);
         Ok(Some(EngineInstall {
             source: EngineSource::Managed,
-            launch: Launch::External { executable: exe, args: vec![entry.to_string_lossy().into_owned()] },
+            launch: Launch::External {
+                executable: exe,
+                args: vec![entry.to_string_lossy().into_owned()],
+            },
             version: json["version"].as_str().map(str::to_owned),
         }))
     }
@@ -115,22 +148,44 @@ fn on_path(command: &str, exclude: &Path) -> Option<PathBuf> {
 fn system(backend: BackendKind, exclude: &Path) -> Option<EngineInstall> {
     let pkg = package(backend);
     let found = on_path(pkg.command, exclude)?;
-    let launch = if found.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("exe")) {
-        Launch::External { executable: found.clone(), args: Vec::new() }
+    let launch = if found
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+    {
+        Launch::External {
+            executable: found.clone(),
+            args: Vec::new(),
+        }
     } else {
-        let manifest = found.parent()?.join("node_modules").join(pkg.name).join("package.json");
+        let manifest = found
+            .parent()?
+            .join("node_modules")
+            .join(pkg.name)
+            .join("package.json");
         let json: Value = serde_json::from_str(&fs::read_to_string(&manifest).ok()?).ok()?;
         let bin = match &json["bin"] {
             Value::String(path) => path.clone(),
             Value::Object(map) => map.get(pkg.command)?.as_str()?.to_owned(),
             _ => return None,
         };
-        let runtime = if std::ptr::eq(pkg.runtime, &BUN) { "bun" } else { "node" };
-        let executable = on_path(runtime, exclude).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")))?;
+        let runtime = if std::ptr::eq(pkg.runtime, &BUN) {
+            "bun"
+        } else {
+            "node"
+        };
+        let executable = on_path(runtime, exclude)
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")))?;
         let entry = manifest.parent()?.join(bin);
-        Launch::External { executable, args: vec![entry.to_string_lossy().into_owned()] }
+        Launch::External {
+            executable,
+            args: vec![entry.to_string_lossy().into_owned()],
+        }
     };
-    Some(EngineInstall { source: EngineSource::System, launch, version: None })
+    Some(EngineInstall {
+        source: EngineSource::System,
+        launch,
+        version: None,
+    })
 }
 
 fn hidden(program: &Path) -> Command {
@@ -145,19 +200,29 @@ fn hidden(program: &Path) -> Command {
 
 /// Runs `command`; on failure the error carries the last lines of its output.
 fn run(mut command: Command, what: &str) -> Result<()> {
-    let output = command.output().map_err(|e| Error::external(format!("无法启动{what}：{e}")))?;
+    let output = command
+        .output()
+        .map_err(|e| Error::external(format!("无法启动{what}：{e}")))?;
     if output.status.success() {
         return Ok(());
     }
-    let text = String::from_utf8_lossy(&output.stderr).into_owned() + &String::from_utf8_lossy(&output.stdout);
+    let text = String::from_utf8_lossy(&output.stderr).into_owned()
+        + &String::from_utf8_lossy(&output.stdout);
     let tail: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = tail[tail.len().saturating_sub(12)..].join("\n");
-    Err(Error::external(format!("{what}失败（{}）：\n{tail}", output.status)))
+    Err(Error::external(format!(
+        "{what}失败（{}）：\n{tail}",
+        output.status
+    )))
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
-    let bytes = fs::read(path).map_err(|e| Error::external(format!("无法读取 {}：{e}", path.display())))?;
-    Ok(Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect())
+    let bytes =
+        fs::read(path).map_err(|e| Error::external(format!("无法读取 {}：{e}", path.display())))?;
+    Ok(Sha256::digest(&bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {
@@ -174,12 +239,17 @@ impl ManagedEngines {
         fs::create_dir_all(&dir).map_err(io(&dir))?;
         let archive = dir.join(format!("{}.zip", runtime.name));
         let mut curl = hidden(Path::new("curl.exe"));
-        curl.args(["-fsSL", "--retry", "2", "--connect-timeout", "30", "-o"]).arg(&archive).arg(runtime.url);
+        curl.args(["-fsSL", "--retry", "2", "--connect-timeout", "30", "-o"])
+            .arg(&archive)
+            .arg(runtime.url);
         run(curl, &format!("下载 {}", runtime.name))?;
         let actual = sha256_file(&archive)?;
         if actual != runtime.sha256 {
             let _ = fs::remove_file(&archive);
-            return Err(Error::external(format!("{} 的校验和不符，已删除下载的文件。请检查网络或代理后重试。", runtime.name)));
+            return Err(Error::external(format!(
+                "{} 的校验和不符，已删除下载的文件。请检查网络或代理后重试。",
+                runtime.name
+            )));
         }
         // Unpack beside the target and rename, so a half-unpacked runtime is never used.
         let staging = dir.join(format!("{}.part", runtime.name));
@@ -199,7 +269,9 @@ impl ManagedEngines {
 
 impl EngineSetup for ManagedEngines {
     fn status(&self, backend: BackendKind) -> Result<Option<EngineInstall>> {
-        Ok(self.managed(backend)?.or_else(|| system(backend, &self.root)))
+        Ok(self
+            .managed(backend)?
+            .or_else(|| system(backend, &self.root)))
     }
 
     fn install(&self, backend: BackendKind) -> Result<EngineInstall> {
@@ -211,7 +283,11 @@ impl EngineSetup for ManagedEngines {
         let runtime = self.runtime_exe(pkg.runtime);
         // The runtime's own directory first on PATH, so anything the installer spawns uses it.
         let path = std::env::join_paths(
-            runtime.parent().into_iter().map(Path::to_path_buf).chain(std::env::var_os("PATH").iter().flat_map(std::env::split_paths)),
+            runtime.parent().into_iter().map(Path::to_path_buf).chain(
+                std::env::var_os("PATH")
+                    .iter()
+                    .flat_map(std::env::split_paths),
+            ),
         )
         .map_err(|_| Error::external("PATH 无法组合。"))?;
         let mut command = hidden(&runtime);
@@ -224,12 +300,28 @@ impl EngineSetup for ManagedEngines {
             command.args(["add", "--exact", "--ignore-scripts", &spec]);
         } else {
             let npm = self.root.join("runtimes").join(NODE.name).join(NPM_CLI);
-            command.arg(npm).args(["install", "--prefix"]).arg(&dir)
-                .args(["--no-fund", "--no-audit", "--ignore-scripts", "--omit=dev", "--save-exact", &spec]);
+            command
+                .arg(npm)
+                .args(["install", "--prefix"])
+                .arg(&dir)
+                .args([
+                    "--no-fund",
+                    "--no-audit",
+                    "--ignore-scripts",
+                    "--omit=dev",
+                    "--save-exact",
+                    &spec,
+                ]);
         }
         run(command, &format!("安装 {}", backend.label()))?;
-        info!(backend = backend.label(), version = pkg.version, "engine installed");
-        self.managed(backend)?.ok_or_else(|| Error::external(format!("{} 安装完成但找不到入口文件。", backend.label())))
+        info!(
+            backend = backend.label(),
+            version = pkg.version,
+            "engine installed"
+        );
+        self.managed(backend)?.ok_or_else(|| {
+            Error::external(format!("{} 安装完成但找不到入口文件。", backend.label()))
+        })
     }
 }
 
@@ -245,14 +337,30 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let engines = ManagedEngines::new(dir.path());
         for backend in BackendKind::ALL {
-            let installed = engines.install(backend).unwrap_or_else(|e| panic!("{}: {e}", backend.label()));
+            let installed = engines
+                .install(backend)
+                .unwrap_or_else(|e| panic!("{}: {e}", backend.label()));
             assert_eq!(installed.source, EngineSource::Managed);
             assert_eq!(installed.version.as_deref(), Some(package(backend).version));
-            assert_eq!(engines.status(backend).unwrap(), Some(installed.clone()), "status finds the install");
+            assert_eq!(
+                engines.status(backend).unwrap(),
+                Some(installed.clone()),
+                "status finds the install"
+            );
             let Launch::External { executable, args } = installed.launch;
-            let out = hidden(&executable).args(&args).arg("--version").output().unwrap();
-            let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
-            println!("{} --version -> {} {}", backend.label(), out.status, text.trim());
+            let out = hidden(&executable)
+                .args(&args)
+                .arg("--version")
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&out.stdout).into_owned()
+                + &String::from_utf8_lossy(&out.stderr);
+            println!(
+                "{} --version -> {} {}",
+                backend.label(),
+                out.status,
+                text.trim()
+            );
         }
     }
 }

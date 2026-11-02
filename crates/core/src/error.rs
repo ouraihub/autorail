@@ -89,7 +89,10 @@ impl ErrorCode for Error {
 
 impl Error {
     pub fn new(kind: ErrorKind, context: impl fmt::Display) -> Self {
-        Self::Domain { kind, context: context.to_string() }
+        Self::Domain {
+            kind,
+            context: context.to_string(),
+        }
     }
 
     /// `None` for I/O failures.
@@ -100,15 +103,33 @@ impl Error {
         }
     }
 
-    pub fn not_found(what: impl fmt::Display) -> Self { Self::new(ErrorKind::NotFound, what) }
-    pub fn invalid(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Invalid, why) }
-    pub fn conflict(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Conflict, why) }
-    pub fn busy(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Busy, why) }
-    pub fn corrupt(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Corrupt, why) }
-    pub fn forbidden(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Forbidden, why) }
-    pub fn timeout(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Timeout, why) }
-    pub fn external(why: impl fmt::Display) -> Self { Self::new(ErrorKind::External, why) }
-    pub fn protocol(why: impl fmt::Display) -> Self { Self::new(ErrorKind::Protocol, why) }
+    pub fn not_found(what: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::NotFound, what)
+    }
+    pub fn invalid(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Invalid, why)
+    }
+    pub fn conflict(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Conflict, why)
+    }
+    pub fn busy(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Busy, why)
+    }
+    pub fn corrupt(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Corrupt, why)
+    }
+    pub fn forbidden(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Forbidden, why)
+    }
+    pub fn timeout(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Timeout, why)
+    }
+    pub fn external(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::External, why)
+    }
+    pub fn protocol(why: impl fmt::Display) -> Self {
+        Self::new(ErrorKind::Protocol, why)
+    }
 }
 
 /// Attach human context to an I/O failure without losing the original error as `source`.
@@ -118,7 +139,10 @@ pub trait IoContext<T> {
 
 impl<T> IoContext<T> for io::Result<T> {
     fn context(self, context: impl Into<String>) -> Result<T> {
-        self.map_err(|source| Error::Io { context: context.into(), source })
+        self.map_err(|source| Error::Io {
+            context: context.into(),
+            source,
+        })
     }
 }
 
@@ -137,6 +161,9 @@ mod tests {
         let error = Error::new(ErrorKind::BackendUnavailable, "No default model selected");
         assert_eq!(error.code(), "BACKEND_UNAVAILABLE");
         assert_eq!(error.kind(), Some(ErrorKind::BackendUnavailable));
-        assert_eq!(error.to_string(), "Agent 无法启动：No default model selected");
+        assert_eq!(
+            error.to_string(),
+            "Agent 无法启动：No default model selected"
+        );
     }
 }

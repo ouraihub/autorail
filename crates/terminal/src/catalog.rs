@@ -47,7 +47,12 @@ pub(crate) struct Locked<'a> {
 }
 
 impl Catalog {
-    pub(crate) fn new(dir: PathBuf) -> Self { Self { dir, local: Mutex::new(()) } }
+    pub(crate) fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            local: Mutex::new(()),
+        }
+    }
 
     pub(crate) fn lock(&self) -> Result<Locked<'_>> {
         let local = self.local.lock();
@@ -75,14 +80,20 @@ impl Catalog {
             Error::busy("终端配置正被其他进程占用，请稍后重试")
         })?;
         safe_metadata(&path)?;
-        Ok(Locked { dir: &self.dir, _file: file, _local: local })
+        Ok(Locked {
+            dir: &self.dir,
+            _file: file,
+            _local: local,
+        })
     }
 }
 
 impl Locked<'_> {
     pub(crate) fn read(&self) -> Result<Vec<StoredTab>> {
         let path = self.dir.join(FILE_NAME);
-        let Some(metadata) = safe_metadata(&path)? else { return Ok(Vec::new()) };
+        let Some(metadata) = safe_metadata(&path)? else {
+            return Ok(Vec::new());
+        };
         if !metadata.is_file() || metadata.len() > MAX_BYTES {
             return Err(Error::corrupt("终端配置不是普通文件或超过 1 MiB"));
         }
@@ -96,11 +107,15 @@ impl Locked<'_> {
         let file: CatalogFile = serde_json::from_slice(&bytes)
             .map_err(|error| Error::corrupt(format!("终端配置无法解析：{error}")))?;
         if file.schema_version != SCHEMA_VERSION {
-            return Err(Error::corrupt(format!("终端配置版本 {} 不受支持", file.schema_version)));
+            return Err(Error::corrupt(format!(
+                "终端配置版本 {} 不受支持",
+                file.schema_version
+            )));
         }
         let mut seen = HashSet::new();
         for tab in &file.tabs {
-            validate_ids(&tab.workspace, &tab.tab_key).map_err(|_| Error::corrupt("终端配置包含无效标签标识"))?;
+            validate_ids(&tab.workspace, &tab.tab_key)
+                .map_err(|_| Error::corrupt("终端配置包含无效标签标识"))?;
             if tab.title.len() > MAX_TITLE_BYTES {
                 return Err(Error::corrupt("终端配置标题过长"));
             }
@@ -112,7 +127,10 @@ impl Locked<'_> {
     }
 
     pub(crate) fn save(&self, tabs: &[StoredTab]) -> Result<()> {
-        let file = CatalogFile { schema_version: SCHEMA_VERSION, tabs: tabs.to_vec() };
+        let file = CatalogFile {
+            schema_version: SCHEMA_VERSION,
+            tabs: tabs.to_vec(),
+        };
         let bytes = serde_json::to_vec_pretty(&file)
             .map_err(|error| Error::invalid(format!("终端配置无法序列化：{error}")))?;
         if bytes.len() as u64 > MAX_BYTES {
@@ -120,7 +138,9 @@ impl Locked<'_> {
         }
         let target = self.dir.join(FILE_NAME);
         safe_metadata(&target)?;
-        let temporary = self.dir.join(format!("terminals.{}.tmp", uuid::Uuid::new_v4().simple()));
+        let temporary = self
+            .dir
+            .join(format!("terminals.{}.tmp", uuid::Uuid::new_v4().simple()));
         let result = write_new(&temporary, &bytes)
             .and_then(|()| fs::rename(&temporary, &target))
             .context("保存终端配置");
@@ -131,7 +151,9 @@ impl Locked<'_> {
         }
         result?;
         #[cfg(unix)]
-        File::open(self.dir).and_then(|directory| directory.sync_all()).context("同步终端配置目录")?;
+        File::open(self.dir)
+            .and_then(|directory| directory.sync_all())
+            .context("同步终端配置目录")?;
         Ok(())
     }
 }
@@ -139,7 +161,11 @@ impl Locked<'_> {
 /// Workspace and tab identifiers must be non-empty and at most 500 bytes.
 pub(crate) fn validate_ids(workspace: &WorkspaceId, tab_key: &str) -> Result<()> {
     let workspace = workspace.as_str();
-    if workspace.is_empty() || tab_key.is_empty() || workspace.len() > MAX_ID_BYTES || tab_key.len() > MAX_ID_BYTES {
+    if workspace.is_empty()
+        || tab_key.is_empty()
+        || workspace.len() > MAX_ID_BYTES
+        || tab_key.len() > MAX_ID_BYTES
+    {
         return Err(Error::invalid("终端标识须为 1..500 字节"));
     }
     Ok(())
