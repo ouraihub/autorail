@@ -95,3 +95,38 @@ fn import_forces_current_scope_and_keeps_disabled_servers() {
         Err(s::IMPORT_INVALID)
     );
 }
+
+#[gpui_kit::test]
+fn pair_add_buttons_name_what_they_add(cx: &mut gpui_kit::TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let (fixture, page) = crate::testing::open(cx, McpPage::new);
+    let label = |cx: &mut gpui_kit::TestAppContext, id: String| {
+        cx.update_window(fixture.window, |_, window, cx| {
+            window.render_frame(cx);
+            window.find(id).label().map(str::to_owned)
+        })
+        .unwrap()
+    };
+
+    cx.update_window(fixture.window, |_, window, cx| {
+        page.update(cx, |page, cx| page.begin_edit(None, window, cx));
+    })
+    .unwrap();
+    assert_eq!(
+        label(cx, format!("mcp-add-{}", s::ENV)).as_deref(),
+        Some(s::ADD_ENV)
+    );
+
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            if let Some(editor) = &mut page.editor {
+                editor.transport = TransportKind::Http;
+            }
+            cx.notify();
+        });
+    });
+    assert_eq!(
+        label(cx, format!("mcp-add-{}", s::HEADERS)).as_deref(),
+        Some(s::ADD_HEADER)
+    );
+}

@@ -2,8 +2,8 @@
 
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, base::h_flex, div,
-    prelude::FluentBuilder as _, px,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, TestSupportExt as _, Window,
+    base::h_flex, div, prelude::FluentBuilder as _, px,
 };
 use gpui_kit::{assets::IconName, component::Icon};
 
@@ -71,6 +71,7 @@ impl RenderOnce for Tab {
         let close_id = ElementId::NamedChild(std::sync::Arc::new(self.id.clone()), "close".into());
         h_flex()
             .id(self.id)
+            .test_support()
             .h_full()
             .gap(space::S6)
             .px(space::S8)
@@ -90,6 +91,7 @@ impl RenderOnce for Tab {
                 d.child(
                     div()
                         .id(close_id)
+                        .test_support()
                         .rounded(radius::XS)
                         .hover(|s| s.bg(r.control_bg_hovered))
                         // The tab itself is clickable: without this the click also selects the
@@ -225,3 +227,6 @@ impl RenderOnce for Segment {
             }))
     }
 }
+
+#[cfg(test)]
+mod tests;

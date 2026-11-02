@@ -6,6 +6,8 @@ mod panels;
 mod services;
 mod state;
 mod strings;
+#[cfg(test)]
+mod testing;
 mod workbench;
 
 use std::path::PathBuf;
