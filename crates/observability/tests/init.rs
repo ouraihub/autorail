@@ -1,5 +1,10 @@
 //! The real subscriber's lines read back as the log page sees them. One test per binary: the
 //! global subscriber can be installed once per process.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use std::panic::Location;
 

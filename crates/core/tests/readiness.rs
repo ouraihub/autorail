@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
+
 use thinkrail_core::{
     BackendKind::{Dsh, Omp, Pi},
     Readiness, readiness,

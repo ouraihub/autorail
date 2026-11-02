@@ -1,4 +1,9 @@
 //! Line edits keep models and the default protocol consistent.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use thinkrail_core::{
     Access, Endpoint, ModelType, Protocol, ProviderInput, ProviderModel, free_protocols,

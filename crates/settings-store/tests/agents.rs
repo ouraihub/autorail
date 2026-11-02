@@ -1,5 +1,10 @@
 //! Chat bindings, the default Agent and host preferences through the public contracts
 //! (agent-settings 07 §4, native-multi-agent 06 §4).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use tempfile::TempDir;
 use thinkrail_core::{

@@ -1,4 +1,9 @@
-//! Provider integration contracts live outside `src/` production modules.
+//! Provider settings through the public `ProviderService` contract.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use std::{
     fs,

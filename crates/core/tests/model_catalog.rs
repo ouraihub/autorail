@@ -1,4 +1,9 @@
 //! Model list rules: grouping, id hints and the "同步模型" merge.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use std::collections::BTreeSet;
 

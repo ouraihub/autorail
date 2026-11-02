@@ -1,5 +1,10 @@
 //! Built-in provider presets: seeding, identity and delete protection through the public
 //! `ProviderService` contract.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use tempfile::TempDir;
 use thinkrail_core::{

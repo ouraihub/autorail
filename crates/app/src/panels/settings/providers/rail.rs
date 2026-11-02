@@ -114,12 +114,10 @@ impl ProvidersPage {
         let current = self.selected.as_ref() == Some(&id);
         let enabled = provider.input.enabled;
         let has_key = provider.keys.iter().any(|k| k.enabled);
-        let dot = enabled.then(|| {
-            if has_key {
-                r.feedback_success
-            } else {
-                r.feedback_warning
-            }
+        let dot = enabled.then_some(if has_key {
+            r.feedback_success
+        } else {
+            r.feedback_warning
         });
         let page = cx.entity();
         let menu_target = provider.clone();

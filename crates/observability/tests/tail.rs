@@ -1,4 +1,9 @@
 //! The log page's read-back: which file, how much of it, and how a line splits.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use std::fs;
 

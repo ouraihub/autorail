@@ -1,4 +1,9 @@
 //! The `spec_*` host tools through the public `HostToolHandler` contract.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "integration test helpers fail loudly"
+)]
 
 use std::{fs, path::Path, path::PathBuf, sync::Arc};
 
