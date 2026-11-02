@@ -1,0 +1,32 @@
+name: line-endings
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Text files are stored with LF
+        run: |
+          bad=$(git ls-files --eol | awk '$1 == "i/crlf" || $1 == "i/mixed" { sub(/^[^\t]*\t/, ""); print }')
+          if [ -n "$bad" ]; then
+            echo "::error::These files are stored with CRLF. Run 'git add --renormalize .' and commit."
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Batch files are ASCII
+        run: |
+          bad=$(git ls-files -z '*.bat' '*.cmd' | xargs -0 -r grep -lP '[^\x00-\x7F]' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::cmd.exe misparses non-ASCII batch files. Keep these files pure ASCII."
+            echo "$bad"
+            exit 1
+          fi

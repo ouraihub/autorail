@@ -57,7 +57,15 @@ scripts\msvc\cargo-msvc.bat test -p thinkrail-agents smoke:: -- --ignored --noca
 
 它先注入便携 MSVC 的 `PATH`、`LIB`、`INCLUDE`，并检查 `cl.exe`、`link.exe` 确实来自便携目录，再调用 cargo。直接运行 `cargo` 会用到 Git for Windows `usr\bin` 里的 `link.exe`（GNU coreutils 的 link 命令，不是链接器），报 `extra operand … Try 'link --help'`。Windows SDK 的 `rc.exe` 也来自这套工具链，`turso` 等依赖的构建脚本需要它。
 
-`.bat` 文件必须保持 CRLF 和纯 ASCII（`.gitattributes` 已固定），否则 cmd.exe 会解析错。
+## 换行符
+
+`.gitattributes` 规定：普通文本文件在仓库和工作区都用 LF；`.bat` / `.cmd` 用 CRLF，并且只能是纯 ASCII，否则 cmd.exe 会解析错。`.editorconfig` 让编辑器按同样的规则保存。CI 的 `line-endings` 检查会拒绝仓库里存成 CRLF 的文本文件和含非 ASCII 字符的批处理文件。
+
+这些规则不依赖本机的 `core.autocrlf`。在规则加入之前克隆的仓库，工作区里可能还留着 CRLF 文件；在工作区干净时运行一次：
+
+```powershell
+git read-tree HEAD; git checkout-index -f -a
+```
 
 ## 已知问题
 
