@@ -2,34 +2,37 @@
 //! `session_settled` completion, `ask` questionnaires and `always-ask` tool approval.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, ErrorCode as _, HostToolHandler,
+    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, HostToolHandler,
     InteractionAnswer, NativeSessionKey, PlanScope, Result, SessionSink, SessionSnapshot,
     StartSession, ThinkingLevel,
 };
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::{
     framing::Chunks,
-    host, omp_mcp,
-    process::{self, LaunchSpec, Process},
+    host,
+    process::{self, Process},
     projection::Projection,
-    projection_engine,
     rpc::{self, Dialogs, Stream},
     session::{self, COMMAND, HANDSHAKE, Live, engine_error, new_id, session_error},
-    workflow,
 };
+
+mod host_tools;
+mod launch;
+mod withdraw;
+
+use launch::launch_spec;
 
 /// OMP physical line limit; logical frames up to [`crate::framing::MAX_FRAME`] arrive as v2 chunks.
 const LINE_LIMIT: usize = 1024 * 1024;
@@ -110,47 +113,6 @@ impl AgentRuntime for OmpRuntime {
         info!(chat = %request.chat, backend = "omp", "agent session started");
         Ok(omp)
     }
-}
-
-/// Host arguments and environment of one OMP launch: the extension (`-e`: workflow rules and
-/// providers), the overlay (`--config`: bundled skills, MCP, default model) and the `thinkrail-`
-/// entries of the config root's (default `~/.omp/agent`) `mcp.json`. Host tools travel over RPC
-/// (`set_host_tools`), so they add neither arguments nor variables.
-fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
-    let mut host_args: Vec<String> = ["--mode", "rpc-ui", "--approval-mode", "always-ask"]
-        .into_iter()
-        .map(Into::into)
-        .collect();
-    omp_mcp::sync(
-        &process::config_dir(request.config_root.as_deref(), ".omp/agent")?,
-        &request.routing.mcp,
-    )?;
-    let skills = workflow::stage_skills(&request.support_dir)?;
-    let extension = projection_engine::omp_extension(&request.routing);
-    let path = host::write_support(
-        &request.support_dir,
-        projection_engine::OMP_EXTENSION_FILE,
-        &extension,
-    )?;
-    host_args.extend(["-e".to_owned(), path.display().to_string()]);
-    let overlay = projection_engine::omp_overlay(&request.routing, &skills);
-    let path = host::write_support(
-        &request.support_dir,
-        projection_engine::OMP_OVERLAY_FILE,
-        &overlay,
-    )?;
-    host_args.extend(["--config".to_owned(), path.display().to_string()]);
-    if let Some(key) = &request.resume {
-        host_args.extend(["--session".to_owned(), key.as_str().to_owned()]);
-    }
-    Ok(LaunchSpec {
-        launch: &request.launch,
-        config_root: request.config_root.as_deref(),
-        host_args,
-        cwd: request.cwd.clone(),
-        config_var: "PI_CODING_AGENT_DIR",
-        host_env: process::routing_env(&request.routing).collect(),
-    })
 }
 
 /// The host tools of one OMP chat: called in-process from `host_tool_call` frames.
@@ -253,34 +215,6 @@ impl OmpSession {
         }
     }
 
-    /// OMP drops an aborted reply with no text or tool call from the model context but keeps its
-    /// request, so the model would still answer a request the user stopped. Moving the leaf back
-    /// before that request withdraws it; the host transcript keeps showing it.
-    fn withdraw_stopped_request(&self) {
-        if !self.interrupted.swap(false, Ordering::AcqRel) {
-            return;
-        }
-        let withdrawn = self
-            .call("get_entries", json!({}), COMMAND)
-            .and_then(|data| {
-                let Some(request) = stopped_request(&data["entries"], data["leafId"].as_str())
-                else {
-                    return Ok(false);
-                };
-                self.call(
-                    "navigate_tree",
-                    json!({"entryId": request, "summarize": false}),
-                    COMMAND,
-                )
-                .map(|_| true)
-            });
-        match withdrawn {
-            Ok(true) => info!("stopped request withdrawn from the OMP context"),
-            Ok(false) => {}
-            Err(error) => warn!(code = error.code(), "cannot withdraw the stopped request"),
-        }
-    }
-
     fn call(&self, kind: &str, mut fields: Value, timeout: Duration) -> Result<Value> {
         let id = new_id();
         fields["type"] = json!(kind);
@@ -346,47 +280,6 @@ impl OmpSession {
                 Ok(())
             }
         }
-    }
-
-    /// Runs a host tool off the reader thread and answers with `host_tool_result`. Tool-level
-    /// failures are results with `isError`; a withdrawn call gets no answer.
-    fn on_tool_call(&self, frame: &Value) -> Result<()> {
-        let id = frame["id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| Error::protocol("host_tool_call 缺少 id"))?;
-        let name = frame["toolName"].as_str().unwrap_or_default().to_owned();
-        let id = id.to_owned();
-        let Some(tools) = &self.tools else {
-            let result = tool_result(&id, "Host tools are not enabled for this chat.", true);
-            return self.live.process.send(&result);
-        };
-        let (handler, scope, cancelled) = (
-            tools.handler.clone(),
-            tools.scope.clone(),
-            tools.cancelled.clone(),
-        );
-        let arguments = frame.get("arguments").cloned().unwrap_or_else(|| json!({}));
-        let process = self.live.process.clone();
-        let spawned = thread::Builder::new()
-            .name("omp-host-tool".into())
-            .spawn(move || {
-                let reply = match handler.call(&scope, &name, arguments) {
-                    Ok(result) => tool_result(&id, &result.text, result.is_error),
-                    // The handler logs the failure with its chat and duration.
-                    Err(error) => tool_result(&id, &error.to_string(), true),
-                };
-                if cancelled.lock().remove(&id) {
-                    debug!(tool = %name, "host tool result dropped: call was cancelled");
-                    return;
-                }
-                if let Err(error) = process.send(&reply) {
-                    debug!(%error, "host tool result not delivered");
-                }
-            });
-        spawned
-            .map(drop)
-            .map_err(|error| Error::protocol(format!("无法运行宿主工具：{error}")))
     }
 
     fn on_response(&self, frame: Value) {
@@ -456,55 +349,6 @@ impl AgentSession for OmpSession {
             effort,
         )
     }
-}
-
-fn tool_result(id: &str, text: &str, is_error: bool) -> Value {
-    let mut frame = json!({"type": "host_tool_result", "id": id, "result": {"content": [{"type": "text", "text": text}]}});
-    if is_error {
-        frame["isError"] = json!(true);
-    }
-    frame
-}
-
-/// The earliest user entry of the trailing run of requests whose only replies are aborted without
-/// text or tool calls, walking the active path back from `leaf`. Those requests reach the model
-/// unanswered.
-fn stopped_request(entries: &Value, leaf: Option<&str>) -> Option<String> {
-    let by_id: HashMap<&str, &Value> = entries
-        .as_array()?
-        .iter()
-        .filter_map(|e| e["id"].as_str().map(|id| (id, e)))
-        .collect();
-    let mut cursor = leaf;
-    let (mut stopped, mut earliest) = (false, None);
-    while let Some(entry) = cursor.and_then(|id| by_id.get(id)) {
-        if entry["type"] == "message" {
-            let message = &entry["message"];
-            match message["role"].as_str() {
-                Some("assistant")
-                    if message["stopReason"] == "aborted" && !answers(&message["content"]) =>
-                {
-                    stopped = true;
-                }
-                Some("user") if stopped => {
-                    earliest = entry["id"].as_str().map(str::to_owned);
-                    stopped = false;
-                }
-                _ => break,
-            }
-        }
-        cursor = entry["parentId"].as_str();
-    }
-    earliest
-}
-
-fn answers(content: &Value) -> bool {
-    content.as_array().is_some_and(|blocks| {
-        blocks.iter().any(|b| {
-            b["type"] == "toolCall"
-                || (b["type"] == "text" && b["text"].as_str().is_some_and(|t| !t.trim().is_empty()))
-        })
-    })
 }
 
 #[cfg(test)]

@@ -70,29 +70,9 @@ A `match` on an enum this workspace owns MUST name every variant, so adding a va
 
 Check with `cargo-msvc.bat clippy --workspace --lib --bins -- -W clippy::wildcard_enum_match_arm`; every remaining warning must fall under one of the two cases above. The lint is not enabled in the gate because it also flags those justified arms.
 
-### Known debt against the baseline
+### Status against the baseline
 
-Measured 2026-11-02 after the workspace was formatted with rustfmt, which made wrapped files longer. Each file is split when it is next substantially modified, not in a sweeping rewrite. A split MUST keep behavior identical and be verified by the affected tests plus, for `app` panels, a real GPUI window.
-
-Production files above 500 lines (total lines, including inline unit tests):
-
-| File | Lines |
-| --- | ---: |
-| `app/src/panels/chat.rs` | 1520 |
-| `app/src/panels/settings/mcp.rs` | 1217 |
-| `app/src/panels/settings/providers/models.rs` | 1057 |
-| `app/src/panels/terminal.rs` | 897 |
-| `agents/src/dsh.rs` | 849 |
-| `ui/src/components.rs` | 761 |
-| `agents/src/rpc.rs` | 643 |
-| `app/src/panels/settings/models.rs` | 632 |
-| `host-tools/src/tools.rs` | 611 |
-| `workspace/src/service.rs` | 598 |
-| `routing/src/router.rs` | 539 |
-| `app/src/panels/settings/providers/dialogs.rs` | 536 |
-| `agents/src/omp.rs` | 511 |
-| `agents/src/process.rs` | 508 |
-| `app/src/panels/settings/providers/detail.rs` | 505 |
+As of 2026-11-02 no production file exceeds 500 lines. The 15 files that did were split by responsibility into child modules next to their coordinators, moving code without changing behavior. Eleven files are between 400 and 500 lines; they fall under the growth rule in "File responsibility and size" and are split when a feature change would push them past 400.
 
 The host is the only writer of application metadata. Engine native history is not converted into application state or rewritten across engines. Client layout belongs to each window. A new default never changes an existing chat's backend.
 

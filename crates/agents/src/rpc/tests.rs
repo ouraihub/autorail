@@ -1,10 +1,14 @@
-use serde_json::json;
+use serde_json::{Value, json};
 use thinkrail_core::{
-    ContentBlock, ErrorKind, InteractionAnswer, InteractionKind, Role, SessionEvent, ThinkingLevel,
-    ToolStatus,
+    ContentBlock, ErrorKind, Interaction, InteractionAnswer, InteractionKind, Role, SessionEvent,
+    ThinkingLevel, ToolStatus,
 };
 
-use super::*;
+use super::{
+    dialogs::{UiRequest, cancel, ui_request, ui_response},
+    model::switch_commands,
+    *,
+};
 use crate::projection::tests::projection;
 
 fn shown(frame: Value) -> Interaction {

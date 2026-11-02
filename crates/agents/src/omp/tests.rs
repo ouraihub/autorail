@@ -3,7 +3,7 @@ use std::fs;
 use serde_json::{Value, json};
 use thinkrail_core::{BackendKind, EngineRouting};
 
-use super::{launch_spec, stopped_request};
+use super::{launch_spec, withdraw::stopped_request};
 use crate::{
     projection_engine,
     testing::{Fixture, SECRETS, routing_vars, sample_routing, secret_routing},

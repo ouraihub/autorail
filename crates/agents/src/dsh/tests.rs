@@ -4,9 +4,13 @@ use thinkrail_core::{
     InteractionOption, Role, ThinkingLevel, ToolStatus,
 };
 
-use super::*;
+use super::{
+    launch::{mcp_executable, preserve_user_routes},
+    *,
+};
 use crate::{
     projection::tests::projection,
+    projection_engine,
     testing::{Fixture, dsh_routing, routing_vars, secret_routing},
 };
 
