@@ -7,7 +7,7 @@
 - 服务方法都是**同步阻塞**的，由 `app::state::run` 放到后台执行器调用。异步库（Turso、tokio）只在实现内部使用。
 - 库层错误只用 `thinkrail_core::Error`。新增的错误不增加 `ErrorKind`，按语义复用：校验失败 `Invalid`；重复 `Conflict`；revision 过期 `Conflict`；找不到 `NotFound`；数据库损坏或版本过新 `Corrupt`；上游拒绝或不可达 `External`；超时 `Timeout`；上游返回非预期格式 `Protocol`；网关未启动 `BackendUnavailable`。消息用中文，写明哪里出错、怎么办，**不得包含密钥、请求头值、环境变量值**。
 - 日志字段：`provider`（id）、`route`、`key`（密钥 id 或标签，不是值）、`status`、`elapsed_ms`、`code`。
-- 测试位置按模块类型区分：core/service 的纯服务测试可使用 owning module 的 `tests.rs`；app 的 feature-level UI/integration contract tests 必须放在 `crates/app/tests/` 或 dedicated test crate，不能注册到生产 `src/` feature module。测试使用临时目录、占位密钥（如 `sk-test-a`）和本机回环上的假上游；不接触真实凭据。需要真实引擎或真实中转的测试标 `#[ignore = "needs …"]`。
+- 测试位置按 [AI 工程规范](../../AI工程规范.md) §8、§10 与 `SPEC.md` 的 Tests：单元测试放在 `src`（`#[cfg(test)] mod tests`，变长时拆到同目录 `tests.rs`），集成测试放在 crate 的 `tests/`，只用公开 API。测试使用临时目录、占位密钥（如 `sk-test-a`）和本机回环上的假上游；不接触真实凭据。需要真实引擎或真实中转的测试标 `#[ignore = "needs …"]`。
 
 ## 2. core 契约
 

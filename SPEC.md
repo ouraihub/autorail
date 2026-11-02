@@ -20,12 +20,12 @@ Service crates never depend on each other, except `host-tools` → `plan-review`
 
 ## Rust module and test organization
 
-These rules apply to new code and to every production file substantially modified. They prevent UI panels and services from becoming unreviewable god files; they are repository policy, not a claim about an upstream Rust language limit.
+[`docs/AI工程规范.md`](docs/AI工程规范.md) is the baseline for every change. The rules below only extend it for this repository; where a rule here is stricter, the stricter rule applies. They apply to new code and to every production file substantially modified.
 
 ### File responsibility and size
 
 - Every `.rs` file MUST have one primary responsibility stated by its module comment or owning `SPEC.md`. Closely related private helpers MAY remain in the same file; unrelated UI, persistence, network, and domain concerns MUST NOT.
-- A file SHOULD stay at or below 400 physical lines. Crossing 400 lines REQUIRES a responsibility review before more code is added. A production file MUST NOT exceed 500 physical lines unless the change description records why extraction would make the boundary worse; generated, vendored, and fixture files are exempt.
+- A production file above 300 physical lines SHOULD be reviewed for responsibility before more code is added. A production file MUST NOT exceed 500 physical lines unless the change description records why extraction would make the boundary worse; generated, vendored, and fixture files are exempt.
 - An existing file above 400 lines MUST NOT grow during an unrelated change. A feature change that crosses 400 lines MUST split the file in the same change, not defer the split.
 - Line count is a review trigger, not the design. Split by independent state, dependency direction, lifecycle, or public contract—not by arbitrary chunks or one-function files.
 
@@ -34,32 +34,20 @@ These rules apply to new code and to every production file substantially modifie
 - A meaningful feature directory MUST use `mod.rs` as its coordinator and boundary. Sibling modules MUST be private by default; expose only the smallest `pub(super)` or `pub(crate)` surface required by the coordinator.
 - The coordinator owns composition, routing between submodules, and feature-level state. It MUST NOT also own a second implementation of a submodule's persistence, probe, CRUD, or row-rendering logic.
 - A submodule MUST NOT reach into another submodule's private fields. Pass an intent-specific method or narrow data type instead. Do not solve a boundary problem with `pub` fields, duplicate state, re-exports, or a second implementation.
-The production feature tree and test tree are separate. A feature with multiple concerns SHOULD look like:
 
-  ```text
-  crates/app/src/panels/settings/providers/
-    mod.rs       coordinator and production boundary
-    draft.rs     pure draft/validation transformations
-    keys.rs      key state and key operations
-    models.rs    model state and model operations
+`crates/app/src/panels/settings/providers/` is the concrete example: `mod.rs` coordinates `rail.rs` (provider list), `detail.rs` (provider detail), `keys.rs`, `models.rs` and `dialogs.rs`.
 
-  crates/app/tests/
-    providers.rs feature-level integration and contract tests
-  ```
+### Tests
 
-`providers/` is the concrete example in this repository. `tests.rs` MUST NOT be placed under a production `src/` feature directory for new or substantially modified tests. The exact split may differ for a library crate, but test sources MUST still be outside the production module directory.
+Follows AI 工程规范 §8 and §10, which match the Rust community convention:
 
-The coordinator owns composition, routing between submodules, and feature-level state. It MUST NOT also own a second implementation of a submodule's persistence, probe, CRUD, or row-rendering logic.
-
-A submodule MUST NOT reach into another submodule's private fields. Pass an intent-specific method or narrow data type instead. Do not solve a boundary problem with `pub` fields, duplicate state, re-exports, or a second implementation.
-
-### Test and production separation
-
-- New feature tests MUST live under the crate's dedicated `tests/` directory or in a dedicated test crate. Production `src/` feature directories MUST NOT contain new test files, and production modules MUST NOT register tests with `#[cfg(test)] mod tests;` for feature-level tests.
-- Integration tests MUST exercise public contracts or real reachable behavior. If a pure helper is worth direct testing, move that helper into a small production module with an intentional public or crate-level contract; do not make production internals public solely to rescue a misplaced test.
+- **Unit tests** live in `src` next to the code they test, in a `#[cfg(test)] mod tests` block; when the block grows, move it to a sibling `<module>/tests.rs` or `<module>_tests.rs` registered with `#[cfg(test)] mod tests;`. Unit tests MAY use private items, but production code MUST NOT be made public only to be reachable from a test.
+- **Integration tests** live in the crate's `tests/` directory and use only the public API. Shared helpers go in `tests/common/mod.rs`, never in a `tests/common.rs` without test functions.
 - Production modules MUST NOT depend on test-only code, fixtures, or helpers.
-- Tests MUST cover pure transformations and observable state transitions at the narrowest owning boundary. Do not add tests that pin layout text, forwarding copies, wiring, or incidental defaults.
+- Tests MUST cover observable behavior, state transitions, errors and boundaries at the narrowest owning level. Do not add tests that pin layout text, forwarding copies, wiring, or incidental defaults.
 - A test file MAY exceed the ordinary production-file target when its fixtures are inherently large, but it still MUST remain organized by contract and SHOULD be split before 500 lines.
+
+`clippy.toml` allows `unwrap`, `expect` and printing inside `#[test]` functions only. Integration test crates also put helpers outside `#[test]` functions, so each file under `tests/` opens with `#![allow(clippy::unwrap_used, clippy::expect_used, reason = "…")]`. That exemption MUST NOT appear in `src`.
 
 ### Required pre-edit review
 
@@ -68,10 +56,19 @@ Before adding a non-trivial feature to a Rust module, the author MUST:
 1. list the file's current responsibilities and physical line count;
 2. identify the state owner, service boundary, and every affected caller;
 3. decide whether the change belongs in the coordinator or a submodule;
-4. place new tests under the crate-level `tests/` directory or dedicated test crate;
+4. place unit tests beside the code and integration tests under the crate's `tests/`;
 5. run the affected check after the split, not only before it.
 
-The implementation MUST finish with no stale duplicate path, compatibility copy, unused extracted module, or test code left in the production coordinator.
+The implementation MUST finish with no stale duplicate path, compatibility copy, or unused extracted module.
+
+### Known debt against the baseline
+
+Recorded when the AI 工程规范 was adopted (2026-11-02). Each item is fixed when its file is next substantially modified, not in a sweeping rewrite.
+
+- Production files above 500 lines: `app/src/panels/chat.rs` (1094), `app/src/panels/terminal.rs` (661), `agents/src/dsh.rs` (654), `ui/src/components.rs` (573), `app/src/panels/settings/mcp.rs` (565), `app/src/panels/settings/models.rs` (513), `app/src/panels/settings/providers/models.rs` (506).
+- 76 `_ =>` match arms in production code, mostly in `agents/src/dsh.rs`, `agents/src/rpc.rs` and `settings-store/src/db.rs`; each one must be justified or made exhaustive (§8).
+- `terminal/src/catalog.rs` has 2 `#[allow(...)]` without a recorded reason.
+- `agents/src/omp.rs` has 1 `unwrap`/`expect` in production code.
 
 The host is the only writer of application metadata. Engine native history is not converted into application state or rewritten across engines. Client layout belongs to each window. A new default never changes an existing chat's backend.
 
