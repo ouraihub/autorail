@@ -153,18 +153,19 @@ impl ChatPanel {
         );
     }
 
+    /// `true` when the switch was sent (live, idle, switchable chat).
     pub(super) fn set_model(
         &mut self,
         id: ChatId,
         choice: ModelChoice,
         effort: Option<ThinkingLevel>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let Some(chat) = self.chats.get(&id) else {
-            return;
+            return false;
         };
         let Some(session) = chat.live().cloned() else {
-            return;
+            return false;
         };
         if !chat
             .snapshot
@@ -173,7 +174,7 @@ impl ChatPanel {
             || chat.closing
             || chat.phase() != SessionPhase::Idle
         {
-            return;
+            return false;
         }
         let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
         run(
@@ -185,17 +186,24 @@ impl ChatPanel {
                 }
             },
         );
+        true
     }
 
-    pub(super) fn set_effort(&mut self, id: ChatId, effort: ThinkingLevel, cx: &mut Context<Self>) {
+    /// `true` when the effort change was sent.
+    pub(super) fn set_effort(
+        &mut self,
+        id: ChatId,
+        effort: ThinkingLevel,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(chat) = self.chats.get(&id) else {
-            return;
+            return false;
         };
         let Some(session) = chat.live().cloned() else {
-            return;
+            return false;
         };
         let Some(model) = chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) else {
-            return;
+            return false;
         };
         let provider = model.provider.clone().unwrap_or_default();
         let model_id = model.id.clone();
@@ -204,7 +212,7 @@ impl ChatPanel {
             .iter()
             .find(|choice| choice.route == provider && choice.model.id == model_id)
         else {
-            return;
+            return false;
         };
         if !chat
             .snapshot
@@ -214,7 +222,7 @@ impl ChatPanel {
             || chat.phase() != SessionPhase::Idle
             || !choice.model.efforts.contains(&effort)
         {
-            return;
+            return false;
         }
         run(
             cx,
@@ -225,5 +233,6 @@ impl ChatPanel {
                 }
             },
         );
+        true
     }
 }

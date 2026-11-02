@@ -35,6 +35,31 @@ pub const QUESTION: &str = "Agent 提问";
 pub const OTHER: &str = "其他（自行填写）";
 pub const EFFORT_DEFAULT: &str = "力度";
 
+pub const CMD_COMPACT: &str = "手动压缩上下文 · 可选指令";
+pub const CMD_NAME: &str = "重命名此会话 · 需要填写标题";
+pub const CMD_MODEL: &str = "切换模型和力度 · 例如 /model opus high";
+pub const CMD_BUILTIN: &str = "内置";
+pub const NAME_EMPTY: &str = "请在 /name 后填写标题";
+pub const MODEL_USAGE: &str = "用法：/model <模型名> [力度]，例如 /model opus high";
+pub const MODEL_UNKNOWN: &str = "当前模型不在可选列表中，无法只改力度";
+
+pub fn builtin_source(backend: &str) -> String {
+    format!("{backend} / {CMD_BUILTIN}")
+}
+
+pub fn model_none(query: &str) -> String {
+    format!("没有匹配“{query}”的模型")
+}
+
+/// `candidates` are already `提供方 · 模型` labels.
+pub fn model_many(candidates: &[String]) -> String {
+    format!("匹配到多个模型：{}，请写得更具体", candidates.join("、"))
+}
+
+pub fn effort_unsupported(effort: &str) -> String {
+    format!("这个模型不支持力度“{effort}”")
+}
+
 pub fn effort_label(level: thinkrail_core::ThinkingLevel) -> &'static str {
     match level {
         thinkrail_core::ThinkingLevel::Off => "关闭",

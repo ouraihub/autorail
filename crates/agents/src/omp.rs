@@ -50,6 +50,8 @@ const CAPABILITIES: Capabilities = Capabilities {
     questions: true,
     tool_permissions: true,
     model_switch: true,
+    compact: false,
+    rename: false,
 };
 
 /// Launches OMP `--mode rpc-ui --approval-mode always-ask` per chat.
@@ -175,9 +177,15 @@ impl OmpSession {
                 Error::protocol("OMP 没有返回会话文件；请从启动参数中删除 --no-session")
             })?;
         let history = self.history(deadline)?;
+        let commands = rpc::commands::or_empty(
+            self.call("get_available_commands", json!({}), session::left(deadline))
+                .map(|data| rpc::commands::omp_commands(&data["commands"])),
+        );
         let mut p = self.live.state.lock();
         p.set_key(NativeSessionKey::from(key));
         p.set_model(rpc::model(&state));
+        p.set_session_name(rpc::commands::session_name(&state));
+        p.set_commands(commands);
         rpc::replay(&mut p, &history, 0);
         if history
             .last()
@@ -274,6 +282,17 @@ impl OmpSession {
                     "message_end" => stream.message_end(&mut p, &frame),
                     "tool_execution_start" | "tool_execution_update" | "tool_execution_end" => {
                         rpc::tool_event(&mut p, &frame);
+                    }
+                    "available_commands_update" => {
+                        p.set_commands(rpc::commands::omp_commands(&frame["commands"]));
+                    }
+                    "session_info_update" if frame.get("title").is_some() => {
+                        p.set_session_name(frame["title"].as_str().map(str::to_owned));
+                    }
+                    "command_output" => {
+                        if let Some(text) = frame["text"].as_str().filter(|s| !s.is_empty()) {
+                            rpc::commands::note(&mut p, text.to_owned());
+                        }
                     }
                     _ => {}
                 }

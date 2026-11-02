@@ -23,6 +23,9 @@ use crate::{
     workflow,
 };
 
+/// `compact` summarises the transcript with one model call; the generic command timeout is short.
+const COMPACT: Duration = Duration::from_secs(10 * 60);
+
 const CAPABILITIES: Capabilities = Capabilities {
     resume: true,
     history_replay: true,
@@ -30,6 +33,8 @@ const CAPABILITIES: Capabilities = Capabilities {
     questions: true,
     tool_permissions: false,
     model_switch: true,
+    compact: true,
+    rename: true,
 };
 
 /// Launches pi `--mode rpc` per chat.
@@ -126,9 +131,15 @@ impl PiSession {
                 Error::protocol("pi 没有返回会话文件；请从启动参数中删除 --no-session")
             })?;
         let history = self.call("get_messages", json!({}), session::left(deadline))?;
+        let commands = rpc::commands::or_empty(
+            self.call("get_commands", json!({}), session::left(deadline))
+                .map(|data| rpc::commands::pi_commands(&data)),
+        );
         let mut p = self.live.state.lock();
         p.set_key(NativeSessionKey::from(key));
         p.set_model(rpc::model(&state));
+        p.set_session_name(rpc::commands::session_name(&state));
+        p.set_commands(commands);
         if let Some(messages) = history["messages"].as_array() {
             rpc::replay(&mut p, messages, 0);
         }
@@ -268,6 +279,48 @@ impl AgentSession for PiSession {
             model_id,
             effort,
         )
+    }
+
+    fn compact(&self, instructions: Option<&str>) -> Result<()> {
+        self.live.ensure_idle()?;
+        self.live.state.lock().set_running(true);
+        let mut fields = json!({});
+        if let Some(text) = instructions.filter(|s| !s.trim().is_empty()) {
+            fields["customInstructions"] = json!(text);
+        }
+        let result = self.call("compact", fields, COMPACT);
+        let mut p = self.live.state.lock();
+        p.set_running(false);
+        let text = match result {
+            Ok(data) => match (
+                data["tokensBefore"].as_u64(),
+                data["estimatedTokensAfter"].as_u64(),
+            ) {
+                (Some(before), Some(after)) => {
+                    format!("上下文已压缩（约 {before} → {after} tokens）")
+                }
+                _ => "上下文已压缩".to_owned(),
+            },
+            // pi refused (e.g. "Nothing to compact"): the session is fine, so this is a turn
+            // outcome in the transcript, as in the original, not an app error.
+            Err(error) if error.kind() == Some(thinkrail_core::ErrorKind::External) => {
+                format!("压缩失败。{}", error.detail())
+            }
+            Err(error) => return Err(error),
+        };
+        rpc::commands::note(&mut p, text);
+        p.publish();
+        Ok(())
+    }
+
+    fn rename(&self, name: &str) -> Result<()> {
+        self.live.ensure_open()?;
+        self.call("set_session_name", json!({"name": name}), COMMAND)?;
+        self.live
+            .state
+            .lock()
+            .set_session_name(Some(name.to_owned()));
+        Ok(())
     }
 }
 

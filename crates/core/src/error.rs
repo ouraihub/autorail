@@ -103,6 +103,13 @@ impl Error {
         }
     }
 
+    /// The human detail without the kind label (what `Display` shows after `：`).
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::Domain { context, .. } | Self::Io { context, .. } => context,
+        }
+    }
+
     pub fn not_found(what: impl fmt::Display) -> Self {
         Self::new(ErrorKind::NotFound, what)
     }

@@ -25,6 +25,7 @@ use crate::{
 
 mod launch;
 mod permissions;
+mod skills;
 mod update;
 
 use launch::{launch_spec, mcp_hint, session_params};
@@ -39,6 +40,8 @@ const CAPABILITIES: Capabilities = Capabilities {
     questions: false,
     tool_permissions: false,
     model_switch: true,
+    compact: false,
+    rename: false,
 };
 const METHOD_NOT_FOUND: i64 = -32601;
 
@@ -69,7 +72,9 @@ impl AgentRuntime for DshRuntime {
         sink: Arc<dyn SessionSink>,
     ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Dsh)?;
-        let command = process::command(&launch_spec(&request)?)?;
+        let (spec, staged) = launch_spec(&request)?;
+        let commands = skills::commands(&request.cwd, &staged, &spec.cwd);
+        let command = process::command(&spec)?;
         let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Dsh);
@@ -85,6 +90,7 @@ impl AgentRuntime for DshRuntime {
         let deadline = Instant::now() + HANDSHAKE;
         dsh.handshake(&request, deadline)
             .map_err(|error| live.fail_start(error, None))?;
+        live.state.lock().set_commands(commands);
         info!(chat = %request.chat, backend = "dsh", "agent session started");
         Ok(dsh)
     }

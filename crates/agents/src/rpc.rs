@@ -11,6 +11,7 @@ use crate::{
     session::{engine_error, new_id, session_error},
 };
 
+pub(crate) mod commands;
 mod dialogs;
 mod model;
 
