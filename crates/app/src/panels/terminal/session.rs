@@ -11,8 +11,7 @@ impl TerminalPanel {
     pub(super) fn set_workspace(&mut self, workspace: Option<WorkspaceId>, cx: &mut Context<Self>) {
         self.workspace = workspace.clone();
         self.tabs.clear();
-        self.selected = None;
-        self.detach();
+        self.deselect();
         cx.notify();
         let Some(workspace) = workspace else { return };
         let service = self.state.read(cx).services.terminals.clone();
@@ -43,6 +42,14 @@ impl TerminalPanel {
         self.link = Link::Detached;
         self.composition.clear();
         self.composition_selection = 0..0;
+    }
+
+    /// No tab is shown any more: drop the link and the previous shell's screen with it.
+    fn deselect(&mut self) {
+        self.selected = None;
+        self.detach();
+        self.parser = parser(self.size);
+        self.truncated = false;
     }
 
     pub(super) fn create(&mut self, cx: &mut Context<Self>) {
@@ -123,8 +130,7 @@ impl TerminalPanel {
             return;
         };
         if self.selected.as_ref() == Some(&key) {
-            self.selected = None;
-            self.detach();
+            self.deselect();
         }
         self.tabs.retain(|t| t.tab_key != key);
         cx.notify();
