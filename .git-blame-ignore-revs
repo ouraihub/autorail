@@ -1,0 +1,5 @@
+# Whole-repo formatting commits. GitHub blame skips these automatically;
+# locally run: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: apply rustfmt to the whole workspace
+024a77bb2be270417e83d0c09d2e60d2e2242475
