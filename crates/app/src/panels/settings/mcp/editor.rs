@@ -258,7 +258,11 @@ impl McpPage {
                 .child(
                     Button::new(format!("mcp-add-{title}"))
                         .ghost()
-                        .label(s::ADD)
+                        .label(if title == s::ENV {
+                            s::ADD_ENV
+                        } else {
+                            s::ADD_HEADER
+                        })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(editor) = &mut this.editor {
                                 let pair = PairFields {
