@@ -92,7 +92,12 @@ impl RenderOnce for Tab {
                         .id(close_id)
                         .rounded(radius::XS)
                         .hover(|s| s.bg(r.control_bg_hovered))
-                        .on_click(handler)
+                        // The tab itself is clickable: without this the click also selects the
+                        // tab being closed.
+                        .on_click(move |event, window, cx| {
+                            cx.stop_propagation();
+                            handler(event, window, cx);
+                        })
                         .child(
                             Icon::new(IconName::X)
                                 .size(size::ICON_SMALL)
