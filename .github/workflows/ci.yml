@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Installs the channel and components pinned in rust-toolchain.toml.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: rustup toolchain install
+
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # The same commands as AGENTS.md; cargo-msvc.bat uses the runner compiler in CI.
+      - name: Format
+        shell: cmd
+        run: scripts\msvc\cargo-msvc.bat fmt --all -- --check
+
+      - name: Clippy
+        shell: cmd
+        run: scripts\msvc\cargo-msvc.bat clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        shell: cmd
+        run: scripts\msvc\cargo-msvc.bat test --workspace

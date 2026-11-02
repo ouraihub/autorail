@@ -16,10 +16,13 @@ scripts\msvc\setup-msvc.bat
 
 ```powershell
 scripts\msvc\cargo-msvc.bat build                      # 开发构建
-scripts\msvc\cargo-msvc.bat test --workspace           # 单元测试
+scripts\msvc\cargo-msvc.bat fmt --all                  # 格式化
+scripts\msvc\cargo-msvc.bat test --workspace           # 单元测试与集成测试
 scripts\msvc\cargo-msvc.bat clippy --workspace --all-targets -- -D warnings
 scripts\msvc\cargo-msvc.bat run -p thinkrail-native -- --data-dir D:\tmp\tr-data
 ```
+
+`rust-toolchain.toml` 固定了 `rustfmt` 和 `clippy` 组件，rustup 会自动安装。GitHub Actions 的 `ci` 检查在每次 push 和 PR 上依次运行 `fmt --all -- --check`、clippy 和 `test --workspace`，用的是和本机相同的命令；推送前先在本机跑一遍。
 
 ## 打包 EXE
 
