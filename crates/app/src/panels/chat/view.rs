@@ -164,7 +164,11 @@ impl ChatPanel {
                 .disabled(disabled)
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
+        let menu = self.slash_menu(cx);
+        let textarea = self.slash_keys(Textarea::new(&self.composer).appearance(false), cx);
+        // `relative` anchors the `/` menu, which sits above this box over the transcript.
         div()
+            .relative()
             .p(size::CHAT_GUTTER)
             .border_t_1()
             .border_color(r.border_muted)
@@ -176,9 +180,10 @@ impl ChatPanel {
                     .border_1()
                     .border_color(r.control_border_default)
                     .bg(r.control_bg)
-                    .child(Textarea::new(&self.composer).appearance(false))
+                    .child(textarea)
                     .child(h_flex().justify_end().child(action)),
             )
+            .children(menu)
     }
     fn header(
         &self,

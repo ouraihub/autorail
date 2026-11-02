@@ -1,10 +1,16 @@
-//! Live session traffic: prompts, stop, interaction answers, plan reloads and session events.
+//! Live session traffic: prompts and host slash commands, stop, interaction answers, plan
+//! reloads and session events.
 
 use gpui_kit::{Context, Window};
-use thinkrail_core::{ChatId, InteractionAnswer, PlanScope, SessionEvent, SessionPhase};
+use thinkrail_core::{ChatId, Error, InteractionAnswer, PlanScope, SessionEvent, SessionPhase};
 use tracing::debug;
 
-use super::{ChatPanel, engine::dispose_engine, projection};
+use super::{
+    ChatPanel,
+    commands::{self, ModelChange, Submit},
+    engine::dispose_engine,
+    projection,
+};
 use crate::state::run;
 
 impl ChatPanel {
@@ -22,6 +28,24 @@ impl ChatPanel {
         if chat.blocked.is_some() || chat.starting || chat.closing {
             return;
         }
+        let host = self
+            .host_offer(chat, cx)
+            .map(|(_, host)| host)
+            .unwrap_or_default();
+        if let Some(parsed) = commands::parse(&text, &host) {
+            let accepted = match parsed {
+                Ok(submit) => self.run_host(&id, submit, cx),
+                Err(message) => {
+                    self.report(&Error::invalid(message), cx);
+                    false
+                }
+            };
+            if accepted {
+                self.composer
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+            }
+            return;
+        }
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
         match chat.live().cloned() {
@@ -35,6 +59,47 @@ impl ChatPanel {
                 },
             ),
             None => self.start(id, Some(text), cx),
+        }
+    }
+
+    /// Runs a host built-in; `true` when it was dispatched, so the draft can be cleared. Without
+    /// a live engine the chat starts and the draft stays for a second Enter (07 C8).
+    fn run_host(&mut self, id: &ChatId, submit: Submit, cx: &mut Context<Self>) -> bool {
+        let Some(chat) = self.chats.get(id) else {
+            return false;
+        };
+        let Some(session) = chat.live().cloned() else {
+            self.start(id.clone(), None, cx);
+            return false;
+        };
+        let report =
+            |this: &mut Self, result: thinkrail_core::Result<()>, cx: &mut Context<Self>| {
+                if let Err(error) = result {
+                    this.report(&error, cx);
+                }
+            };
+        match submit {
+            Submit::Compact { instructions } => {
+                run(cx, move || session.compact(instructions.as_deref()), report);
+                true
+            }
+            Submit::Name { title } => {
+                run(cx, move || session.rename(&title), report);
+                true
+            }
+            Submit::Model { query, effort } => {
+                let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
+                match commands::resolve_model(&query, effort, &chat.catalog, current) {
+                    Ok(ModelChange::Switch { choice, effort }) => {
+                        self.set_model(id.clone(), choice, effort, cx)
+                    }
+                    Ok(ModelChange::Effort(effort)) => self.set_effort(id.clone(), effort, cx),
+                    Err(message) => {
+                        self.report(&Error::invalid(message), cx);
+                        false
+                    }
+                }
+            }
         }
     }
 

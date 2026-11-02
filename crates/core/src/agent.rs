@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BackendKind, ChatId, EngineRouting, HostToolAccess, Launch, NativeSessionKey, Result,
-    ThinkingLevel, WorkspaceId,
+    BackendKind, ChatId, EngineRouting, Error, HostToolAccess, Launch, NativeSessionKey, Result,
+    SlashCommand, ThinkingLevel, WorkspaceId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +134,10 @@ pub struct Capabilities {
     pub tool_permissions: bool,
     /// The model can be switched inside a running session.
     pub model_switch: bool,
+    /// The host runs `/compact` through [`AgentSession::compact`].
+    pub compact: bool,
+    /// The host runs `/name` through [`AgentSession::rename`].
+    pub rename: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -168,6 +172,10 @@ pub struct SessionSnapshot {
     /// Older messages were dropped from this projection; the engine still has them.
     pub output_truncated: bool,
     pub last_error: Option<SessionError>,
+    /// What the composer's `/` menu offers from the engine (host built-ins are added by the UI).
+    pub commands: Vec<SlashCommand>,
+    /// The engine's display name of this session, when one was set.
+    pub session_name: Option<String>,
     pub revision: u64,
 }
 
@@ -253,6 +261,31 @@ pub trait AgentSession: Send + Sync {
         model_id: &str,
         effort: Option<ThinkingLevel>,
     ) -> Result<()>;
+    /// Compacts the context and returns once the engine has finished. Only meaningful when
+    /// `capabilities.compact`.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID` when this engine has no compaction command; the engine's error otherwise.
+    fn compact(&self, instructions: Option<&str>) -> Result<()> {
+        let _ = instructions;
+        Err(Error::invalid(format!(
+            "{} 不支持 /compact",
+            self.snapshot().backend.label()
+        )))
+    }
+    /// Sets the session's display name. Only meaningful when `capabilities.rename`.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID` when this engine cannot rename a session; the engine's error otherwise.
+    fn rename(&self, name: &str) -> Result<()> {
+        let _ = name;
+        Err(Error::invalid(format!(
+            "{} 不支持 /name",
+            self.snapshot().backend.label()
+        )))
+    }
 }
 
 /// An engine family's process protocol (pi RPC, OMP RPC, DSH ACP).

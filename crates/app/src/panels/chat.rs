@@ -2,12 +2,14 @@
 //! interaction cards (never auto-answered) and the composer. A chat is pinned to the backend it
 //! was created with; a closed engine is resumed from its native locator on send.
 
+mod commands;
 mod engine;
 mod interaction;
 mod plan;
 mod projection;
 mod routing;
 mod session;
+mod slash;
 mod tabs;
 mod transcript;
 mod view;
@@ -74,8 +76,25 @@ impl Chat {
         }
     }
 
+    /// Tab title (07 C10): the engine's session name, else the first user message, else `聊天 N`.
     fn title(&self) -> String {
-        let first = self.snapshot.as_ref().and_then(|s| {
+        let named = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.session_name.clone())
+            .filter(|name| !name.trim().is_empty());
+        let first = named.or_else(|| self.first_message());
+        match first.filter(|t| !t.trim().is_empty()) {
+            Some(text) if text.chars().count() > 24 => {
+                format!("{}…", text.chars().take(24).collect::<String>())
+            }
+            Some(text) => text,
+            None => format!("{} {}", s::CHAT, self.ordinal),
+        }
+    }
+
+    fn first_message(&self) -> Option<String> {
+        self.snapshot.as_ref().and_then(|s| {
             s.messages
                 .iter()
                 .find(|m| m.role == thinkrail_core::Role::User)
@@ -89,14 +108,7 @@ impl Chat {
                         | thinkrail_core::ContentBlock::Tool { .. } => None,
                     })
                 })
-        });
-        match first.filter(|t| !t.trim().is_empty()) {
-            Some(text) if text.chars().count() > 24 => {
-                format!("{}…", text.chars().take(24).collect::<String>())
-            }
-            Some(text) => text,
-            None => format!("{} {}", s::CHAT, self.ordinal),
-        }
+        })
     }
 }
 
@@ -132,6 +144,7 @@ pub struct ChatPanel {
     answers: HashMap<String, Entity<InputState>>,
     picks: HashMap<String, Vec<String>>,
     scroll: ScrollHandle,
+    slash: slash::SlashMenu,
     /// Readiness guidance shown in place of the empty state when a new chat could not start.
     guide: Option<Readiness>,
     _subscriptions: Vec<Subscription>,
@@ -162,10 +175,12 @@ impl ChatPanel {
             cx.subscribe_in(
                 &composer,
                 window,
-                |this, _, event: &InputEvent, window, cx| {
-                    if let InputEvent::PressEnter { shift: false, .. } = event {
-                        this.send(window, cx);
-                    }
+                |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::PressEnter { shift: false, .. } => this.send(window, cx),
+                    InputEvent::Change => this.on_draft_changed(cx),
+                    InputEvent::PressEnter { shift: true, .. }
+                    | InputEvent::Focus
+                    | InputEvent::Blur => (),
                 },
             ),
         ];
@@ -182,6 +197,7 @@ impl ChatPanel {
             picks: HashMap::new(),
             scroll: ScrollHandle::new(),
             guide: None,
+            slash: slash::SlashMenu::default(),
             _subscriptions: subscriptions,
         };
         panel.sync_workspace(cx);

@@ -215,3 +215,23 @@ fn streamed_text_past_the_message_bound_is_dropped_from_the_projection_only() {
     assert!(text.len() < MAX_MESSAGE_BYTES);
     assert!(snapshot.output_truncated);
 }
+
+#[test]
+fn command_and_name_setters_publish_only_on_change() {
+    let (mut p, events) = projection();
+    let commands = vec![thinkrail_core::SlashCommand {
+        name: "skill:review".into(),
+        description: None,
+        hint: None,
+        source: thinkrail_core::CommandSource::Skill,
+        scope: None,
+    }];
+    p.set_commands(commands.clone());
+    p.set_commands(commands.clone());
+    p.set_session_name(Some("名字".into()));
+    p.set_session_name(Some("名字".into()));
+    assert_eq!(events.0.lock().len(), 2);
+    let snapshot = p.snapshot();
+    assert_eq!(snapshot.commands, commands);
+    assert_eq!(snapshot.session_name.as_deref(), Some("名字"));
+}

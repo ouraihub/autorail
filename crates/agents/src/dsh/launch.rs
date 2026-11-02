@@ -13,8 +13,9 @@ use crate::{
 };
 
 /// Host arguments and environment of one DSH launch: the generated patch (bundled skills,
-/// workflow rules, built-in TODO tool off, providers, `acp` default model).
-pub(super) fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
+/// workflow rules, built-in TODO tool off, providers, `acp` default model). Also returns the
+/// staged bundled skills dir; the spec's `cwd` is the DSH home.
+pub(super) fn launch_spec(request: &StartSession) -> Result<(LaunchSpec<'_>, PathBuf)> {
     let home = dsh_home(request)?;
     let mut host_args = vec!["--profile".to_owned(), "acp".to_owned()];
     let mut host_env: Vec<_> = process::routing_env(&request.routing).collect();
@@ -28,7 +29,7 @@ pub(super) fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
         &patch,
     )?;
     host_args.extend(["--patch".to_owned(), path.display().to_string()]);
-    Ok(LaunchSpec {
+    let spec = LaunchSpec {
         launch: &request.launch,
         config_root: request.config_root.as_deref(),
         host_args,
@@ -36,7 +37,8 @@ pub(super) fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
         cwd: home,
         config_var: "DSH_HOME",
         host_env,
-    })
+    };
+    Ok((spec, skills))
 }
 
 pub(super) fn preserve_user_routes(

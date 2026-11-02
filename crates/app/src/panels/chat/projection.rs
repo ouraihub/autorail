@@ -97,6 +97,8 @@ mod tests {
             capabilities: Capabilities::default(),
             output_truncated: false,
             last_error: None,
+            commands: Vec::new(),
+            session_name: None,
             revision,
         }
     }

@@ -181,7 +181,7 @@ fn every_launch_patches_in_the_workflow() {
     let patch = f.support_arg("dsh-thinkrail.patch.yml");
     for host_tools in [false, true] {
         let request = f.request(BackendKind::Dsh, None, host_tools, EngineRouting::default());
-        let spec = launch_spec(&request).unwrap();
+        let (spec, _) = launch_spec(&request).unwrap();
         assert_eq!(
             spec.host_args,
             ["--profile", "acp", "--patch", patch.as_str()]
@@ -230,7 +230,7 @@ fn routing_env_is_the_whole_launch_environment() {
     let f = Fixture::new();
     let routing = secret_routing();
     let request = f.request(BackendKind::Dsh, None, true, routing.clone());
-    let spec = launch_spec(&request).unwrap();
+    let (spec, _) = launch_spec(&request).unwrap();
     assert_eq!(
         spec.host_args,
         [
@@ -249,7 +249,7 @@ fn routing_writes_the_provider_patch() {
     let f = Fixture::new();
     let routing = dsh_routing();
     let request = f.request(BackendKind::Dsh, None, false, routing.clone());
-    let spec = launch_spec(&request).unwrap();
+    let (spec, _) = launch_spec(&request).unwrap();
     let patch = f.support_arg("dsh-thinkrail.patch.yml");
     assert_eq!(
         spec.host_args,

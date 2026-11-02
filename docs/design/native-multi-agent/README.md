@@ -12,6 +12,7 @@
 4. [详细设计](04-detail.md)：trait 契约、错误与日志规范、各引擎适配、宿主工具桥、持久化、GPUI 界面。
 5. [开发任务与验收](05-development.md)：任务依赖、完成定义、验收矩阵。
 6. [日志与调用链](06-logging.md)：`observability` crate、每次操作一个 `op` span、北京时间、日志级别、后台日志页。
+7. [斜杠命令](07-slash-commands.md)：输入框 `/` 菜单，pi、OMP、DSH 的命令来源与执行。
 
 ## 已确认的用户决定
 
