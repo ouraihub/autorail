@@ -390,7 +390,9 @@ impl CodingPage {
                             .justify_center()
                             .child(Icon::new(IconName::Plug).small())
                             .into_any_element(),
-                        _ => avatar(&name, cx).into_any_element(),
+                        EngineProvider::Official | EngineProvider::Provider(_) => {
+                            avatar(&name, cx).into_any_element()
+                        }
                     })
                     .child(
                         v_flex()

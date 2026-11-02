@@ -719,7 +719,10 @@ fn tool_name(snapshot: &SessionSnapshot, owner: &str, tool_call_id: &str) -> Opt
                 name,
                 ..
             } if id == tool_call_id => Some(name.clone()),
-            _ => None,
+            ContentBlock::Tool { .. }
+            | ContentBlock::Text { .. }
+            | ContentBlock::Thinking { .. }
+            | ContentBlock::Image { .. } => None,
         })
 }
 
@@ -841,7 +844,12 @@ fn permission_outcome(interaction: &Interaction, answer: &InteractionAnswer) -> 
         {
             Ok(json!({"outcome": "selected", "optionId": option_id}))
         }
-        _ => Err(Error::invalid("权限请求只能选择给出的选项或取消")),
+        InteractionAnswer::Select { .. }
+        | InteractionAnswer::Confirm { .. }
+        | InteractionAnswer::Text { .. }
+        | InteractionAnswer::Answers { .. } => {
+            Err(Error::invalid("权限请求只能选择给出的选项或取消"))
+        }
     }
 }
 

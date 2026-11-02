@@ -281,7 +281,7 @@ impl TerminalPanel {
     fn runtime(&self) -> Option<&TerminalRuntimeId> {
         match &self.link {
             Link::Attached { runtime, .. } => Some(runtime),
-            _ => None,
+            Link::Detached | Link::Attaching | Link::Exited(_) => None,
         }
     }
 

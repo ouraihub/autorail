@@ -386,7 +386,10 @@ fn carry_tool_results(old: &Message, new: &mut Message) {
                 output,
                 ..
             } if id == tool_call_id => Some((status, output)),
-            _ => None,
+            ContentBlock::Tool { .. }
+            | ContentBlock::Text { .. }
+            | ContentBlock::Thinking { .. }
+            | ContentBlock::Image { .. } => None,
         });
         if let Some((old_status, old_output)) = previous {
             *status = *old_status;

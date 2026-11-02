@@ -36,7 +36,9 @@ pub fn message(m: &Message, open: &HashSet<String>, toggle: &Toggle, r: &Roles) 
                 ContentBlock::Text { text: t } => {
                     Some(label(text::METADATA, t.clone()).text_color(r.text_muted))
                 }
-                _ => None,
+                ContentBlock::Thinking { .. }
+                | ContentBlock::Image { .. }
+                | ContentBlock::Tool { .. } => None,
             }))
             .into_any_element(),
     }
@@ -49,7 +51,7 @@ fn user(m: &Message, r: &Roles) -> AnyElement {
         .filter_map(|b| match b {
             ContentBlock::Text { text } => Some(text.clone()),
             ContentBlock::Image { mime_type } => Some(format!("[{} {mime_type}]", s::IMAGE)),
-            _ => None,
+            ContentBlock::Thinking { .. } | ContentBlock::Tool { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n");

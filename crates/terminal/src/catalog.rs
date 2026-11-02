@@ -177,30 +177,36 @@ fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
+#[cfg(unix)]
 fn private_options() -> OpenOptions {
-    #[allow(unused_mut)]
+    use std::os::unix::fs::OpenOptionsExt;
     let mut options = OpenOptions::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
+    options.mode(0o600);
     options
+}
+
+#[cfg(not(unix))]
+fn private_options() -> OpenOptions {
+    OpenOptions::new()
+}
+
+#[cfg(windows)]
+fn is_reparse_point(metadata: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_: &Metadata) -> bool {
+    false
 }
 
 /// Refuses symlinks and Windows reparse points (junctions) so the catalog never escapes `dir`.
 fn safe_metadata(path: &Path) -> Result<Option<Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
-            #[allow(unused_mut)]
-            let mut linked = metadata.file_type().is_symlink();
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-                linked |= metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-            }
-            if linked {
+            if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
                 return Err(Error::forbidden("终端配置路径不能是符号链接或目录联接"));
             }
             Ok(Some(metadata))

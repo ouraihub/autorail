@@ -473,7 +473,11 @@ pub(crate) fn ui_request(frame: &Value) -> Result<UiRequest> {
                 label: str_of(label),
             })
             .collect(),
-        _ => Vec::new(),
+        InteractionKind::Permission
+        | InteractionKind::Confirm
+        | InteractionKind::Input
+        | InteractionKind::Editor
+        | InteractionKind::Ask => Vec::new(),
     };
     if kind == InteractionKind::Ask && !frame["questions"].as_array().is_some_and(|q| !q.is_empty())
     {
@@ -483,7 +487,9 @@ pub(crate) fn ui_request(frame: &Value) -> Result<UiRequest> {
         InteractionKind::Confirm => str_of(&frame["message"]),
         InteractionKind::Input => str_of(&frame["placeholder"]),
         InteractionKind::Editor => str_of(&frame["prefill"]),
-        _ => String::new(),
+        InteractionKind::Permission | InteractionKind::Select | InteractionKind::Ask => {
+            String::new()
+        }
     };
     let interaction = Interaction {
         request_id: request_id.to_owned(),

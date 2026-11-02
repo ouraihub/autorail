@@ -199,3 +199,28 @@ fn windows_pty_lifecycle_smoke() {
     let (restarted, _r) = service(directory.path(), 8);
     assert!(restarted.tabs(&w).unwrap()[0].runtime.is_none());
 }
+
+/// The catalog must not follow a link out of its directory (symlink on Unix, junction on
+/// Windows, which needs no administrator rights).
+#[test]
+fn catalog_refuses_a_linked_catalog_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let link = directory.path().join("terminals.json");
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(outside.path())
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success(), "creating the test junction failed");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+    let (svc, _rx) = service(directory.path(), 8);
+    let error = svc.tabs(&WorkspaceId::from("w")).unwrap_err();
+    assert_eq!(error.kind(), Some(ErrorKind::Forbidden));
+}

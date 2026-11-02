@@ -95,7 +95,9 @@ impl Chat {
                         thinkrail_core::ContentBlock::Text { text } => {
                             Some(text.lines().next().unwrap_or_default().to_owned())
                         }
-                        _ => None,
+                        thinkrail_core::ContentBlock::Thinking { .. }
+                        | thinkrail_core::ContentBlock::Image { .. }
+                        | thinkrail_core::ContentBlock::Tool { .. } => None,
                     })
                 })
         });
@@ -808,7 +810,7 @@ impl ChatPanel {
             .or(chat.snapshot.as_ref().map(|s| s.backend));
         let backend_label = backend.map(|b| match b {
             BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE),
-            _ => b.label().to_owned(),
+            BackendKind::Pi | BackendKind::Omp => b.label().to_owned(),
         });
         let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
         let current_label = current.map_or_else(

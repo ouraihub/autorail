@@ -61,14 +61,38 @@ Before adding a non-trivial feature to a Rust module, the author MUST:
 
 The implementation MUST finish with no stale duplicate path, compatibility copy, or unused extracted module.
 
+### Match arms over enums
+
+A `match` on an enum this workspace owns MUST name every variant, so adding a variant is a compile error at every decision point instead of a silent fallthrough. A bare `_ =>` stays only where it is justified:
+
+- the scrutinee is a third-party or open type (`serde_json::Value`, `serde_yaml::Value`, `turso::Error`, `std::io::ErrorKind`), protocol strings or numbers;
+- the arm binds and passes the value through unchanged (`other => …`, `error => error`), so every variant takes the same path by design.
+
+Check with `cargo-msvc.bat clippy --workspace --lib --bins -- -W clippy::wildcard_enum_match_arm`; every remaining warning must fall under one of the two cases above. The lint is not enabled in the gate because it also flags those justified arms.
+
 ### Known debt against the baseline
 
-Recorded when the AI 工程规范 was adopted (2026-11-02). Each item is fixed when its file is next substantially modified, not in a sweeping rewrite.
+Measured 2026-11-02 after the workspace was formatted with rustfmt, which made wrapped files longer. Each file is split when it is next substantially modified, not in a sweeping rewrite. A split MUST keep behavior identical and be verified by the affected tests plus, for `app` panels, a real GPUI window.
 
-- Production files above 500 lines: `app/src/panels/chat.rs` (1094), `app/src/panels/terminal.rs` (661), `agents/src/dsh.rs` (654), `ui/src/components.rs` (573), `app/src/panels/settings/mcp.rs` (565), `app/src/panels/settings/models.rs` (513), `app/src/panels/settings/providers/models.rs` (506).
-- 76 `_ =>` match arms in production code, mostly in `agents/src/dsh.rs`, `agents/src/rpc.rs` and `settings-store/src/db.rs`; each one must be justified or made exhaustive (§8).
-- `terminal/src/catalog.rs` has 2 `#[allow(...)]` without a recorded reason.
-- `agents/src/omp.rs` has 1 `unwrap`/`expect` in production code.
+Production files above 500 lines (total lines, including inline unit tests):
+
+| File | Lines |
+| --- | ---: |
+| `app/src/panels/chat.rs` | 1520 |
+| `app/src/panels/settings/mcp.rs` | 1217 |
+| `app/src/panels/settings/providers/models.rs` | 1057 |
+| `app/src/panels/terminal.rs` | 897 |
+| `agents/src/dsh.rs` | 849 |
+| `ui/src/components.rs` | 761 |
+| `agents/src/rpc.rs` | 643 |
+| `app/src/panels/settings/models.rs` | 632 |
+| `host-tools/src/tools.rs` | 611 |
+| `workspace/src/service.rs` | 598 |
+| `routing/src/router.rs` | 539 |
+| `app/src/panels/settings/providers/dialogs.rs` | 536 |
+| `agents/src/omp.rs` | 511 |
+| `agents/src/process.rs` | 508 |
+| `app/src/panels/settings/providers/detail.rs` | 505 |
 
 The host is the only writer of application metadata. Engine native history is not converted into application state or rewritten across engines. Client layout belongs to each window. A new default never changes an existing chat's backend.
 
