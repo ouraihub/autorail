@@ -211,6 +211,7 @@ impl RenderOnce for Segment {
                         base.clone(),
                         index.to_string().into(),
                     ))
+                    .test_support()
                     .h_full()
                     .flex()
                     .items_center()

@@ -79,7 +79,12 @@ gpui_kit::assets::icon_assets!(
         ChevronsDownUp,
         EyeOff,
         ExternalLink,
-        Sparkles
+        Sparkles,
+        Palette,
+        Monitor,
+        ArrowRight,
+        RotateCcw,
+        Info
     ]
 );
 

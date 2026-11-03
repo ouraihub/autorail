@@ -1,6 +1,6 @@
-//! `AppPrefService`: host-side preferences in `app_prefs` (native-multi-agent 06 §4).
+//! `AppPrefService`: host-side preferences in `app_prefs` (native-multi-agent 06 §4, 08).
 
-use thinkrail_core::{AppPrefService, AppPrefs, LogLevel, Result};
+use thinkrail_core::{AppPrefService, AppPrefs, AppearancePrefs, LogLevel, Result};
 use tracing::info;
 
 use crate::{
@@ -10,6 +10,8 @@ use crate::{
 
 const LOGS_VISIBLE: &str = "logs.visible";
 const LOG_LEVEL: &str = "logs.level";
+/// One JSON value; read field by field, so a damaged field never loses the others (08 A2).
+const APPEARANCE: &str = "appearance";
 
 fn load(conn: &Conn) -> Result<AppPrefs> {
     let mut prefs = AppPrefs::default();
@@ -17,6 +19,10 @@ fn load(conn: &Conn) -> Result<AppPrefs> {
         match db::text(&row, 0)?.as_str() {
             LOGS_VISIBLE => prefs.logs_visible = db::json(&row, 1)?,
             LOG_LEVEL => prefs.log_level = db::json(&row, 1)?,
+            APPEARANCE => {
+                let value: serde_json::Value = db::json(&row, 1)?;
+                prefs.appearance = AppearancePrefs::normalize(&value);
+            }
             _ => {}
         }
     }
@@ -51,6 +57,15 @@ impl AppPrefService for SqliteSettingsStore {
             load(conn)
         })?;
         info!(level = level.as_str(), "log level stored");
+        Ok(prefs)
+    }
+
+    fn set_appearance(&self, appearance: &AppearancePrefs) -> Result<AppPrefs> {
+        let prefs = self.write(|conn| {
+            put(conn, APPEARANCE, appearance)?;
+            load(conn)
+        })?;
+        info!(theme = %prefs.appearance.theme, "appearance stored");
         Ok(prefs)
     }
 }

@@ -1,3 +1,4 @@
+mod appearance;
 mod coding;
 mod logs;
 mod mcp;
@@ -7,8 +8,9 @@ mod providers;
 use crate::{
     state::AppState,
     strings::{
-        settings as shell, settings_coding as s_coding, settings_logs as s_logs,
-        settings_mcp as sm, settings_models as s_models, settings_providers as s_providers,
+        settings as shell, settings_appearance as s_appearance, settings_coding as s_coding,
+        settings_logs as s_logs, settings_mcp as sm, settings_models as s_models,
+        settings_providers as s_providers,
     },
 };
 use gpui_kit::{
@@ -34,6 +36,7 @@ enum Page {
     Coding,
     Mcp,
     Logs,
+    Appearance,
 }
 
 pub struct SettingsDialog;
@@ -46,6 +49,7 @@ struct SettingsView {
     mcp: Entity<mcp::McpPage>,
     /// Polls the log file only while it is the page on screen; closing settings drops it.
     logs: Entity<logs::LogsPage>,
+    appearance: Entity<appearance::AppearancePage>,
     _coding: gpui_kit::Subscription,
 }
 
@@ -82,6 +86,7 @@ impl SettingsDialog {
         });
         let mcp = cx.new(|cx| mcp::McpPage::new(state.clone(), window, cx));
         let logs = cx.new(|cx| logs::LogsPage::new(state.clone(), window, cx));
+        let appearance = cx.new(|cx| appearance::AppearancePage::new(window, cx));
         let view = cx.new(|cx| {
             // 编码搭档's footer link: jump to 模型服务.
             let watch = cx.observe(&coding, |this: &mut SettingsView, coding, cx| {
@@ -102,6 +107,7 @@ impl SettingsDialog {
                 coding,
                 mcp,
                 logs,
+                appearance,
                 _coding: watch,
             }
         });
@@ -171,6 +177,7 @@ impl Render for SettingsView {
             Page::Coding => self.coding.clone().into_any_element(),
             Page::Mcp => self.mcp.clone().into_any_element(),
             Page::Logs => self.logs.clone().into_any_element(),
+            Page::Appearance => self.appearance.clone().into_any_element(),
         };
         h_flex()
             .id("settings-shell")
@@ -197,7 +204,14 @@ impl Render for SettingsView {
                     .child(self.nav(Page::Providers, IconName::KeyRound, s_providers::TITLE, cx))
                     .child(self.nav(Page::Coding, IconName::SquareTerminal, s_coding::TITLE, cx))
                     .child(self.nav(Page::Mcp, IconName::Plug, sm::TITLE, cx))
-                    .child(self.nav(Page::Logs, IconName::ScrollText, s_logs::TITLE, cx)),
+                    .child(self.nav(Page::Logs, IconName::ScrollText, s_logs::TITLE, cx))
+                    .child(
+                        label(text::LABEL_PILL, s_appearance::GROUP)
+                            .h(px(28.))
+                            .mt(space::S8)
+                            .text_color(r.text_subtle),
+                    )
+                    .child(self.nav(Page::Appearance, IconName::Palette, s_appearance::TITLE, cx)),
             )
             .child(
                 v_flex()

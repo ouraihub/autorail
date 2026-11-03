@@ -5,6 +5,7 @@
 
 mod agent;
 mod app_prefs;
+mod appearance;
 mod commands;
 mod engine_setup;
 mod error;
@@ -23,6 +24,7 @@ mod workspace;
 
 pub use agent::*;
 pub use app_prefs::*;
+pub use appearance::*;
 pub use commands::*;
 pub use engine_setup::*;
 pub use error::{Error, ErrorCode, ErrorKind, IoContext, Result};

@@ -9,7 +9,7 @@ use gpui_kit::{
 };
 
 use super::{Tab, TabStrip};
-use crate::{Appearance, ThinkrailTheme};
+use crate::{ThemeCatalog, ThinkrailTheme};
 
 type Clicks = Rc<RefCell<Vec<&'static str>>>;
 
@@ -38,7 +38,8 @@ fn clicking_close_closes_without_selecting_the_tab(cx: &mut TestAppContext) {
     let clicks = Clicks::default();
     let window = cx.update(|cx| {
         gpui_kit::init(cx);
-        ThinkrailTheme::install(Appearance::Dark, None, cx).unwrap();
+        let catalog = ThemeCatalog::bundled().unwrap();
+        ThinkrailTheme::install(&catalog.resolve("dark", None).theme, None, cx);
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(480.), px(120.)));
         let clicks = clicks.clone();
         gpui_kit::open_window(

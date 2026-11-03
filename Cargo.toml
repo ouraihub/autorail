@@ -51,6 +51,7 @@ time = { version = "=0.3.55", features = ["formatting"] }
 tracing = "=0.1.44"
 tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt", "time"] }
+ttf-parser = { version = "=0.25.1", default-features = false, features = ["std", "variable-fonts"] }
 turso = { version = "=0.8.3", default-features = false }
 uuid = { version = "=1.29.0", features = ["v4", "serde"] }
 url = "=2.5.8"

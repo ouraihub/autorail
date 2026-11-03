@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod appearance;
 mod panels;
 mod services;
 mod state;
@@ -14,13 +15,12 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use gpui_kit::{AppContext as _, QuitMode, TitlebarOptions, WindowBounds, WindowOptions, px, size};
-use thinkrail_ui::{Appearance, ThinkrailTheme, UiAssets, fonts};
+use thinkrail_ui::{UiAssets, fonts};
 use tracing::{error, info};
 
 struct Args {
     data_dir: PathBuf,
     db_path: PathBuf,
-    appearance: Appearance,
 }
 
 fn derive_paths(
@@ -41,7 +41,6 @@ fn derive_paths(
 
 fn args() -> anyhow::Result<Args> {
     let mut data_dir = None;
-    let mut appearance = Appearance::Dark;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -50,9 +49,8 @@ fn args() -> anyhow::Result<Args> {
                     args.next().context("--data-dir 需要一个目录")?,
                 ))
             }
-            Some("--light") => appearance = Appearance::Light,
             _ => bail!(
-                "未知参数：{}（可用：--data-dir <目录>、--light）",
+                "未知参数：{}（可用：--data-dir <目录>）",
                 arg.to_string_lossy()
             ),
         }
@@ -63,11 +61,7 @@ fn args() -> anyhow::Result<Args> {
         .ok_or_else(|| anyhow::anyhow!("找不到程序目录，请用 --data-dir 指定数据目录"))?;
     let user_profile = std::env::var_os("USERPROFILE").map(PathBuf::from);
     let (data_dir, db_path) = derive_paths(data_dir, &exe_dir, user_profile)?;
-    Ok(Args {
-        data_dir,
-        db_path,
-        appearance,
-    })
+    Ok(Args { data_dir, db_path })
 }
 
 fn main() {
@@ -100,17 +94,18 @@ fn main() {
         }
     };
     let terminals = services.terminals.clone();
+    let app_prefs = services.app_prefs.clone();
+    let data_dir = args.data_dir.clone();
     gpui_kit::application()
         .with_assets(UiAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx);
-            if let Err(error) = fonts::register(cx) {
+            if let Err(error) = fonts::register_bundled(cx) {
                 error!(error = %error, "bundled fonts not registered; system fonts are used");
             }
-            if let Err(error) = ThinkrailTheme::install(args.appearance, None, cx) {
-                error!(error, "theme not installed");
-            }
+            // Before the window opens, so its first frame already has the user's theme (08 A7).
+            appearance::AppearanceState::init(app_prefs, &data_dir, cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
                 titlebar: Some(TitlebarOptions {

@@ -2,10 +2,10 @@
 
 use gpui_kit::{
     App, Bounds, Context, FontStyle, FontWeight, Pixels, Rgba, SharedString, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, font, point, px, size,
+    UnderlineStyle, Window, fill, point, px, size,
 };
 use thinkrail_core::GridSize;
-use thinkrail_ui::{ThinkrailTheme, fonts, metrics::text};
+use thinkrail_ui::{TerminalFont, ThinkrailTheme};
 use tracing::debug;
 
 use super::{Link, TerminalPanel, nonzero};
@@ -36,15 +36,22 @@ pub(super) fn color(value: vt100::Color, default: Rgba, ansi: &[Rgba; 16]) -> Rg
 }
 
 impl TerminalPanel {
+    /// Takes this pass's font and cell; a changed cell (font or code size) recomputes the grid
+    /// like a resize does, and the PTY follows.
     pub(super) fn layout(
         &mut self,
         bounds: Bounds<Pixels>,
-        cell_width: f32,
+        font: TerminalFont,
         cx: &mut Context<Self>,
     ) {
         self.bounds = Some(bounds);
-        self.cell_width = cell_width;
-        let cols = ((f32::from(bounds.size.width) / cell_width).floor() as u16).clamp(2, 500);
+        self.cell_width = f32::from(font.cell_width);
+        self.line_height = f32::from(font.line_height);
+        if self.font != font {
+            self.font = font;
+            cx.notify();
+        }
+        let cols = ((f32::from(bounds.size.width) / self.cell_width).floor() as u16).clamp(2, 500);
         let rows =
             ((f32::from(bounds.size.height) / self.line_height).floor() as u16).clamp(1, 300);
         if self.size.cols != cols || self.size.rows != rows {
@@ -93,7 +100,7 @@ impl TerminalPanel {
             theme.roles.text_default,
             theme.roles.primary,
         );
-        let font_size = text::CODE_TEXT.size;
+        let font_size = self.font.size;
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
         for row in 0..rows.get() {
@@ -124,7 +131,7 @@ impl TerminalPanel {
                 if !cell.has_contents() {
                     continue;
                 }
-                let mut cell_font = font(fonts::CODE);
+                let mut cell_font = self.font.font.clone();
                 if cell.bold() {
                     cell_font.weight = FontWeight::BOLD;
                 }
@@ -186,7 +193,7 @@ impl TerminalPanel {
         {
             let run = TextRun {
                 len: self.composition.len(),
-                font: font(fonts::CODE),
+                font: self.font.font.clone(),
                 color: foreground.into(),
                 background_color: Some(background.into()),
                 underline: Some(UnderlineStyle {

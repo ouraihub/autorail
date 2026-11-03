@@ -15,18 +15,17 @@ use std::{num::NonZeroU16, ops::Range};
 use gpui_kit::{
     App, Bounds, Context, ElementInputHandler, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Render,
-    ScrollEvent, Styled as _, Subscription, TextRun, Window,
+    ScrollEvent, Styled as _, Subscription, Window,
     assets::IconName,
     base::{h_flex, v_flex},
-    canvas, div, font,
+    canvas, div,
     prelude::FluentBuilder as _,
     px,
 };
 use thinkrail_core::{GridSize, Shell, TerminalRuntimeId, TerminalTab, WorkspaceId};
 use thinkrail_ui::{
-    ThinkrailTheme,
+    TerminalFont, ThinkrailTheme,
     components::{IconButton, Tab, TabStrip, label},
-    fonts,
     metrics::{space, text},
 };
 
@@ -79,6 +78,8 @@ pub struct TerminalPanel {
     composition: String,
     composition_selection: Range<usize>,
     bounds: Option<Bounds<Pixels>>,
+    /// The code font and its measured cell, re-measured on every layout pass (A11).
+    font: TerminalFont,
     cell_width: f32,
     line_height: f32,
     _subscriptions: Vec<Subscription>,
@@ -93,7 +94,7 @@ impl TerminalPanel {
             }
         })];
         let workspace = state.read(cx).workspace.clone();
-        let style = text::CODE_TEXT;
+        let font = TerminalFont::measure(cx);
         let mut panel = Self {
             state,
             focus: cx.focus_handle(),
@@ -108,8 +109,9 @@ impl TerminalPanel {
             composition: String::new(),
             composition_selection: 0..0,
             bounds: None,
-            cell_width: f32::from(style.size) * 0.6,
-            line_height: f32::from(style.size) * style.line_height,
+            cell_width: f32::from(font.cell_width),
+            line_height: f32::from(font.line_height),
+            font,
             _subscriptions: subscriptions,
         };
         panel.set_workspace(workspace, cx);
@@ -171,22 +173,9 @@ impl Render for TerminalPanel {
         let layout_entity = cx.entity();
         let paint_entity = cx.entity();
         let screen = canvas(
-            move |bounds, window, cx| {
-                let run = TextRun {
-                    len: 1,
-                    font: font(fonts::CODE),
-                    color: r.text_default.into(),
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let width = f32::from(
-                    window
-                        .text_system()
-                        .shape_line("M".into(), text::CODE_TEXT.size, &[run], None)
-                        .width,
-                );
-                layout_entity.update(cx, |this, cx| this.layout(bounds, width.max(1.), cx));
+            move |bounds, _, cx| {
+                let font = TerminalFont::measure(cx);
+                layout_entity.update(cx, |this, cx| this.layout(bounds, font, cx));
             },
             move |bounds, _, window, cx| {
                 let focus = paint_entity.read(cx).focus.clone();

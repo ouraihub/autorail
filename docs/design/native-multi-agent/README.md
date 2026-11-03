@@ -13,6 +13,7 @@
 5. [开发任务与验收](05-development.md)：任务依赖、完成定义、验收矩阵。
 6. [日志与调用链](06-logging.md)：`observability` crate、每次操作一个 `op` span、北京时间、日志级别、后台日志页。
 7. [斜杠命令](07-slash-commands.md)：输入框 `/` 菜单，pi、OMP、DSH 的命令来源与执行。
+8. [外观](08-appearance.md)：设置 → 界面 → 外观，主题与字体的完整移植。
 
 ## 已确认的用户决定
 

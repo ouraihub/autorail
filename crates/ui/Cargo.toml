@@ -8,9 +8,9 @@ publish.workspace = true
 [dependencies]
 gpui-kit.workspace = true
 anyhow.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+ttf-parser.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
