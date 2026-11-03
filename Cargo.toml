@@ -31,7 +31,7 @@ thinkrail-agents = { path = "crates/agents" }
 thinkrail-host-tools = { path = "crates/host-tools" }
 thinkrail-observability = { path = "crates/observability" }
 thinkrail-ui = { path = "crates/ui" }
-gpui-kit = { version = "=0.8.1", features = ["gpui-fast"] }
+gpui-kit = { version = "=0.9.0", features = ["gpui-fast"] }
 anyhow = "=1.0.104"
 async-channel = "=2.5.0"
 base64 = "=0.23.1"

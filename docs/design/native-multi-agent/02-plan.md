@@ -48,7 +48,7 @@ PR 创建与查看、Specs 图、十一类资源专用预览（图片 / SVG / CS
 | 用途 | 选型 |
 |---|---|
 | 工具链 | Rust 1.99.1，edition 2024 |
-| UI | gpui-kit 0.8.1（启用 `gpui-fast` 特性：gpui-fast 0.1.12、gpui-component 0.8.1） |
+| UI | gpui-kit 0.9.0（启用 `gpui-fast` 特性：gpui-fast 0.1.13、gpui-component 0.9.0） |
 | 终端 | portable-pty 0.9.0、vt100 0.18.1 |
 | 错误 | thiserror 2.0.21（库层），anyhow 1.0.104（仅 `main`） |
 | 日志 | tracing 0.1.44、tracing-subscriber 0.3.23、tracing-appender 0.2.5 |
