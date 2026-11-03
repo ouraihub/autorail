@@ -122,6 +122,7 @@ impl RenderOnce for Breadcrumb {
         };
         div()
             .id(self.id)
+            .occlude()
             .flex()
             .flex_col()
             .justify_center()

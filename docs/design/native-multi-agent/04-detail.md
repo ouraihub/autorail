@@ -252,7 +252,7 @@
 
 以原版 Balanced 布局为基线，参照截图 `workbench-{light,dark}.png`：
 
-- **顶栏**：品牌标识（`text-primary`），然后是三段位置信息：PROJECT / WORKSPACE / BRANCH。每段上方是 eyebrow 标签，下方是带 chevron 的选择器。右侧依次是连接状态（`feedback-success` 圆点加文字）和设置齿轮。
+- **顶栏**：品牌标识（`text-primary`），然后是三段位置信息：PROJECT / WORKSPACE / BRANCH。每段上方是 eyebrow 标签，下方是带 chevron 的选择器。右侧依次是连接状态（`feedback-success` 圆点加文字）和设置齿轮。顶栏就是窗口标题栏，和原版一样不显示系统标题栏：用 GPUI Kit 的 `TitleBar`，最右边是 Windows 的最小化 / 最大化 / 关闭（系统命中测试，支持贴靠布局）；空白处、品牌和状态文字可以拖动窗口、双击最大化；位置选择器和齿轮遮住拖动区（`occlude`），点击不会拖动窗口。窗口标题“ThinkRail 原生工作台”只在任务栏和 Alt+Tab 中显示。
 - **左侧活动栏**（约 40 宽）：图标按钮切换左侧面板。选中项是 `control-bg-selected` 底，左缘加 `primary` 色条。
 - **Projects 面板**：
   - 表头 28，标题加 `+` 和 `×` 按钮。
