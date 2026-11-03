@@ -1,10 +1,16 @@
+//! The bundled dark and light palettes and the roles derived from them, pinned to the original.
+
 use gpui_kit::{Rgba, rgba};
 
 use super::*;
 use crate::{fonts::face_weight, metrics::text};
 
 fn theme(appearance: Appearance) -> &'static ThinkrailTheme {
-    ThinkrailTheme::bundled(appearance).unwrap()
+    let id = match appearance {
+        Appearance::Dark => "dark",
+        Appearance::Light => "light",
+    };
+    ThemeCatalog::bundled().unwrap().get(id).unwrap()
 }
 
 #[track_caller]

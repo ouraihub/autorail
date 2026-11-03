@@ -7,7 +7,6 @@ use gpui_kit::{
     WindowBounds, WindowOptions, point, px, size,
 };
 use thinkrail_observability::LogHandle;
-use thinkrail_ui::{Appearance, ThinkrailTheme};
 
 use crate::{
     services::{self, Channels},
@@ -32,6 +31,15 @@ pub fn open<V: Render>(
     cx: &mut TestAppContext,
     build: impl FnOnce(Entity<AppState>, &mut Window, &mut Context<V>) -> V + 'static,
 ) -> (Fixture, Entity<V>) {
+    open_sized(cx, px(800.), build)
+}
+
+/// [`open`] with a window of this height (a long page needs its lower controls on screen).
+pub fn open_sized<V: Render>(
+    cx: &mut TestAppContext,
+    height: gpui_kit::Pixels,
+    build: impl FnOnce(Entity<AppState>, &mut Window, &mut Context<V>) -> V + 'static,
+) -> (Fixture, Entity<V>) {
     let data = tempfile::tempdir().unwrap();
     let (services, channels) = services::build(
         data.path(),
@@ -41,8 +49,9 @@ pub fn open<V: Render>(
     .unwrap();
     let (window, view) = cx.update(|cx| {
         gpui_kit::init(cx);
-        ThinkrailTheme::install(Appearance::Dark, None, cx).unwrap();
-        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1280.), px(800.)));
+        // The app's startup path: stored appearance (defaults in a fresh db) and both folders.
+        crate::appearance::AppearanceState::init(services.app_prefs.clone(), data.path(), cx);
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(1280.), height));
         gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

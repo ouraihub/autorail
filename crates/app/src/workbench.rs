@@ -59,7 +59,8 @@ impl Workbench {
         Self::pump_sessions(&chat, channels.sessions, cx);
         Self::pump_plans(&chat, channels.plans, cx);
         Self::pump_terminals(&terminal, channels.terminals, cx);
-        let subscriptions = vec![cx.observe(&state, |_, _, cx| cx.notify())];
+        let mut subscriptions = vec![cx.observe(&state, |_, _, cx| cx.notify())];
+        subscriptions.extend(crate::appearance::watch(window, cx));
         Self {
             state,
             projects,

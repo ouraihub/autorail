@@ -8,8 +8,8 @@
 
 use tempfile::TempDir;
 use thinkrail_core::{
-    AppPrefService, AppPrefs, BackendKind, ChatBinding, ChatBindingService, LogLevel,
-    ModelPrefService,
+    AppPrefService, AppPrefs, AppearancePrefs, BackendKind, ChatBinding, ChatBindingService,
+    LogLevel, ModelPrefService,
 };
 use thinkrail_settings_store::SqliteSettingsStore;
 
@@ -71,32 +71,27 @@ fn default_agent_is_stored_and_cleared() {
 }
 
 #[test]
-fn log_preferences_default_off_at_info_and_survive_reopen() {
+fn app_preferences_default_and_survive_reopen() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("thinkrail.db");
     let store = SqliteSettingsStore::open(&path).unwrap();
-    assert_eq!(
-        store.app_prefs().unwrap(),
-        AppPrefs {
-            logs_visible: false,
-            log_level: LogLevel::Info
-        }
-    );
+    assert_eq!(store.app_prefs().unwrap(), AppPrefs::default());
+    assert_eq!(AppPrefs::default().log_level, LogLevel::Info);
     store.set_logs_visible(true).unwrap();
-    assert_eq!(
-        store.set_log_level(LogLevel::Debug).unwrap(),
-        AppPrefs {
-            logs_visible: true,
-            log_level: LogLevel::Debug
-        }
-    );
+    store.set_log_level(LogLevel::Debug).unwrap();
+    let appearance = AppearancePrefs {
+        theme: "minimal-light".into(),
+        code_font_size: 15,
+        code_ligatures: true,
+        ..AppearancePrefs::default()
+    };
+    let expected = AppPrefs {
+        logs_visible: true,
+        log_level: LogLevel::Debug,
+        appearance: appearance.clone(),
+    };
+    assert_eq!(store.set_appearance(&appearance).unwrap(), expected);
     drop(store);
     let store = SqliteSettingsStore::open(&path).unwrap();
-    assert_eq!(
-        store.app_prefs().unwrap(),
-        AppPrefs {
-            logs_visible: true,
-            log_level: LogLevel::Debug
-        }
-    );
+    assert_eq!(store.app_prefs().unwrap(), expected);
 }
