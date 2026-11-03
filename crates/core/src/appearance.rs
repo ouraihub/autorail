@@ -28,6 +28,19 @@ impl FontWeightOffset {
     pub const DEFAULT: i16 = 0;
 }
 
+/// File and diff wrap column in characters (original `LINE_WIDTH_COLUMNS`).
+#[derive(Debug)]
+pub struct LineWidth;
+impl LineWidth {
+    pub const MIN: u16 = 40;
+    pub const MAX: u16 = 240;
+    pub const DEFAULT: u16 = 120;
+
+    pub fn is_valid(value: u16) -> bool {
+        (Self::MIN..=Self::MAX).contains(&value)
+    }
+}
+
 pub const FONT_FALLBACKS_MAX: usize = 8;
 pub const FONT_FAMILY_NAME_MAX: usize = 128;
 /// A bundled manifest id; a user theme's catalog id is `user.<id>`.
@@ -87,6 +100,10 @@ pub struct AppearancePrefs {
     /// The terminal never draws ligatures.
     pub code_ligatures: bool,
     pub font_weight_offset: i16,
+    /// The file and diff viewer wraps at this many characters.
+    pub file_line_width: u16,
+    /// Wraps sooner when the pane is narrower than `file_line_width` (else it scrolls).
+    pub file_line_width_bounded: bool,
 }
 
 impl Default for AppearancePrefs {
@@ -100,6 +117,8 @@ impl Default for AppearancePrefs {
             code_font_size: CodeFontSize::DEFAULT,
             code_ligatures: false,
             font_weight_offset: FontWeightOffset::DEFAULT,
+            file_line_width: LineWidth::DEFAULT,
+            file_line_width_bounded: true,
         }
     }
 }
@@ -144,6 +163,16 @@ impl AppearancePrefs {
                 .and_then(|offset| i16::try_from(offset).ok())
                 .filter(|offset| is_weight_offset(*offset))
                 .unwrap_or(default.font_weight_offset),
+            file_line_width: value
+                .get("fileLineWidth")
+                .and_then(Value::as_u64)
+                .and_then(|width| u16::try_from(width).ok())
+                .filter(|width| LineWidth::is_valid(*width))
+                .unwrap_or(default.file_line_width),
+            file_line_width_bounded: value
+                .get("fileLineWidthBounded")
+                .and_then(Value::as_bool)
+                .unwrap_or(default.file_line_width_bounded),
         }
     }
 

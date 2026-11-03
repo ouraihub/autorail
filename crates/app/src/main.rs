@@ -14,7 +14,10 @@ mod workbench;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
-use gpui_kit::{AppContext as _, QuitMode, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    AppContext as _, QuitMode, TitlebarOptions, WindowBounds, WindowOptions, component::TitleBar,
+    px, size,
+};
 use thinkrail_ui::{UiAssets, fonts};
 use tracing::{error, info};
 
@@ -106,13 +109,15 @@ fn main() {
             }
             // Before the window opens, so its first frame already has the user's theme (08 A7).
             appearance::AppearanceState::init(app_prefs, &data_dir, cx);
+            // The workbench top bar is the title bar (no system caption); the title stays for the
+            // taskbar and Alt+Tab.
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(strings::shell::WINDOW_TITLE.into()),
-                    ..Default::default()
+                    ..TitleBar::title_bar_options()
                 }),
-                ..Default::default()
+                ..TitleBar::window_options()
             };
             let opened = gpui_kit::open_window(options, cx, move |window, cx| {
                 cx.new(|cx| workbench::Workbench::new(services, channels, window, cx))

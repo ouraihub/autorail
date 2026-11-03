@@ -6,7 +6,10 @@ use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
     Render, Styled as _, Subscription, Window,
     base::{h_flex, v_flex},
-    component::resizable::{h_resizable, resizable_panel, v_resizable},
+    component::{
+        TitleBar,
+        resizable::{h_resizable, resizable_panel, v_resizable},
+    },
     div,
     prelude::FluentBuilder as _,
     px,
@@ -142,38 +145,48 @@ impl Workbench {
         let workspace = state.current_workspace();
         let workspace_name = workspace.map_or_else(|| s::NONE.to_owned(), |w| w.name.clone());
         let branch = workspace.map_or_else(|| s::NONE.to_owned(), |w| w.branch.clone());
-        h_flex()
+        // Clickable pieces occlude the drag area so a click reaches them instead of moving the window.
+        TitleBar::new()
             .h(size::TOP_BAR)
-            .flex_none()
-            .px(space::S12)
-            .gap(space::S16)
+            .pl(space::S12)
             .bg(r.container_header_bg)
-            .border_b_1()
             .border_color(r.border_muted)
             .child(
-                label(text::HEADING_SM, s::BRAND)
-                    .font_family(thinkrail_ui::fonts::BRAND)
-                    .text_color(r.primary),
-            )
-            .child(Breadcrumb::new("crumb-project", s::PROJECT, project).icon(IconName::Folder))
-            .child(
-                Breadcrumb::new("crumb-workspace", s::WORKSPACE, workspace_name)
-                    .icon(IconName::FolderGit2),
-            )
-            .child(
-                Breadcrumb::new("crumb-branch", s::BRANCH, branch)
-                    .icon(IconName::GitBranch)
-                    .mono(true),
-            )
-            .child(div().flex_1())
-            .child(StatusDot::new(Status::Success).label(s::READY))
-            .child(
-                IconButton::new("open-settings", IconName::Settings)
-                    .tooltip(s::SETTINGS)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let state = this.state.clone();
-                        SettingsDialog::open(state, window, cx);
-                    })),
+                h_flex()
+                    .flex_1()
+                    .h_full()
+                    .pr(space::S8)
+                    .gap(space::S16)
+                    .child(
+                        label(text::HEADING_SM, s::BRAND)
+                            .font_family(thinkrail_ui::fonts::BRAND)
+                            .text_color(r.primary),
+                    )
+                    .child(
+                        Breadcrumb::new("crumb-project", s::PROJECT, project)
+                            .icon(IconName::Folder),
+                    )
+                    .child(
+                        Breadcrumb::new("crumb-workspace", s::WORKSPACE, workspace_name)
+                            .icon(IconName::FolderGit2),
+                    )
+                    .child(
+                        Breadcrumb::new("crumb-branch", s::BRANCH, branch)
+                            .icon(IconName::GitBranch)
+                            .mono(true),
+                    )
+                    .child(div().flex_1())
+                    .child(StatusDot::new(Status::Success).label(s::READY))
+                    .child(
+                        div().id("open-settings-area").occlude().child(
+                            IconButton::new("open-settings", IconName::Settings)
+                                .tooltip(s::SETTINGS)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let state = this.state.clone();
+                                    SettingsDialog::open(state, window, cx);
+                                })),
+                        ),
+                    ),
             )
     }
 

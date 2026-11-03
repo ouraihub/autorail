@@ -142,3 +142,17 @@ pub const THEME_UNREADABLE: &str = "无法读取这个文件。";
 pub const COPY_PATH: &str = "复制路径";
 pub const OPEN_FOLDER: &str = "打开文件夹";
 pub const PATH_COPIED: &str = "已复制文件夹路径";
+
+pub const EDITOR_TITLE: &str = "编辑器";
+pub const LINE_WIDTH: &str = "行宽";
+pub const LINE_WIDTH_DESCRIPTION: &str = "文件与 diff 中每行的最大字符数。";
+pub const LINE_WIDTH_INPUT: &str = "文件行宽";
+pub const FIT_TO_PANE: &str = "适应面板";
+pub const FIT_TO_PANE_DESCRIPTION: &str = "面板较窄时用更短的行宽折行。";
+pub const FIT_TO_PANE_SWITCH: &str = "文件行宽适应面板";
+pub const LINE_WIDTH_FAILED: &str = "无法更改文件行宽";
+pub const RESET_LINE_WIDTH: &str = "把行宽恢复为默认";
+pub const RESET_FIT_TO_PANE: &str = "把适应面板恢复为默认";
+pub fn line_width_invalid(min: u16, max: u16) -> String {
+    format!("请输入 {min} 到 {max} 之间的整数。")
+}

@@ -196,20 +196,36 @@ impl TerminalFont {
             weight: style.weight,
             style: FontStyle::Normal,
         };
-        let text_system = cx.text_system();
-        let id = text_system.resolve_font(&font);
-        let cell_width = text_system
-            .advance(id, style.size, 'M')
-            .map_or_else(
-                |_| text_system.layout_width(id, style.size, 'M'),
-                |advance| advance.width,
-            )
-            .max(px(1.));
         Self {
+            cell_width: cell_width(&font, style.size, cx),
             font,
             size: style.size,
-            cell_width,
             line_height: style.line_height,
         }
     }
+}
+
+/// One column of a code style under the active settings: the `M` advance (08 A11, A19).
+pub fn code_cell_width(style: &TextStyle, cx: &App) -> Pixels {
+    let resolved = resolve(style);
+    let font = Font {
+        family: resolved.family,
+        features: resolved.features.unwrap_or_default(),
+        fallbacks: resolved.fallbacks,
+        weight: resolved.weight,
+        style: FontStyle::Normal,
+    };
+    cell_width(&font, resolved.size, cx)
+}
+
+fn cell_width(font: &Font, size: Pixels, cx: &App) -> Pixels {
+    let text_system = cx.text_system();
+    let id = text_system.resolve_font(font);
+    text_system
+        .advance(id, size, 'M')
+        .map_or_else(
+            |_| text_system.layout_width(id, size, 'M'),
+            |advance| advance.width,
+        )
+        .max(px(1.))
 }

@@ -1,27 +1,34 @@
 //! File and diff viewer (04 §5, §9.2): read-only, opened from the Changes panel. Large files are
-//! virtualised (one uniform row per line).
+//! virtualised (one uniform row per drawn line); long lines wrap at the line width (08 A19).
 
 mod diff;
+mod rows;
+mod wrap;
 
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Rgba, Styled as _, Subscription, Window,
+    AnyElement, Context, Entity, InteractiveElement as _, IntoElement,
+    ListHorizontalSizingBehavior, ParentElement as _, Pixels, Render, Styled as _, Subscription,
+    Window,
     assets::IconName,
     base::{h_flex, v_flex},
-    div,
+    canvas, div,
     prelude::FluentBuilder as _,
     px, uniform_list,
 };
-use thinkrail_core::{DiffRequest, FileContent, WorkspaceId};
+use thinkrail_core::{DiffRequest, LineWidth, WorkspaceId};
 use thinkrail_ui::{
-    Roles, ThinkrailTheme,
-    components::{IconButton, Tab, TabStrip, TextStyled as _, label},
+    ThinkrailTheme,
+    components::{IconButton, Tab, TabStrip, label},
     metrics::{size, space, text},
+    typography::code_cell_width,
 };
 
+use rows::{Piece, Row, cut, diff_rows, file_rows, gutter_width, render_piece};
+
 use crate::{
+    appearance::AppearanceState,
     state::{AppEvent, AppState, run},
     strings::files as s,
 };
@@ -30,16 +37,6 @@ use crate::{
 enum DocKind {
     File,
     Diff { staged: bool },
-}
-
-/// One rendered row of a document.
-#[derive(Debug, Clone)]
-enum Row {
-    Code { number: u32, text: String },
-    Diff(diff::Line),
-    Hunk(String),
-    FileHeader(String),
-    Note(String),
 }
 
 enum Body {
@@ -51,6 +48,8 @@ struct Doc {
     path: String,
     kind: DocKind,
     body: Body,
+    /// The pieces for the wrap column they were cut at.
+    pieces: Option<(usize, Rc<Vec<Piece>>)>,
 }
 
 pub struct FilePanel {
@@ -58,26 +57,40 @@ pub struct FilePanel {
     workspace: Option<WorkspaceId>,
     docs: Vec<Doc>,
     active: usize,
+    /// The document area's width at the last paint; zero until then.
+    body_width: Pixels,
     _subscriptions: Vec<Subscription>,
 }
 
 impl FilePanel {
     pub fn new(state: Entity<AppState>, _: &mut Window, cx: &mut Context<Self>) -> Self {
-        let subscriptions = vec![cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
-            if *event == AppEvent::Workspace {
-                this.workspace = state.read(cx).workspace.clone();
-                this.docs.clear();
-                this.active = 0;
-                cx.notify();
-            }
-        })];
+        let subscriptions = vec![
+            cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
+                if *event == AppEvent::Workspace {
+                    this.workspace = state.read(cx).workspace.clone();
+                    this.docs.clear();
+                    this.active = 0;
+                    cx.notify();
+                }
+            }),
+            // Line width, fit-to-pane and the code font all move the wrap column.
+            cx.observe_global::<AppearanceState>(|_, cx| cx.notify()),
+        ];
         let workspace = state.read(cx).workspace.clone();
         Self {
             state,
             workspace,
             docs: Vec::new(),
             active: 0,
+            body_width: px(0.),
             _subscriptions: subscriptions,
+        }
+    }
+
+    fn set_body_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if (width - self.body_width).abs() >= px(0.5) {
+            self.body_width = width;
+            cx.notify();
         }
     }
 
@@ -105,12 +118,14 @@ impl FilePanel {
                     path: path.clone(),
                     kind: kind.clone(),
                     body: Body::Loading,
+                    pieces: None,
                 });
                 self.docs.len() - 1
             }
         };
         self.active = index;
         self.docs[index].body = Body::Loading;
+        self.docs[index].pieces = None;
         cx.notify();
         let service = self.state.read(cx).services.workspace.clone();
         let request_path = path.clone();
@@ -163,137 +178,36 @@ impl FilePanel {
     }
 }
 
-fn file_rows(content: FileContent) -> Vec<Row> {
-    match content {
-        FileContent::Text(text) => text
-            .lines()
-            .enumerate()
-            .map(|(i, line)| Row::Code {
-                number: i as u32 + 1,
-                text: line.to_owned(),
-            })
-            .collect(),
-        FileContent::Binary { byte_len } => vec![Row::Note(format!(
-            "{}（{byte_len} {}）",
-            s::BINARY,
-            s::BYTES
-        ))],
-    }
-}
-
-fn diff_rows(text: &str) -> Vec<Row> {
-    let files = diff::parse(text);
-    if files.is_empty()
-        || files
-            .iter()
-            .all(|f| f.hunks.is_empty() && !f.binary && f.old_path.is_none())
-    {
-        return vec![Row::Note(s::NO_DIFF.to_owned())];
-    }
-    let several = files.len() > 1;
-    let mut rows = Vec::new();
-    for file in files {
-        if several {
-            rows.push(Row::FileHeader(file.path.clone()));
-        }
-        if let Some(old) = file.old_path.as_ref().filter(|old| **old != file.path) {
-            rows.push(Row::Note(format!("{} {old}", s::RENAMED_FROM)));
-        }
-        if file.binary {
-            rows.push(Row::Note(s::BINARY_DIFF.to_owned()));
-        }
-        for hunk in file.hunks {
-            rows.push(Row::Hunk(hunk.header));
-            rows.extend(hunk.lines.into_iter().map(Row::Diff));
-        }
-    }
-    rows
-}
-
-fn number(n: Option<u32>) -> String {
-    n.map(|n| n.to_string()).unwrap_or_default()
-}
-
-fn render_row(row: &Row, r: &Roles) -> AnyElement {
-    let gutter = |old: String, new: String| {
-        h_flex()
-            .flex_none()
-            .gap(space::S4)
-            .pr(space::S8)
-            .text_color(r.text_subtle)
-            .child(div().w(px(40.)).flex().justify_end().child(old))
-            .child(div().w(px(40.)).flex().justify_end().child(new))
-    };
-    let line = |content: String, color: Rgba| {
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_color(color)
-            .child(content)
-    };
-    let base = h_flex()
-        .w_full()
-        .h(size::ROW)
-        .px(space::S8)
-        .text_style(text::CODE_DOCUMENT);
-    match row {
-        Row::Code { number: n, text: t } => base
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(56.))
-                    .pr(space::S12)
-                    .flex()
-                    .justify_end()
-                    .text_color(r.text_subtle)
-                    .child(n.to_string()),
-            )
-            .child(line(t.clone(), r.text_default))
-            .into_any_element(),
-        Row::Diff(l) => {
-            let (sign, bg, fg) = match l.kind {
-                diff::Kind::Added => ("+", Some(r.feedback_success_subtle), r.feedback_success),
-                diff::Kind::Removed => ("−", Some(r.feedback_error_subtle), r.feedback_error),
-                diff::Kind::Context => (" ", None, r.text_muted),
-                diff::Kind::Note => (" ", None, r.text_subtle),
-            };
-            base.when_some(bg, |d, bg| d.bg(bg))
-                .child(gutter(number(l.old), number(l.new)))
-                .child(div().flex_none().w(space::S16).text_color(fg).child(sign))
-                .child(line(
-                    l.text.clone(),
-                    if l.kind == diff::Kind::Context {
-                        r.text_default
-                    } else {
-                        fg
-                    },
-                ))
-                .into_any_element()
-        }
-        Row::Hunk(header) => base
-            .bg(r.container_content_bg)
-            .child(line(header.clone(), r.text_subtle))
-            .into_any_element(),
-        Row::FileHeader(path) => base
-            .bg(r.container_header_bg)
-            .child(
-                div()
-                    .text_style(text::TITLE_COMPACT)
-                    .text_color(r.text_default)
-                    .child(path.clone()),
-            )
-            .into_any_element(),
-        Row::Note(note) => base
-            .child(line(note.clone(), r.text_subtle))
-            .into_any_element(),
-    }
-}
-
 impl Render for FilePanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
+        let (line_width, bounded) =
+            cx.try_global::<AppearanceState>()
+                .map_or((LineWidth::DEFAULT, true), |state| {
+                    (
+                        state.prefs.file_line_width,
+                        state.prefs.file_line_width_bounded,
+                    )
+                });
+        let cell = code_cell_width(&text::CODE_DOCUMENT, cx);
+        let body_width = self.body_width;
+        // Before the first paint the pane width is unknown: wrap at the setting, not at 1.
+        let fits = |gutter: Pixels| {
+            if body_width > px(0.) {
+                ((body_width - gutter).max(px(0.)) / cell).floor() as usize
+            } else {
+                usize::MAX
+            }
+        };
+        if let Some(doc) = self.docs.get_mut(self.active)
+            && let Body::Rows(rows) = &doc.body
+        {
+            let gutter = gutter_width(matches!(doc.kind, DocKind::Diff { .. }));
+            let column = wrap::column(line_width, bounded, fits(gutter));
+            if doc.pieces.as_ref().is_none_or(|(at, _)| *at != column) {
+                doc.pieces = Some((column, Rc::new(cut(rows, column))));
+            }
+        }
         let mut strip = TabStrip::new();
         for (index, doc) in self.docs.iter().enumerate() {
             let name = doc.path.rsplit('/').next().unwrap_or(&doc.path).to_owned();
@@ -329,9 +243,15 @@ impl Render for FilePanel {
                 body: Body::Rows(rows),
                 path,
                 kind,
+                pieces,
             }) => {
                 let rows = rows.clone();
-                let count = rows.len();
+                let (column, pieces) = pieces.clone().unwrap_or_default();
+                let count = pieces.len();
+                // A column wider than the pane scrolls sideways (fit-to-pane off, 08 A19).
+                let gutter = gutter_width(matches!(kind, DocKind::Diff { .. }));
+                let row_width = gutter + cell * column as f32;
+                let scrolls = body_width > px(0.) && row_width > body_width;
                 let (path, kind) = (path.clone(), kind.clone());
                 let open_full = matches!(kind, DocKind::Diff { .. });
                 let path_row = h_flex()
@@ -365,10 +285,17 @@ impl Render for FilePanel {
                     .child(
                         uniform_list("doc-rows", count, move |range, _, cx| {
                             let r = ThinkrailTheme::global(cx).roles;
-                            rows[range]
+                            pieces[range]
                                 .iter()
-                                .map(|row| render_row(row, &r))
+                                .map(|piece| {
+                                    render_piece(&rows, piece, scrolls.then_some(row_width), &r)
+                                })
                                 .collect::<Vec<_>>()
+                        })
+                        .when(scrolls, |list| {
+                            list.with_horizontal_sizing_behavior(
+                                ListHorizontalSizingBehavior::Unconstrained,
+                            )
                         })
                         .flex_1()
                         .min_h(px(0.)),
@@ -381,6 +308,18 @@ impl Render for FilePanel {
             .size_full()
             .bg(r.container_workspace_bg)
             .child(strip)
-            .child(div().flex_1().min_h(px(0.)).child(body))
+            .child(div().relative().flex_1().min_h(px(0.)).child(body).child({
+                let entity = cx.entity();
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.set_body_width(bounds.size.width, cx);
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full()
+            }))
     }
 }
