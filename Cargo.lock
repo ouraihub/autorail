@@ -7718,6 +7718,7 @@ dependencies = [
  "thinkrail-ui",
  "thinkrail-workspace",
  "tracing",
+ "unicode-width 0.2.3",
  "url",
  "vt100",
 ]

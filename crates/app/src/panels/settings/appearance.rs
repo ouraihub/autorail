@@ -3,6 +3,7 @@
 //! and re-renders whenever the global changes.
 
 mod custom;
+mod editor_group;
 mod fonts_group;
 mod picker;
 mod preview;
@@ -18,7 +19,7 @@ use gpui_kit::{
         slider::{SliderEvent, SliderState},
     },
 };
-use thinkrail_core::{AppearancePrefs, FontRole, FontWeightOffset};
+use thinkrail_core::{AppearancePrefs, FontRole, FontWeightOffset, LineWidth};
 use thinkrail_ui::metrics::space;
 
 use crate::{appearance::AppearanceState, strings::settings_appearance as s};
@@ -37,6 +38,9 @@ pub struct AppearancePage {
     picker: Option<PickerTarget>,
     search: Entity<InputState>,
     weight: Entity<SliderState>,
+    /// The line width field; `line_width_shown` is the stored width it was last set to.
+    line_width: Entity<InputState>,
+    line_width_shown: u16,
     /// The folder whose path was just copied.
     copied: Option<&'static str>,
     _subscriptions: Vec<Subscription>,
@@ -45,6 +49,10 @@ pub struct AppearancePage {
 impl AppearancePage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(s::PICKER_SEARCH));
+        let width = cx
+            .try_global::<AppearanceState>()
+            .map_or(LineWidth::DEFAULT, |state| state.prefs.file_line_width);
+        let line_width = cx.new(|cx| InputState::new(window, cx).default_value(width.to_string()));
         let offset = cx
             .try_global::<AppearanceState>()
             .map_or(FontWeightOffset::DEFAULT, |state| {
@@ -72,6 +80,7 @@ impl AppearancePage {
                     });
                 }
             }),
+            cx.subscribe_in(&line_width, window, Self::on_line_width_event),
         ];
         Self {
             themes_open: false,
@@ -79,6 +88,8 @@ impl AppearancePage {
             picker: None,
             search,
             weight,
+            line_width,
+            line_width_shown: width,
             copied: None,
             _subscriptions: subscriptions,
         }
@@ -110,6 +121,7 @@ impl Render for AppearancePage {
             return v_flex().id("settings-appearance");
         };
         self.sync_weight(offset, window, cx);
+        self.sync_line_width(window, cx);
         v_flex()
             .id("settings-appearance")
             .gap(space::S24)
@@ -117,6 +129,7 @@ impl Render for AppearancePage {
             .child(self.fonts_group(window, cx))
             .child(self.custom_fonts(cx))
             .child(self.custom_themes(cx))
+            .child(self.editor_group(cx))
     }
 }
 

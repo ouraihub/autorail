@@ -22,6 +22,8 @@ fn a_stored_value_round_trips() {
         code_font_size: 16,
         code_ligatures: true,
         font_weight_offset: -30,
+        file_line_width: 80,
+        file_line_width_bounded: false,
     };
     let stored = serde_json::to_value(&prefs).unwrap();
     assert_eq!(AppearancePrefs::normalize(&stored), prefs);
@@ -37,15 +39,25 @@ fn every_invalid_field_falls_back_alone() {
         "codeFontSize": 25,
         "codeLigatures": "yes",
         "fontWeightOffset": 15,
+        "fileLineWidth": 241,
+        "fileLineWidthBounded": "no",
     });
     let prefs = AppearancePrefs::normalize(&stored);
     assert_eq!(prefs, AppearancePrefs::default());
 
-    let partly = json!({"theme": "light", "codeFontSize": 9, "fontWeightOffset": 130});
+    let partly = json!({
+        "theme": "light",
+        "codeFontSize": 9,
+        "fontWeightOffset": 130,
+        "fileLineWidth": 39,
+        "fileLineWidthBounded": false,
+    });
     let prefs = AppearancePrefs::normalize(&partly);
     assert_eq!(prefs.theme, "light");
     assert_eq!(prefs.code_font_size, CodeFontSize::DEFAULT);
     assert_eq!(prefs.font_weight_offset, 130);
+    assert_eq!(prefs.file_line_width, LineWidth::DEFAULT);
+    assert!(!prefs.file_line_width_bounded);
 }
 
 #[test]
@@ -71,6 +83,8 @@ fn bounds_follow_the_original_contract() {
     assert!(!is_theme_id(&"a".repeat(65)));
     assert!(is_weight_offset(-70) && is_weight_offset(0) && is_weight_offset(130));
     assert!(!is_weight_offset(-80) && !is_weight_offset(140) && !is_weight_offset(5));
+    assert!(LineWidth::is_valid(40) && LineWidth::is_valid(240));
+    assert!(!LineWidth::is_valid(39) && !LineWidth::is_valid(241));
     assert!(is_font_family_name("JetBrains Mono"));
     assert!(!is_font_family_name("a;b") && !is_font_family_name("tab\there"));
     assert!(!is_font_family_name(&"x".repeat(FONT_FAMILY_NAME_MAX + 1)));
