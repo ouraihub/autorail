@@ -15,6 +15,7 @@ A Cargo workspace of single-purpose crates. `core` holds the contracts; service 
 - `ui`: visual tokens taken from the original ThinkRail themes, bundled fonts and stateless components. No services.
 - `observability`: the tracing subscriber, daily Beijing-time log files, the runtime log level, the per-action `op{id at}` span and the bounded tail the 后台日志 page reads.
 - `app`: composition root and the GPUI panels. Panels talk to services only through `AppState` and background jobs; `state::run` opens one `op` span per action.
+- The app consumes LumaKit's `lumakit-model-picker` through a path dependency. The shared crate depends only on GPUI Kit and reads the installed host theme; it owns the bottom-composer model pill, grouped search popover and discrete effort slider, not routing, engine calls or persistence. `panels/chat/model_picker.rs` adapts opaque provider/route/model identities and supported efforts to existing `AgentSession`/`ModelPrefService` contracts. The former header model/effort dropdowns are removed rather than retained as a duplicate path.
 
 Service crates never depend on each other, except `host-tools` → `plan-review` for the shared plan operations. Engine adapters never call each other. Design detail, decisions and the acceptance matrix live in `docs/design/native-multi-agent`.
 

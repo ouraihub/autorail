@@ -4521,6 +4521,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumakit-model-picker"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+]
+
+[[package]]
 name = "lyon"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7934,6 +7941,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "gpui-kit",
+ "lumakit-model-picker",
  "serde_json",
  "tempfile",
  "thinkrail-agents",

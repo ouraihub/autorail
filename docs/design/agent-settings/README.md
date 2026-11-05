@@ -20,4 +20,4 @@
 | `crates/settings-store`（新） | Turso 0.8.3 数据库：提供方、端点、模型、多密钥、偏好、MCP |
 | `crates/routing`（新） | 路由解析与签名、回环网关（hyper + tokio + reqwest + rustls/ring）、探测 |
 | `crates/agents` | pi 扩展、OMP 扩展与覆盖层、DSH patch 与 `mcpServers` 的投影；运行中切换模型 |
-| `crates/app` | 设置对话框改为左侧导航 + 四个页面；聊天启动前路由、配置变化后重启、头部切换模型 |
+| `crates/app` | 设置对话框左侧导航与页面；聊天启动前路由、配置变化后重启；底部输入工具栏接入 LumaKit 独立模型／力度选择器，选择器向上展开 |

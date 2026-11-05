@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 gpui-kit.workspace = true
+lumakit-model-picker = { path = "../../../../../docs/AI申请/AI安装配置教程/ai/desk-dev/LumaKit/crates/lumakit-model-picker" }
 thinkrail-core.workspace = true
 thinkrail-workspace.workspace = true
 thinkrail-plan-review.workspace = true

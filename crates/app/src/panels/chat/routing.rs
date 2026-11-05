@@ -136,19 +136,36 @@ impl ChatPanel {
         let Some(backend) = chat.binding.as_ref().map(|b| b.backend) else {
             return;
         };
+        if !self.model_picker.begin_refresh(id) {
+            return;
+        }
+        let prefs = self.services(cx).prefs;
+        let providers = self.services(cx).providers;
         let router = self.services(cx).router;
         let id = id.clone();
         run(
             cx,
-            move || router.catalog(backend),
-            move |this, result, cx| match result {
-                Ok(catalog) => {
-                    if let Some(chat) = this.chats.get_mut(&id) {
-                        chat.catalog = catalog;
-                        cx.notify();
+            move || {
+                Ok((
+                    router.catalog(backend)?,
+                    prefs.prefs()?,
+                    providers.providers()?,
+                ))
+            },
+            move |this, result, cx| {
+                match result {
+                    Ok((catalog, prefs, providers)) => {
+                        this.model_picker.finish_refresh(&id, prefs, &providers);
+                        if let Some(chat) = this.chats.get_mut(&id) {
+                            chat.catalog = catalog;
+                        }
+                    }
+                    Err(error) => {
+                        this.model_picker.refresh_failed(&id, &error);
+                        this.report(&error, cx);
                     }
                 }
-                Err(error) => this.report(&error, cx),
+                cx.notify();
             },
         );
     }
@@ -176,14 +193,25 @@ impl ChatPanel {
         {
             return false;
         }
-        let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
+        if effort.is_some_and(|level| !choice.model.efforts.contains(&level)) {
+            self.report(
+                &thinkrail_core::Error::invalid("模型不支持指定推理强度"),
+                cx,
+            );
+            return false;
+        }
+        if !self.model_picker.begin_switch(&id) {
+            return false;
+        }
         run(
             cx,
             move || session.set_model(&choice.route, &choice.model.id, effort),
-            |this, result, cx| {
+            move |this, result, cx| {
+                this.model_picker.finish_switch(&id, result.as_ref().err());
                 if let Err(error) = result {
                     this.report(&error, cx);
                 }
+                cx.notify();
             },
         );
         true

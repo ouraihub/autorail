@@ -79,3 +79,7 @@ git read-tree HEAD; git checkout-index -f -a
 应用安装包不带 Agent 引擎。打开“设置 → 编码搭档”：已在 `PATH` 上的 `pi` / `omp` / `dsh` 会被检测到并标“系统”；没装的点“安装”，应用下载固定版本的 Node v24.22.2 或 Bun 1.4.4（校验 SHA-256），再把 pi 1.4.0、OMP 18.14.2、DSH 0.2.1-rc.5 装到 `<data>/coding`，标“内置”。“设为默认”决定新聊天用哪个引擎；新建项目或新建聊天时没装引擎、没设默认，界面会给出引导按钮直接打开这一页。引擎使用自己的默认配置目录（pi `~/.pi/agent`、OMP `~/.omp/agent`、DSH `~/.dsh`）。中转地址、模型和 API 密钥在“模型服务”中配置；每个引擎用哪个服务商在“编码搭档”里选，也可以选“{引擎} 官方”继续用引擎原有的模型配置。
 
 模型、提供方、密钥、MCP、默认 Agent 和聊天绑定存在 `<exe>/data/thinkrail.db`；显式 `--data-dir <目录>` 时数据库在该目录。项目与日志默认位于 `%USERPROFILE%/.autorail`，不读取或自动迁移 `.thinkrail`、`.thinkrail-native` 的数据；旧开发版的 `agent-profiles.json` 不再读取，旧版本号的 `thinkrail.db` 需要删除后重建。API 密钥按用户选择明文存储，复制/显示才取出；请保护数据库文件。所有项目共用 OMP 的默认配置目录，MCP 集合以最后启动的项目为准。
+
+模型选择器使用本机检出的 LumaKit `crates/lumakit-model-picker` 路径依赖（见 `crates/app/Cargo.toml`），不依赖 LumaKit 的 AI／数据库／设计系统。移动检出目录时同步调整该路径。入口位于聊天输入框下方，浮层向上展开；顶部不再保留模型和力度的重复下拉。图标为原 ThinkRail 使用的 Remix 4.9.0 SVG，许可保存在共享 crate 的 `LICENSE-REMIX`。
+
+2026-11-05 验证：workspace 280 项通过，原有 16 项下载／外部引擎测试保持 ignored；fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、真实 pi 会话中操作了分组、附加 high 的搜索、力度点击／拖动／键盘、默认值存储、重置 off、刷新和 Esc。未发送模型请求，不冒充上游回答验证。

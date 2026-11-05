@@ -5,6 +5,7 @@
 mod commands;
 mod engine;
 mod interaction;
+mod model_picker;
 mod plan;
 mod projection;
 mod routing;
@@ -145,6 +146,7 @@ pub struct ChatPanel {
     picks: HashMap<String, Vec<String>>,
     scroll: ScrollHandle,
     slash: slash::SlashMenu,
+    model_picker: model_picker::ModelPicker,
     /// Readiness guidance shown in place of the empty state when a new chat could not start.
     guide: Option<Readiness>,
     _subscriptions: Vec<Subscription>,
@@ -184,6 +186,7 @@ impl ChatPanel {
                 },
             ),
         ];
+        let model_picker = Self::new_model_picker(window, cx);
         let mut panel = Self {
             state,
             sink,
@@ -198,6 +201,7 @@ impl ChatPanel {
             scroll: ScrollHandle::new(),
             guide: None,
             slash: slash::SlashMenu::default(),
+            model_picker,
             _subscriptions: subscriptions,
         };
         panel.sync_workspace(cx);

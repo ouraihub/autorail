@@ -7,12 +7,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Window,
     assets::IconName,
     base::{h_flex, v_flex},
-    component::{
-        Disableable as _,
-        button::{Button, ButtonVariants as _},
-        input::Textarea,
-        menu::{DropdownMenu as _, PopupMenuItem},
-    },
+    component::input::Textarea,
     div,
     prelude::FluentBuilder as _,
     px,
@@ -62,11 +57,12 @@ impl ChatPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.sync_model_picker(id, cx);
         let Some(chat) = self.chats.get(id) else {
             return empty(s::NO_CHATS, &r);
         };
         let phase = chat.phase();
-        let header = self.header(chat, phase, r, cx).into_any_element();
+        let header = self.header(chat, phase, r).into_any_element();
         let snapshot = chat.snapshot.clone();
         let (starting, blocked, bound) = (
             chat.starting || chat.closing,
@@ -181,17 +177,17 @@ impl ChatPanel {
                     .border_color(r.control_border_default)
                     .bg(r.control_bg)
                     .child(textarea)
-                    .child(h_flex().justify_end().child(action)),
+                    .child(
+                        h_flex()
+                            .gap(space::S8)
+                            .child(self.model_picker.view())
+                            .child(div().flex_1())
+                            .child(action),
+                    ),
             )
             .children(menu)
     }
-    fn header(
-        &self,
-        chat: &Chat,
-        phase: SessionPhase,
-        r: Roles,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn header(&self, chat: &Chat, phase: SessionPhase, r: Roles) -> AnyElement {
         let backend = chat
             .binding
             .as_ref()
@@ -201,92 +197,6 @@ impl ChatPanel {
             BackendKind::Dsh => format!("{} · {}", b.label(), s::PRERELEASE),
             BackendKind::Pi | BackendKind::Omp => b.label().to_owned(),
         });
-        let current = chat.snapshot.as_ref().and_then(|s| s.model.as_ref());
-        let current_label = current.map_or_else(
-            || s::NO_MODEL.to_owned(),
-            |m| {
-                m.provider
-                    .as_ref()
-                    .map_or_else(|| m.id.clone(), |p| format!("{p}/{}", m.id))
-            },
-        );
-        let current_choice = current.and_then(|model| {
-            chat.catalog.iter().find(|choice| {
-                choice.route == model.provider.as_deref().unwrap_or_default()
-                    && choice.model.id == model.id
-            })
-        });
-        let current_effort = current.and_then(|model| model.effort);
-        let selectable = chat
-            .snapshot
-            .as_ref()
-            .is_some_and(|s| s.capabilities.model_switch)
-            && chat.live().is_some()
-            && !chat.closing
-            && phase == SessionPhase::Idle;
-        let Some(id) = chat.binding.as_ref().map(|b| b.chat_id.clone()) else {
-            return empty(s::NO_MODEL, &r);
-        };
-        let choices = chat.catalog.clone();
-        let efforts = current_choice
-            .map(|choice| choice.model.efforts.clone())
-            .unwrap_or_default();
-        let model_entity = cx.entity();
-        let effort_entity = cx.entity();
-        let model_id = id.clone();
-        let effort_id = id;
-        let model_menu = Button::new("chat-model")
-            .ghost()
-            .h(size::HEADER_CONTROL)
-            .label(current_label)
-            .icon(IconName::ChevronDown)
-            .disabled(!selectable)
-            .dropdown_menu(move |menu, _, _| {
-                choices.iter().cloned().fold(menu, |menu, choice| {
-                    let id = model_id.clone();
-                    let effort = choice
-                        .model
-                        .efforts
-                        .iter()
-                        .copied()
-                        .find(|effort| Some(*effort) == current_effort)
-                        .or_else(|| choice.model.efforts.first().copied());
-                    let model_entity = model_entity.clone();
-                    menu.item(
-                        PopupMenuItem::new(format!(
-                            "{} · {}",
-                            choice.provider_name, choice.model.name
-                        ))
-                        .on_click(move |_, _, cx| {
-                            model_entity.update(cx, |this, cx| {
-                                this.set_model(id.clone(), choice.clone(), effort, cx)
-                            });
-                        }),
-                    )
-                })
-            });
-        let effort_menu = Button::new("chat-effort")
-            .ghost()
-            .h(size::HEADER_CONTROL)
-            .label(
-                current_effort
-                    .map(s::effort_label)
-                    .unwrap_or(s::EFFORT_DEFAULT),
-            )
-            .icon(IconName::ChevronDown)
-            .disabled(!selectable || efforts.is_empty())
-            .dropdown_menu(move |menu, _, _| {
-                efforts.iter().copied().fold(menu, |menu, effort| {
-                    let id = effort_id.clone();
-                    let effort_entity = effort_entity.clone();
-                    menu.item(PopupMenuItem::new(s::effort_label(effort)).on_click(
-                        move |_, _, cx| {
-                            effort_entity
-                                .update(cx, |this, cx| this.set_effort(id.clone(), effort, cx));
-                        },
-                    ))
-                })
-            });
         let (status, phase_label) = match phase {
             SessionPhase::Idle => (Status::Success, s::PHASE_IDLE),
             SessionPhase::Running => (Status::Info, s::PHASE_RUNNING),
@@ -301,14 +211,6 @@ impl ChatPanel {
             .border_b_1()
             .border_color(r.border_muted)
             .children(backend_label.map(|b| label(text::LABEL_PILL, b).text_color(r.primary)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .child(model_menu),
-            )
-            .child(effort_menu)
             .child(StatusDot::new(status).label(phase_label))
             .into_any_element()
     }

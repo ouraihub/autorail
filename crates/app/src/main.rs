@@ -100,7 +100,7 @@ fn main() {
     let app_prefs = services.app_prefs.clone();
     let data_dir = args.data_dir.clone();
     gpui_kit::application()
-        .with_assets(UiAssets)
+        .with_assets(lumakit_model_picker::PickerAssets(UiAssets))
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx);

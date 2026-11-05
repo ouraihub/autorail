@@ -8,7 +8,6 @@ pub const STARTING: &str = "正在启动 Agent…";
 pub const CLOSED_HINT: &str = "Agent 进程未运行；发送消息时会恢复这个会话。";
 pub const TRUNCATED: &str = "较早的消息未在此显示（Agent 仍保留完整历史）。";
 pub const PRERELEASE: &str = "预发布";
-pub const NO_MODEL: &str = "模型未知";
 pub const PLAN: &str = "TODO 列表";
 
 pub const PHASE_IDLE: &str = "空闲";
@@ -33,7 +32,6 @@ pub const CANCEL: &str = "取消";
 pub const PERMISSION: &str = "请求运行工具";
 pub const QUESTION: &str = "Agent 提问";
 pub const OTHER: &str = "其他（自行填写）";
-pub const EFFORT_DEFAULT: &str = "力度";
 
 pub const CMD_COMPACT: &str = "手动压缩上下文 · 可选指令";
 pub const CMD_NAME: &str = "重命名此会话 · 需要填写标题";
@@ -58,16 +56,4 @@ pub fn model_many(candidates: &[String]) -> String {
 
 pub fn effort_unsupported(effort: &str) -> String {
     format!("这个模型不支持力度“{effort}”")
-}
-
-pub fn effort_label(level: thinkrail_core::ThinkingLevel) -> &'static str {
-    match level {
-        thinkrail_core::ThinkingLevel::Off => "关闭",
-        thinkrail_core::ThinkingLevel::Minimal => "最小",
-        thinkrail_core::ThinkingLevel::Low => "低",
-        thinkrail_core::ThinkingLevel::Medium => "中",
-        thinkrail_core::ThinkingLevel::High => "高",
-        thinkrail_core::ThinkingLevel::Xhigh => "极高",
-        thinkrail_core::ThinkingLevel::Max => "最大",
-    }
 }
