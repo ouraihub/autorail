@@ -13,6 +13,7 @@ mod session;
 mod slash;
 mod tabs;
 mod transcript;
+mod usage;
 mod view;
 
 use std::{
@@ -49,6 +50,7 @@ struct Chat {
     binding: Option<ChatBinding>,
     session: Option<Arc<dyn AgentSession>>,
     snapshot: Option<SessionSnapshot>,
+    usage: usage::Usage,
     routing_signature: Option<String>,
     catalog: Vec<ModelChoice>,
     restart_pending: bool,
@@ -147,6 +149,7 @@ pub struct ChatPanel {
     scroll: ScrollHandle,
     slash: slash::SlashMenu,
     model_picker: model_picker::ModelPicker,
+    usage_view: Entity<lumakit_usage_status::ContextStatusView>,
     /// Readiness guidance shown in place of the empty state when a new chat could not start.
     guide: Option<Readiness>,
     _subscriptions: Vec<Subscription>,
@@ -187,6 +190,7 @@ impl ChatPanel {
             ),
         ];
         let model_picker = Self::new_model_picker(window, cx);
+        let usage_view = cx.new(|cx| lumakit_usage_status::ContextStatusView::new(window, cx));
         let mut panel = Self {
             state,
             sink,
@@ -202,6 +206,7 @@ impl ChatPanel {
             guide: None,
             slash: slash::SlashMenu::default(),
             model_picker,
+            usage_view,
             _subscriptions: subscriptions,
         };
         panel.sync_workspace(cx);

@@ -157,6 +157,7 @@ impl ChatPanel {
                     Ok((catalog, prefs, providers)) => {
                         this.model_picker.finish_refresh(&id, prefs, &providers);
                         if let Some(chat) = this.chats.get_mut(&id) {
+                            chat.usage.set_catalog(&catalog, &providers);
                             chat.catalog = catalog;
                         }
                     }
@@ -203,6 +204,9 @@ impl ChatPanel {
         if !self.model_picker.begin_switch(&id) {
             return false;
         }
+        if let Some(chat) = self.chats.get_mut(&id) {
+            chat.usage.invalidate();
+        }
         run(
             cx,
             move || session.set_model(&choice.route, &choice.model.id, effort),
@@ -212,6 +216,7 @@ impl ChatPanel {
                     this.report(&error, cx);
                 }
                 cx.notify();
+                this.refresh_usage(&id, cx);
             },
         );
         true
@@ -252,13 +257,17 @@ impl ChatPanel {
         {
             return false;
         }
+        if let Some(chat) = self.chats.get_mut(&id) {
+            chat.usage.invalidate();
+        }
         run(
             cx,
             move || session.set_model(&provider, &model_id, Some(effort)),
-            |this, result, cx| {
+            move |this, result, cx| {
                 if let Err(error) = result {
                     this.report(&error, cx);
                 }
+                this.refresh_usage(&id, cx);
             },
         );
         true

@@ -248,6 +248,11 @@ pub struct StartSession {
 /// completion is reported through the [`SessionSink`].
 pub trait AgentSession: Send + Sync {
     fn snapshot(&self) -> SessionSnapshot;
+    /// Queries optional telemetry; may block on engine RPC. Call only from a background job.
+    /// Unsupported backends preserve unknown usage rather than manufacturing zero counters.
+    fn usage_snapshot(&self) -> Result<Option<crate::SessionUsage>> {
+        Ok(None)
+    }
     fn prompt(&self, text: &str) -> Result<()>;
     fn stop(&self) -> Result<()>;
     fn respond(&self, request_id: &str, answer: InteractionAnswer) -> Result<()>;

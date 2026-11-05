@@ -58,6 +58,7 @@ impl ChatPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.sync_model_picker(id, cx);
+        self.sync_usage_view(id, cx);
         let Some(chat) = self.chats.get(id) else {
             return empty(s::NO_CHATS, &r);
         };
@@ -179,10 +180,24 @@ impl ChatPanel {
                     .child(textarea)
                     .child(
                         h_flex()
+                            .flex_wrap()
                             .gap(space::S8)
                             .child(self.model_picker.view())
-                            .child(div().flex_1())
-                            .child(action),
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w(px(160.))
+                                    .gap(space::S4)
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w(px(0.))
+                                            .justify_end()
+                                            .overflow_hidden()
+                                            .child(self.usage_view.clone()),
+                                    )
+                                    .child(action),
+                            ),
                     ),
             )
             .children(menu)

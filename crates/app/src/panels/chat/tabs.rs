@@ -56,6 +56,7 @@ impl ChatPanel {
                                     binding: Some(binding),
                                     session: None,
                                     snapshot: None,
+                                    usage: super::usage::Usage::default(),
                                     routing_signature: None,
                                     catalog: Vec::new(),
                                     restart_pending: false,
@@ -103,6 +104,7 @@ impl ChatPanel {
                 binding: None,
                 session: None,
                 snapshot: None,
+                usage: super::usage::Usage::default(),
                 routing_signature: None,
                 catalog: Vec::new(),
                 restart_pending: false,
@@ -176,6 +178,7 @@ impl ChatPanel {
             return;
         };
         chat.starting = true;
+        chat.usage.invalidate();
         cx.notify();
         let input = StartInput {
             services: services.clone(),
@@ -220,6 +223,7 @@ impl ChatPanel {
                         }
                         this.refresh_catalog(&id, cx);
                         this.on_routing_changed(cx);
+                        this.refresh_usage(&id, cx);
                     }
                     Ok(Err(readiness)) => {
                         if chat.binding.is_some() {

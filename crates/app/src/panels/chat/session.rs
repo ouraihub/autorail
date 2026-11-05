@@ -48,16 +48,24 @@ impl ChatPanel {
         }
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
-        match chat.live().cloned() {
-            Some(session) => run(
-                cx,
-                move || session.prompt(&text),
-                |this, result, cx| {
-                    if let Err(error) = result {
-                        this.report(&error, cx);
-                    }
-                },
-            ),
+        let session = chat.live().cloned();
+        if let Some(chat) = self.chats.get_mut(&id) {
+            chat.usage.invalidate();
+        }
+        match session {
+            Some(session) => {
+                let id = id.clone();
+                run(
+                    cx,
+                    move || session.prompt(&text),
+                    move |this, result, cx| {
+                        if let Err(error) = result {
+                            this.report(&error, cx);
+                        }
+                        this.refresh_usage(&id, cx);
+                    },
+                );
+            }
             None => self.start(id, Some(text), cx),
         }
     }
@@ -80,7 +88,23 @@ impl ChatPanel {
             };
         match submit {
             Submit::Compact { instructions } => {
-                run(cx, move || session.compact(instructions.as_deref()), report);
+                let id = id.clone();
+                if let Some(chat) = self.chats.get_mut(&id) {
+                    chat.usage.invalidate();
+                    chat.usage.compacting = true;
+                }
+                run(
+                    cx,
+                    move || session.compact(instructions.as_deref()),
+                    move |this, result, cx| {
+                        if let Some(chat) = this.chats.get_mut(&id) {
+                            chat.usage.compacting = false;
+                        }
+                        report(this, result, cx);
+                        this.refresh_usage(&id, cx);
+                        cx.notify();
+                    },
+                );
                 true
             }
             Submit::Name { title } => {
@@ -189,12 +213,27 @@ impl ChatPanel {
             debug!(chat = %id, "event for an unknown chat");
             return;
         };
+        let previous_phase = chat.phase();
+        let previous_model = chat.snapshot.as_ref().and_then(|s| s.model.clone());
         if projection::apply(&mut chat.snapshot, event) {
+            let phase = chat.phase();
+            let model_changed =
+                chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) != previous_model.as_ref();
+            if model_changed
+                || (previous_phase == SessionPhase::Idle && phase != SessionPhase::Idle)
+            {
+                chat.usage.invalidate();
+            }
+            let refresh_usage =
+                phase == SessionPhase::Idle && (previous_phase != phase || model_changed);
             if chat.restart_pending && chat.phase() == SessionPhase::Idle {
                 chat.restart_pending = false;
                 chat.closing = true;
                 let session = chat.session.take();
                 dispose_engine(&services, id.clone(), session, false, cx);
+            }
+            if refresh_usage {
+                self.refresh_usage(&id, cx);
             }
             if self.active.as_ref() == Some(&id) {
                 self.scroll.scroll_to_bottom();

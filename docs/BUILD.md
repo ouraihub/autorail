@@ -83,3 +83,5 @@ git read-tree HEAD; git checkout-index -f -a
 模型选择器使用本机检出的 LumaKit `crates/lumakit-model-picker` 路径依赖（见 `crates/app/Cargo.toml`），不依赖 LumaKit 的 AI／数据库／设计系统。移动检出目录时同步调整该路径。入口位于聊天输入框下方，浮层向上展开；顶部不再保留模型和力度的重复下拉。图标为原 ThinkRail 使用的 Remix 4.9.0 SVG，许可保存在共享 crate 的 `LICENSE-REMIX`。
 
 2026-11-05 验证：workspace 280 项通过，原有 16 项下载／外部引擎测试保持 ignored；fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、真实 pi 会话中操作了分组、附加 high 的搜索、力度点击／拖动／键盘、默认值存储、重置 off、刷新和 Esc。未发送模型请求，不冒充上游回答验证。
+
+上下文状态依赖同一 LumaKit 检出中的 `lumakit-usage-status`，位于发送按钮左侧。Pi/OMP 在后台查询原生 `get_state`／`get_session_stats`，不从截断的 UI 文本推算；DSH 无报告时保持未知。Native 没有宿主模型价格字段，因此只显示 token，不套用目录参考价；若未来引擎提供用户配置价格快照，才显示金额。Windows 实窗已用真实 pi、OMP 连接隔离回环 HTTP 验证输入 1000（含缓存读取 200）、输出 50、累计 1050；未连接收费服务。共享系统图标保留 macOS/Linux 映射但未做该平台运行验收。

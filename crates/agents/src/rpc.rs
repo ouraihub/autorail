@@ -14,6 +14,7 @@ use crate::{
 pub(crate) mod commands;
 mod dialogs;
 mod model;
+pub(crate) mod usage;
 
 pub(crate) use dialogs::Dialogs;
 pub(crate) use model::{model, model_event, switch_model, thinking_level};

@@ -20,6 +20,7 @@ mod provider;
 mod provider_edit;
 mod routing;
 mod terminal;
+mod usage;
 mod workspace;
 
 pub use agent::*;
@@ -39,4 +40,5 @@ pub use provider::*;
 pub use provider_edit::*;
 pub use routing::*;
 pub use terminal::*;
+pub use usage::*;
 pub use workspace::*;

@@ -61,6 +61,7 @@ fn chat(id: &ChatId, session_name: Option<&str>) -> Chat {
             session_name: session_name.map(str::to_owned),
             revision: 1,
         }),
+        usage: super::super::usage::Usage::default(),
         routing_signature: None,
         catalog: Vec::new(),
         restart_pending: false,

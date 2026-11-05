@@ -232,6 +232,15 @@ impl AgentSession for PiSession {
         self.live.state.lock().snapshot()
     }
 
+    fn usage_snapshot(&self) -> Result<Option<thinkrail_core::SessionUsage>> {
+        self.live.ensure_idle()?;
+        let state = self.call("get_state", json!({}), COMMAND)?;
+        let stats = self.call("get_session_stats", json!({}), COMMAND)?;
+        let usage = rpc::usage::parse(&state, &stats);
+        self.live.ensure_idle()?;
+        Ok(Some(usage))
+    }
+
     fn prompt(&self, text: &str) -> Result<()> {
         self.live.ensure_idle()?;
         self.live.state.lock().set_running(true);
