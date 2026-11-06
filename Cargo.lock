@@ -4523,6 +4523,7 @@ dependencies = [
 [[package]]
 name = "lumakit-model-picker"
 version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=7c46b2b9fb21c9d0d8889775d599a5d10d6499d5#7c46b2b9fb21c9d0d8889775d599a5d10d6499d5"
 dependencies = [
  "gpui-kit",
 ]
@@ -4530,6 +4531,7 @@ dependencies = [
 [[package]]
 name = "lumakit-usage-status"
 version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=7c46b2b9fb21c9d0d8889775d599a5d10d6499d5#7c46b2b9fb21c9d0d8889775d599a5d10d6499d5"
 dependencies = [
  "gpui-kit",
 ]
