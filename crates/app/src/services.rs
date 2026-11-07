@@ -160,7 +160,7 @@ impl Services {
 
 pub struct Channels {
     pub sessions: async_channel::Receiver<SessionEvent>,
-    pub reviews: async_channel::Receiver<ReviewEvent>,
+    pub reviews: async_channel::Receiver<(tracing::Span, ReviewEvent)>,
     pub session_sink: Arc<dyn SessionSink>,
     pub terminals: async_channel::Receiver<TerminalEvent>,
     pub plans: async_channel::Receiver<PlanScope>,
@@ -184,14 +184,38 @@ impl HostToolHandler for NotifyingTools {
         arguments: Value,
     ) -> thinkrail_core::Result<HostToolResult> {
         let started = std::time::Instant::now();
+        let context = thinkrail_observability::TraceContext::root("host_tool.call");
+        let (trace, span) = match context {
+            Ok((trace, span)) => (Some(trace), span),
+            Err(_) => {
+                warn!("host_tool.trace_unavailable");
+                (None, tracing::info_span!("host_tool"))
+            }
+        };
+        let call_span = tracing::info_span!(parent: &span, "host_tool", chat_id = %scope.chat,
+            workspace_id = %scope.workspace, tool = name);
+        let _entered = call_span.enter();
+        let operation = trace
+            .as_ref()
+            .map(|trace| thinkrail_observability::operation(trace, "host_tool.call", "host_tool"));
         let result = self.inner.call(scope, options, name, arguments);
         let ms = started.elapsed().as_millis();
         match &result {
             Ok(reply) => {
-                info!(chat = %scope.chat, tool = name, ms, is_error = reply.is_error, "host tool called")
+                if let Some(operation) = operation {
+                    if reply.is_error {
+                        operation.fail("host_tool_error");
+                    } else {
+                        operation.finish("ok");
+                    }
+                }
+                info!(ms, is_error = reply.is_error, "host_tool.called");
             }
             Err(error) => {
-                warn!(chat = %scope.chat, tool = name, ms, code = error.code(), "host tool failed")
+                if let Some(operation) = operation {
+                    operation.fail(error.code());
+                }
+                warn!(ms, code = error.code(), "host_tool.failed");
             }
         }
         let _ = self.changed.try_send(scope.clone());

@@ -3,20 +3,23 @@
 
 use std::{
     ffi::OsString,
-    io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdout, Command, Stdio},
+    process::{ChildStdout, Command, Stdio},
     sync::{Arc, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
 use thinkrail_core::{EngineRouting, Error, ErrorKind, Launch, Result};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 mod redaction;
+mod streams;
+
+use crate::trace::SessionTrace;
+use streams::{read_stderr, wait_child, write_stdin};
 
 pub(crate) use redaction::redact;
 
@@ -165,6 +168,7 @@ pub(crate) struct Process {
     life: Arc<(Mutex<Life>, Condvar)>,
     stderr: Arc<Mutex<Vec<u8>>>,
     frame_limit: usize,
+    pub(crate) trace: Arc<SessionTrace>,
 }
 
 impl Process {
@@ -172,7 +176,11 @@ impl Process {
     pub(crate) fn spawn(
         mut command: Command,
         frame_limit: usize,
+        trace: Arc<SessionTrace>,
     ) -> Result<(Arc<Self>, ChildStdout)> {
+        let _entered = trace.enter("agent.process.start");
+        info!("agent.process.start_requested");
+        let started = Instant::now();
         let mut child = command.spawn().map_err(|error| {
             Error::new(
                 ErrorKind::BackendUnavailable,
@@ -195,19 +203,26 @@ impl Process {
             life: Arc::new((Mutex::new(Life::default()), Condvar::new())),
             stderr: Arc::new(Mutex::new(Vec::new())),
             frame_limit,
+            trace: trace.clone(),
         });
         let (sender, receiver) = mpsc::channel::<Vec<u8>>();
         *process.stdin.lock() = Some(sender);
-        let started = spawn_thread("agent-stdin", move || write_stdin(stdin, receiver))
-            .and_then(|()| {
-                let (tail, life) = (process.stderr.clone(), process.life.clone());
-                spawn_thread("agent-stderr", move || read_stderr(stderr, &tail, &life))
+        let started_threads = spawn_thread("agent.stdin", trace.clone(), move || {
+            write_stdin(stdin, receiver)
+        })
+        .and_then(|()| {
+            let (tail, life) = (process.stderr.clone(), process.life.clone());
+            spawn_thread("agent.stderr", trace.clone(), move || {
+                read_stderr(stderr, &tail, &life)
             })
-            .and_then(|()| {
-                let life = process.life.clone();
-                spawn_thread("agent-wait", move || wait_child(child, &life))
-            });
-        if let Err(error) = started {
+        })
+        .and_then(|()| {
+            let life = process.life.clone();
+            spawn_thread("agent.wait", trace.clone(), move || {
+                wait_child(child, &life, started)
+            })
+        });
+        if let Err(error) = started_threads {
             terminate(pid);
             return Err(error);
         }
@@ -216,6 +231,16 @@ impl Process {
     }
 
     pub(crate) fn send(&self, frame: &Value) -> Result<()> {
+        let _entered = self.trace.enter("agent.protocol.send");
+        info!(
+            request_kind = frame["type"]
+                .as_str()
+                .filter(|kind| kind.len() <= 64)
+                .or(frame["method"].as_str().filter(|kind| kind.len() <= 64))
+                .unwrap_or("reply"),
+            request_id = frame["id"].as_str().filter(|id| id.len() <= 128),
+            "agent.protocol.send"
+        );
         let mut bytes = serde_json::to_vec(frame)
             .map_err(|e| Error::protocol(format!("无法编码发送帧：{e}")))?;
         bytes.push(b'\n');
@@ -233,6 +258,7 @@ impl Process {
 
     /// Ends stdin once queued frames are written; engines treat EOF as a request to exit.
     pub(crate) fn close_stdin(&self) {
+        let _entered = self.trace.enter("agent.process.stdin_close");
         self.stdin.lock().take();
     }
 
@@ -247,6 +273,7 @@ impl Process {
     /// Terminates the whole process tree by PID. On Windows the waiter keeps the child handle open
     /// until it records the exit under this lock, so the PID cannot have been reused here.
     pub(crate) fn kill_tree(&self) {
+        let _entered = self.trace.enter("agent.process.terminate");
         let life = self.life.0.lock();
         if !life.exited {
             terminate(self.pid);
@@ -277,10 +304,17 @@ impl Process {
     }
 }
 
-fn spawn_thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<()> {
+fn spawn_thread(
+    operation: &'static str,
+    trace: Arc<SessionTrace>,
+    body: impl FnOnce() + Send + 'static,
+) -> Result<()> {
     thread::Builder::new()
-        .name(name.into())
-        .spawn(body)
+        .name(operation.into())
+        .spawn(move || {
+            let _entered = trace.enter(operation);
+            body();
+        })
         .map(drop)
         .map_err(|error| {
             Error::new(
@@ -288,51 +322,6 @@ fn spawn_thread(name: &str, body: impl FnOnce() + Send + 'static) -> Result<()> 
                 format!("无法创建线程：{error}"),
             )
         })
-}
-
-fn write_stdin(mut stdin: impl Write, receiver: mpsc::Receiver<Vec<u8>>) {
-    for bytes in receiver {
-        if let Err(error) = stdin.write_all(&bytes).and_then(|()| stdin.flush()) {
-            debug!(%error, "agent stdin closed");
-            return;
-        }
-    }
-}
-
-fn read_stderr(mut stderr: impl Read, tail: &Mutex<Vec<u8>>, life: &(Mutex<Life>, Condvar)) {
-    let mut buffer = [0; 4096];
-    loop {
-        match stderr.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
-            Ok(count) => {
-                let mut tail = tail.lock();
-                tail.extend_from_slice(&buffer[..count]);
-                if tail.len() > STDERR_TAIL {
-                    let excess = tail.len() - STDERR_TAIL;
-                    tail.drain(..excess);
-                }
-            }
-        }
-    }
-    life.0.lock().stderr_closed = true;
-    life.1.notify_all();
-}
-
-fn wait_child(mut child: Child, life: &(Mutex<Life>, Condvar)) {
-    let code = match child.wait() {
-        Ok(status) => status.code(),
-        Err(error) => {
-            warn!(%error, "cannot wait for agent process");
-            None
-        }
-    };
-    let mut state = life.0.lock();
-    state.exited = true;
-    state.code = code;
-    drop(child);
-    drop(state);
-    life.1.notify_all();
-    info!(code, "agent process exited");
 }
 
 fn terminate(pid: u32) {

@@ -8,7 +8,6 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -26,13 +25,13 @@ use crate::{
     process::{self, Process, redact},
     projection::{Identity, Projection},
 };
+mod requests;
+use requests::Waiter;
 
 pub(crate) const HANDSHAKE: Duration = Duration::from_secs(30);
 pub(crate) const COMMAND: Duration = Duration::from_secs(30);
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 const ENGINE_MESSAGE: usize = 2 * 1024;
-
-type Waiter = Box<dyn FnOnce(Result<Value>) + Send>;
 
 pub(crate) fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -50,9 +49,10 @@ pub(crate) struct Live {
 impl Live {
     pub(crate) fn new(
         process: Arc<Process>,
-        projection: Projection,
+        mut projection: Projection,
         backend: BackendKind,
     ) -> Arc<Self> {
+        projection.attach_trace(process.trace.clone());
         Arc::new(Self {
             process,
             state: Mutex::new(projection),
@@ -61,94 +61,6 @@ impl Live {
             disposing: AtomicBool::new(false),
             backend,
         })
-    }
-
-    /// Registers `waiter` for the reply keyed `key`. Waiters run on the reader thread, in frame
-    /// order, before the next frame is handled.
-    pub(crate) fn on_reply(&self, key: impl Into<String>, waiter: Waiter) -> Result<()> {
-        let mut pending = self.pending.lock();
-        if self.closed.load(Ordering::Acquire) {
-            return Err(closed());
-        }
-        pending.insert(key.into(), waiter);
-        Ok(())
-    }
-
-    pub(crate) fn expect(&self, key: impl Into<String>) -> Result<mpsc::Receiver<Result<Value>>> {
-        self.expect_then(key, |_| {})
-    }
-
-    /// Like [`Self::expect`], running `hook` on the reader thread when a successful reply arrives.
-    pub(crate) fn expect_then(
-        &self,
-        key: impl Into<String>,
-        hook: impl FnOnce(&Value) + Send + 'static,
-    ) -> Result<mpsc::Receiver<Result<Value>>> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.on_reply(
-            key,
-            Box::new(move |result| {
-                if let Ok(value) = &result {
-                    hook(value);
-                }
-                if sender.send(result).is_err() {
-                    debug!("agent reply arrived after its waiter gave up");
-                }
-            }),
-        )?;
-        Ok(receiver)
-    }
-
-    pub(crate) fn wait(
-        &self,
-        key: &str,
-        receiver: &mpsc::Receiver<Result<Value>>,
-        timeout: Duration,
-    ) -> Result<Value> {
-        match receiver.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.pending.lock().remove(key);
-                Err(Error::timeout("Agent 没有在时限内响应"))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(closed()),
-        }
-    }
-
-    pub(crate) fn request(&self, key: String, frame: &Value, timeout: Duration) -> Result<Value> {
-        self.request_then(key, frame, timeout, |_| {})
-    }
-
-    pub(crate) fn request_then(
-        &self,
-        key: String,
-        frame: &Value,
-        timeout: Duration,
-        hook: impl FnOnce(&Value) + Send + 'static,
-    ) -> Result<Value> {
-        let receiver = self.expect_then(key.clone(), hook)?;
-        if let Err(error) = self.process.send(frame) {
-            self.pending.lock().remove(&key);
-            return Err(error);
-        }
-        self.wait(&key, &receiver, timeout)
-    }
-
-    /// Hands a reply to its waiter; gives the result back when nobody is waiting for `key`.
-    pub(crate) fn resolve(&self, key: &str, result: Result<Value>) -> Option<Result<Value>> {
-        let waiter = self.pending.lock().remove(key);
-        match waiter {
-            Some(waiter) => {
-                waiter(result);
-                None
-            }
-            None => Some(result),
-        }
-    }
-
-    /// Drops the waiter for `key` (its command never reached the engine).
-    pub(crate) fn forget(&self, key: &str) {
-        self.pending.lock().remove(key);
     }
 
     /// Fails with `SessionClosed` or `SessionBusy` unless a new prompt may start.
@@ -179,6 +91,7 @@ impl Live {
 
     /// Final state change: publish `Closed` and fail every waiter.
     pub(crate) fn close(&self, error: Option<SessionError>) {
+        let _entered = self.process.trace.enter("agent.session.close");
         self.state.lock().close(error);
         let waiters: Vec<Waiter> = {
             let mut pending = self.pending.lock();
@@ -186,12 +99,13 @@ impl Live {
             pending.drain().map(|(_, waiter)| waiter).collect()
         };
         for waiter in waiters {
-            waiter(Err(closed()));
+            waiter.close();
         }
     }
 
     /// Ends stdin, waits for a voluntary exit, then terminates the tree.
     pub(crate) fn shutdown(&self) {
+        let _entered = self.process.trace.enter("agent.session.dispose");
         self.disposing.store(true, Ordering::Release);
         self.process.close_stdin();
         if self.process.wait_exit(EXIT_GRACE).is_none() {
@@ -205,6 +119,7 @@ impl Live {
     /// Kills a session whose handshake failed and builds the start error, with the redacted
     /// stderr summary. `hint` replaces the generic message when stderr matches its needle.
     pub(crate) fn fail_start(&self, error: Error, hint: Option<(&str, &str)>) -> Error {
+        let _entered = self.process.trace.enter("agent.session.start_failed");
         self.disposing.store(true, Ordering::Release);
         self.process.kill_tree();
         self.process.wait_exit(EXIT_GRACE);
@@ -306,6 +221,8 @@ pub(crate) fn spawn_reader(
     thread::Builder::new()
         .name("agent-stdout".into())
         .spawn(move || {
+            let _entered = live.process.trace.enter("agent.stdout");
+            info!("agent.stdout.started");
             let mut reader = BufReader::with_capacity(64 * 1024, stdout);
             let failure = loop {
                 match framing::read_frame(&mut reader, limit) {
@@ -326,6 +243,7 @@ pub(crate) fn spawn_reader(
                     Err(error) => break Some(error),
                 }
             };
+            info!(is_error = failure.is_some(), "agent.stdout.closed");
             live.finish(failure);
         })
         .map(drop)

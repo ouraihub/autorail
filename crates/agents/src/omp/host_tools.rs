@@ -3,7 +3,7 @@
 use std::thread;
 
 use serde_json::{Value, json};
-use thinkrail_core::{Error, Result};
+use thinkrail_core::{Error, ErrorCode as _, Result};
 use tracing::debug;
 
 use super::OmpSession;
@@ -30,9 +30,11 @@ impl OmpSession {
         );
         let arguments = frame.get("arguments").cloned().unwrap_or_else(|| json!({}));
         let process = self.live.process.clone();
+        let trace = process.trace.clone();
         let spawned = thread::Builder::new()
             .name("omp-host-tool".into())
             .spawn(move || {
+                let _entered = trace.enter("agent.host_tool.call");
                 let reply = match handler.call(&scope, options, &name, arguments) {
                     Ok(result) => tool_result(&id, &result.text, result.is_error),
                     // The handler logs the failure with its chat and duration.
@@ -43,7 +45,7 @@ impl OmpSession {
                     return;
                 }
                 if let Err(error) = process.send(&reply) {
-                    debug!(%error, "host tool result not delivered");
+                    debug!(code = error.code(), "host tool result not delivered");
                 }
             });
         spawned

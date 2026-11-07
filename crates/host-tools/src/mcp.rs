@@ -6,7 +6,7 @@
 //! through (agent-settings 08 §5.5). A cancelled request gets no reply.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
     sync::{Arc, Mutex, PoisonError},
     thread,
@@ -14,6 +14,7 @@ use std::{
 
 use serde_json::{Value, json};
 use thinkrail_core::{HostToolResult, HostToolSpec};
+use thinkrail_observability::TraceContext;
 
 use crate::bridge::{self, BridgeClient};
 
@@ -184,8 +185,16 @@ pub(crate) fn serve<W: Write + Send + 'static>(
     output: W,
     backend: Arc<dyn Backend>,
 ) -> std::io::Result<()> {
+    let (trace, session_span) = match TraceContext::root("mcp.session") {
+        Ok((trace, span)) => (Some(trace), span),
+        Err(_) => {
+            tracing::warn!("mcp.trace.unavailable");
+            (None, tracing::Span::current())
+        }
+    };
+    let _session = session_span.enter();
     let output = Arc::new(Mutex::new(output));
-    let running: Arc<Mutex<HashSet<String>>> = Arc::default();
+    let running: Arc<Mutex<HashMap<String, tracing::Span>>> = Arc::default();
     let cancelled: Arc<Mutex<HashSet<String>>> = Arc::default();
     let mut workers = Vec::new();
     let write = |output: &Mutex<W>, value: &Value| -> std::io::Result<()> {
@@ -201,11 +210,14 @@ pub(crate) fn serve<W: Write + Send + 'static>(
             Frame::Ignore => {}
             Frame::Cancelled(id) => {
                 let key = id.to_string();
-                if running
+                let call_span = running
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .contains(&key)
-                {
+                    .get(&key)
+                    .cloned();
+                if let Some(span) = call_span {
+                    let _entered = span.enter();
+                    tracing::debug!("mcp.call.cancel_requested");
                     cancelled
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -219,10 +231,15 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                 arguments,
             } => {
                 let key = id.to_string();
+                let span = tracing::info_span!(parent: &session_span, "mcp.call",
+                    trace_id = trace.as_ref().map(TraceContext::trace_id),
+                    operation = "mcp.call", component = "host_tools");
                 running
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(key.clone());
+                    .insert(key.clone(), span.clone());
+                let trace = trace.clone();
+                let dispatch = tracing::dispatcher::get_default(Clone::clone);
                 let (backend, output, running, cancelled) = (
                     backend.clone(),
                     output.clone(),
@@ -233,6 +250,10 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                     thread::Builder::new()
                         .name("mcp-host-call".into())
                         .spawn(move || {
+                            let _dispatch = tracing::dispatcher::set_default(&dispatch);
+                            let _entered = span.enter();
+                            let child = trace.as_ref().map(|trace| trace.child("mcp.worker"));
+                            let _worker = child.as_ref().map(tracing::Span::enter);
                             let response = call_reply(&id, backend.call(&name, arguments));
                             running
                                 .lock()
@@ -242,6 +263,7 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                                 .lock()
                                 .unwrap_or_else(PoisonError::into_inner)
                                 .remove(&key);
+                            tracing::debug!(cancelled = withdrawn, "mcp.call.returned");
                             if !withdrawn {
                                 let mut out = output.lock().unwrap_or_else(PoisonError::into_inner);
                                 if let Err(error) = bridge::write_line(&mut *out, &response) {

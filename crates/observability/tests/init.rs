@@ -6,45 +6,92 @@
     reason = "integration test helpers fail loudly"
 )]
 
-use std::panic::Location;
+use std::{sync::mpsc, thread};
 
 use thinkrail_core::LogLevel;
-use thinkrail_observability::{init, op};
+use thinkrail_observability::{TraceContext, init, operation};
 
 #[test]
-fn an_operation_s_lines_carry_its_span_in_beijing_time_and_the_level_switches() {
+fn initialized_subscriber_correlates_threads_and_lifecycle_fields() {
     let data = tempfile::tempdir().unwrap();
     let handle = init(data.path()).unwrap();
-    let at = Location::caller();
-    let span = op(at);
-    span.in_scope(|| tracing::info!(chat = "c1", "inside"));
-    tracing::debug!(target: "thinkrail_agents::pi", "hidden at info");
     handle.set_level(LogLevel::Debug).unwrap();
-    tracing::debug!(target: "thinkrail_agents::pi", "shown at debug");
-    tracing::debug!(target: "turso_core::storage", "dependency internals stay hidden");
+    let (first, first_span) = TraceContext::root("test.first").unwrap();
+    let (second, second_span) = TraceContext::root("test.second").unwrap();
+    assert_ne!(first.trace_id(), second.trace_id());
+    let (sender, receiver) = mpsc::channel();
+
+    first_span.in_scope(|| {
+        tracing::info!(target: "thinkrail_test", "first root");
+        let guard = operation(&first, "test.channel", "thinkrail_test");
+        guard.fail("TEST_FAILURE");
+        let worker_context = first.clone();
+        let worker_span = first_span.clone();
+        let sender = sender.clone();
+        thread::spawn(move || {
+            let _entered = worker_span.enter();
+            let child = operation(&worker_context, "test.thread", "thinkrail_test");
+            tracing::info!(target: "thinkrail_test", trace_id = %worker_context.trace_id(), "thread first");
+            child.cancel("TEST_CANCEL");
+            sender.send(()).unwrap();
+        });
+    });
+    second_span.in_scope(|| {
+        let guard = operation(&second, "test.second", "thinkrail_test");
+        guard.finish("ok");
+        tracing::info!(target: "thinkrail_test", "second root");
+    });
+    receiver.recv().unwrap();
     let dir = handle.dir().to_owned();
-    drop(handle); // flushes the non-blocking writer
+    drop(handle);
 
     let entries = thinkrail_observability::tail(&dir, 100).unwrap();
-    let inside = entries
+    let first_entries: Vec<_> = entries
         .iter()
-        .find(|e| e.message.starts_with("inside"))
-        .unwrap();
-    assert!(inside.time.ends_with("+08:00"), "{}", inside.time);
-    assert!(inside.spans.starts_with("op{id="), "{}", inside.spans);
+        .filter(|entry| entry.trace_id.as_deref() == Some(first.trace_id()))
+        .collect();
+    let second_entries: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.trace_id.as_deref() == Some(second.trace_id()))
+        .collect();
     assert!(
-        inside
-            .spans
-            .contains(&format!("tests/init.rs:{}}}", at.line())),
-        "{}",
-        inside.spans
+        first_entries
+            .iter()
+            .any(|entry| entry.target == "thinkrail_test")
     );
-    assert_eq!(inside.target, "init");
-    assert_eq!(inside.message, "inside chat=\"c1\"");
-    assert!(!entries.iter().any(|e| e.message == "hidden at info"));
-    assert!(entries.iter().any(|e| e.message == "shown at debug"));
     assert!(
-        !entries.iter().any(|e| e.target.starts_with("turso")),
-        "debug raises only thinkrail crates"
+        second_entries
+            .iter()
+            .any(|entry| entry.target == "thinkrail_test")
+    );
+    assert!(
+        first_entries
+            .iter()
+            .any(|entry| entry.operation.as_deref() == Some("test.channel"))
+    );
+    assert!(
+        first_entries
+            .iter()
+            .any(|entry| entry.operation.as_deref() == Some("test.thread"))
+    );
+    assert!(
+        first_entries
+            .iter()
+            .any(|entry| entry.raw.contains("error_code=\"TEST_FAILURE\""))
+    );
+    assert!(
+        first_entries
+            .iter()
+            .any(|entry| entry.raw.contains("reason=\"TEST_CANCEL\""))
+    );
+    assert!(
+        second_entries
+            .iter()
+            .any(|entry| entry.operation.as_deref() == Some("test.second"))
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.message == "hidden at info")
     );
 }

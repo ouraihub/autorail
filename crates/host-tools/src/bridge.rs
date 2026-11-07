@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use thinkrail_core::{
     Error, ErrorCode, ErrorKind, HostToolHandler, HostToolOptions, PlanScope, Result,
 };
+use thinkrail_observability::TraceContext;
 use tracing::{debug, info, warn};
 
 /// Largest request or response line.
@@ -60,7 +61,33 @@ fn bridge_error(what: &str, error: impl std::fmt::Display) -> Error {
 }
 
 /// token → the chat it reaches and what that engine launch was offered.
-type Tokens = Arc<Mutex<HashMap<String, (PlanScope, HostToolOptions)>>>;
+type Tokens = Arc<Mutex<HashMap<String, BridgeSession>>>;
+
+#[derive(Clone)]
+struct BridgeSession {
+    scope: PlanScope,
+    options: HostToolOptions,
+    trace: Option<TraceContext>,
+    span: tracing::Span,
+    dispatch: tracing::Dispatch,
+}
+
+impl BridgeSession {
+    fn span(&self, operation: &'static str) -> tracing::Span {
+        let _entered = self.span.enter();
+        match &self.trace {
+            Some(trace) => {
+                let child = trace.child(operation);
+                if child.is_disabled() {
+                    self.span.clone()
+                } else {
+                    child
+                }
+            }
+            None => self.span.clone(),
+        }
+    }
+}
 
 /// The running pipe server. Dropping it does not stop the accept thread; it lives for the process.
 pub struct ToolBridge {
@@ -137,7 +164,26 @@ impl ToolBridge {
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        self.tokens.lock().insert(token.clone(), (scope, options));
+        let (trace, root) = match TraceContext::root("host_bridge.session") {
+            Ok((trace, span)) => (Some(trace), span),
+            Err(_) => {
+                warn!("host_bridge.trace.unavailable");
+                (None, tracing::Span::current())
+            }
+        };
+        let span = tracing::info_span!(parent: &root, "host_bridge.session",
+            trace_id = trace.as_ref().map(TraceContext::trace_id), component = "host_tools",
+            chat_id = %scope.chat, workspace_id = %scope.workspace);
+        self.tokens.lock().insert(
+            token.clone(),
+            BridgeSession {
+                scope,
+                options,
+                trace,
+                span,
+                dispatch: tracing::dispatcher::get_default(Clone::clone),
+            },
+        );
         token
     }
 
@@ -153,10 +199,13 @@ fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
         Ok(Some(token)) => tokens.lock().get(token.trim()).cloned(),
         _ => None,
     };
-    let Some((scope, options)) = entry else {
+    let Some(session) = entry else {
         warn!("host tool connection refused: unknown token");
         return;
     };
+    let _dispatch = tracing::dispatcher::set_default(&session.dispatch);
+    let _entered = session.span.enter();
+    let (scope, options) = (&session.scope, session.options);
     debug!(workspace = %scope.workspace, chat = %scope.chat, "host tool client connected");
     loop {
         let line = match read_line(&mut reader) {
@@ -168,10 +217,16 @@ fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
             }
         };
         // A revoked token ends the connection at the next request.
-        if !tokens.lock().values().any(|(s, _)| s == &scope) {
+        if !tokens
+            .lock()
+            .values()
+            .any(|session| &session.scope == scope)
+        {
             break;
         }
-        let reply = handle(&line, &scope, options, handler);
+        let span = session.span("host_bridge.request");
+        let _request = span.enter();
+        let reply = handle(&line, scope, options, handler);
         if let Err(error) = write_line(&mut writer, &reply) {
             debug!(%error, "host tool client went away");
             break;

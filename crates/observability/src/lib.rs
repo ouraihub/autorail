@@ -16,6 +16,7 @@ use tracing_subscriber::{
     util::SubscriberInitExt as _,
 };
 
+pub use lumakit_observability::{OperationGuard, TraceContext, operation};
 pub use op::{finish, op};
 pub use tail::{LogEntry, tail};
 
@@ -36,7 +37,7 @@ const BEIJING: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
 fn filter(level: LogLevel) -> EnvFilter {
     match level {
         LogLevel::Info => EnvFilter::new("info"),
-        LogLevel::Debug => EnvFilter::new("info,thinkrail=debug"),
+        LogLevel::Debug => EnvFilter::new("info,thinkrail=debug,lumakit_observability=debug"),
     }
 }
 

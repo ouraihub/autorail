@@ -24,8 +24,45 @@ fn a_line_inside_an_operation_keeps_its_span_target_and_fields_apart() {
     assert_eq!(entry.level, "INFO");
     assert_eq!(entry.spans, "op{id=42 at=panels/chat.rs:312}");
     assert_eq!(entry.target, "thinkrail_agents::pi");
+    assert_eq!(entry.trace_id, None);
+    assert_eq!(entry.operation, None);
     assert_eq!(entry.message, "agent session started chat=c1");
     assert_eq!(entry.raw, OP);
+}
+
+#[test]
+fn nested_structured_spans_keep_innermost_trace_fields_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let trace = "0123456789abcdef0123456789abcdef";
+    let line = format!(
+        "2026-11-01T15:26:55.669+08:00 DEBUG root{{trace_id=parent operation=ui.background}}: operation{{trace_id={trace} operation=host_tool.call event=entry}}: thinkrail_test: trace_id=message operation=faux"
+    );
+    fs::write(
+        dir.path().join("thinkrail-native.2026-11-01.log"),
+        format!("{line}\n"),
+    )
+    .unwrap();
+    let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
+    assert_eq!(entry.trace_id.as_deref(), Some(trace));
+    assert_eq!(entry.operation.as_deref(), Some("host_tool.call"));
+    assert_eq!(entry.message, "trace_id=message operation=faux");
+    assert_eq!(entry.raw, line);
+}
+
+#[test]
+fn plain_startup_text_does_not_fabricate_trace_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let line =
+        "2026-11-01T15:26:55.669+08:00  INFO thinkrail_test: startup trace_id=not-structured";
+    fs::write(
+        dir.path().join("thinkrail-native.2026-11-01.log"),
+        format!("{line}\n"),
+    )
+    .unwrap();
+    let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
+    assert_eq!(entry.trace_id, None);
+    assert_eq!(entry.operation, None);
+    assert_eq!(entry.raw, line);
 }
 
 #[test]

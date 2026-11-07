@@ -120,12 +120,14 @@ impl Workbench {
 
     fn pump_reviews(
         chat: &Entity<ChatPanel>,
-        events: async_channel::Receiver<thinkrail_core::ReviewEvent>,
+        events: async_channel::Receiver<(tracing::Span, thinkrail_core::ReviewEvent)>,
         cx: &mut Context<Self>,
     ) {
         let chat = chat.downgrade();
         cx.spawn(async move |_, cx| {
-            while let Ok(event) = events.recv().await {
+            while let Ok((span, event)) = events.recv().await {
+                let _entered = span.enter();
+                tracing::debug!("review.event_received");
                 if chat
                     .update(cx, |chat, cx| chat.on_review_event(event, cx))
                     .is_err()

@@ -63,8 +63,10 @@ impl AgentRuntime for PiRuntime {
         sink: Arc<dyn SessionSink>,
     ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Pi)?;
+        let trace = Arc::new(crate::trace::SessionTrace::new(&request));
+        let _entered = trace.enter("agent.session.start");
         let command = process::command(&launch_spec(&request)?)?;
-        let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
+        let (process, stdout) = Process::spawn(command, MAX_FRAME, trace)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Pi);
         let pi = Arc::new(PiSession {
@@ -285,6 +287,8 @@ impl AgentSession for PiSession {
 
     fn stop(&self) -> Result<()> {
         self.live.ensure_open()?;
+        let _entered = self.live.process.trace.enter("agent.session.stop");
+        info!("agent.session.stop_requested");
         self.call("abort", json!({}), COMMAND).map(drop)
     }
 
@@ -293,6 +297,7 @@ impl AgentSession for PiSession {
     }
 
     fn dispose(&self) -> Result<()> {
+        let _entered = self.live.process.trace.enter("agent.session.dispose");
         if self.live.begin_dispose() {
             self.dialogs.cancel_all(&self.live);
             self.live.shutdown();

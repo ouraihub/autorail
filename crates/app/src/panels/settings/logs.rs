@@ -193,7 +193,6 @@ impl LogsPage {
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        // Oldest first, as in the file, so a model reads the chain in order.
         let mut lines: Vec<&str> = self
             .visible(cx)
             .into_iter()
@@ -212,7 +211,6 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
         "WARN" => r.feedback_warning,
         _ => r.text_default,
     };
-    // `2026-11-01T15:26:55.669+08:00` → `15:26:55`.
     let time = entry.time.get(11..19).unwrap_or("—").to_owned();
     let target = entry
         .target
@@ -221,7 +219,6 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
         .unwrap_or_default()
         .to_owned();
     h_flex()
-        .gap(space::S8)
         .items_start()
         .px(space::S8)
         .py(space::S2)
@@ -243,6 +240,16 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                 .text_color(r.primary)
                 .flex_none()
         }))
+        .when_some(entry.trace_id.clone(), |row, trace_id| {
+            row.child(
+                Button::new("log-trace-copy")
+                    .small()
+                    .label(s::COPY_TRACE)
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
+                    }),
+            )
+        })
         .child(
             label(text::CODE_SMALL, target)
                 .text_color(r.text_muted)

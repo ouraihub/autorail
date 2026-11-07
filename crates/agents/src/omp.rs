@@ -79,8 +79,10 @@ impl AgentRuntime for OmpRuntime {
         sink: Arc<dyn SessionSink>,
     ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Omp)?;
+        let trace = Arc::new(crate::trace::SessionTrace::new(&request));
+        let _entered = trace.enter("agent.session.start");
         let command = process::command(&launch_spec(&request)?)?;
-        let (process, stdout) = Process::spawn(command, LINE_LIMIT)?;
+        let (process, stdout) = Process::spawn(command, LINE_LIMIT, trace)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Omp);
         let tools = request.host_tools.as_ref().map(|access| HostTools {
@@ -348,6 +350,8 @@ impl AgentSession for OmpSession {
 
     fn stop(&self) -> Result<()> {
         self.live.ensure_open()?;
+        let _entered = self.live.process.trace.enter("agent.session.stop");
+        info!("agent.session.stop_requested");
         self.interrupted.store(true, Ordering::Release);
         self.call("abort", json!({}), COMMAND).map(drop)
     }
@@ -357,6 +361,7 @@ impl AgentSession for OmpSession {
     }
 
     fn dispose(&self) -> Result<()> {
+        let _entered = self.live.process.trace.enter("agent.session.dispose");
         if self.live.begin_dispose() {
             self.dialogs.cancel_all(&self.live);
             self.live.shutdown();

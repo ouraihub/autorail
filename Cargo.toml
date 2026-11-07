@@ -33,8 +33,9 @@ thinkrail-observability = { path = "crates/observability" }
 thinkrail-ui = { path = "crates/ui" }
 gpui-kit = { version = "=0.9.0", features = ["gpui-fast"] }
 # Shared desktop components; pinned to a pushed LumaKit commit so CI and other machines resolve it.
-lumakit-model-picker = { git = "https://github.com/ouraihub/LumaKit.git", rev = "7c46b2b9fb21c9d0d8889775d599a5d10d6499d5" }
-lumakit-usage-status = { git = "https://github.com/ouraihub/LumaKit.git", rev = "7c46b2b9fb21c9d0d8889775d599a5d10d6499d5" }
+lumakit-observability = { git = "https://github.com/ouraihub/LumaKit.git", rev = "b5c020725cb6f4f5777a489fcb3d233e9bd7deae" }
+lumakit-model-picker = { git = "https://github.com/ouraihub/LumaKit.git", rev = "b5c020725cb6f4f5777a489fcb3d233e9bd7deae" }
+lumakit-usage-status = { git = "https://github.com/ouraihub/LumaKit.git", rev = "b5c020725cb6f4f5777a489fcb3d233e9bd7deae" }
 anyhow = "=1.0.104"
 async-channel = "=2.5.0"
 base64 = "=0.23.1"
