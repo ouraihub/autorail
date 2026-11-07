@@ -21,8 +21,8 @@ use thinkrail_ui::{
 };
 
 use super::{
+    super::rows::{group, row, with_reset},
     AppearancePage,
-    rows::{group, row, with_reset},
 };
 use crate::{appearance::AppearanceState, strings::settings_appearance as s};
 

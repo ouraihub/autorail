@@ -22,8 +22,8 @@ use thinkrail_ui::{
 };
 
 use super::{
+    super::rows::{disclosure, group, notice, row},
     AppearancePage,
-    rows::{disclosure, group, notice, row},
 };
 use crate::{
     appearance::{

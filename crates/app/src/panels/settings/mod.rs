@@ -4,6 +4,7 @@ mod logs;
 mod mcp;
 mod models;
 mod providers;
+mod rows;
 
 use crate::{
     state::AppState,

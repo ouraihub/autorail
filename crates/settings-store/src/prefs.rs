@@ -2,8 +2,8 @@
 //! Agent (agent-settings 04 §2.4, 07).
 
 use thinkrail_core::{
-    BackendKind, EngineProvider, Error, ModelPrefService, ModelPrefs, ModelRef, Result,
-    ThinkingLevel,
+    BackendKind, CONTEXT_OVERRIDE_RANGE, EngineProvider, Error, ModelPrefService, ModelPrefs,
+    ModelRef, Result, ThinkingLevel,
 };
 use tracing::info;
 
@@ -17,6 +17,29 @@ const DEFAULT_EFFORT: &str = "default_effort";
 const DEFAULT_AGENT: &str = "default_agent";
 /// `engine_provider.pi` etc.; the value is a JSON [`EngineProvider`].
 const ENGINE_PROVIDER: &str = "engine_provider.";
+/// `context_override.<provider id>.<model id>`; the value is a token count (agent-settings 08 §6).
+/// Provider ids are UUIDs without `.`, so the first `.` after the prefix splits the two; the
+/// model id keeps any `.`, `/` or `:` it has.
+pub(crate) const CONTEXT_OVERRIDE: &str = "context_override.";
+
+fn context_key(model: &ModelRef) -> String {
+    format!(
+        "{CONTEXT_OVERRIDE}{}.{}",
+        model.provider.as_str(),
+        model.model_id
+    )
+}
+
+fn parse_context_key(rest: &str) -> Result<ModelRef> {
+    let (provider, model_id) = rest
+        .split_once('.')
+        .filter(|(p, m)| !p.is_empty() && !m.is_empty())
+        .ok_or_else(|| Error::corrupt("模型偏好里有无法识别的上下文覆盖。"))?;
+    Ok(ModelRef {
+        provider: provider.into(),
+        model_id: model_id.to_owned(),
+    })
+}
 
 fn load(conn: &Conn) -> Result<ModelPrefs> {
     let mut prefs = ModelPrefs::default();
@@ -31,6 +54,10 @@ fn load(conn: &Conn) -> Result<ModelPrefs> {
                         serde_json::from_value(serde_json::Value::String(backend.to_owned()))
                             .map_err(|_| Error::corrupt("模型偏好里有无法识别的引擎。"))?;
                     prefs.engine_providers.push((backend, db::json(&row, 1)?));
+                } else if let Some(rest) = key.strip_prefix(CONTEXT_OVERRIDE) {
+                    prefs
+                        .context_overrides
+                        .push((parse_context_key(rest)?, db::json(&row, 1)?));
                 }
             }
         }
@@ -153,5 +180,30 @@ impl ModelPrefService for SqliteSettingsStore {
             }
             load(conn)
         })
+    }
+
+    fn set_context_overrides(&self, changes: &[(ModelRef, Option<u32>)]) -> Result<ModelPrefs> {
+        if let Some(tokens) = changes
+            .iter()
+            .filter_map(|(_, tokens)| *tokens)
+            .find(|tokens| !CONTEXT_OVERRIDE_RANGE.contains(tokens))
+        {
+            return Err(Error::invalid(format!(
+                "上下文窗口 {tokens} 超出范围：只能是 {}–{} token。",
+                CONTEXT_OVERRIDE_RANGE.start(),
+                CONTEXT_OVERRIDE_RANGE.end()
+            )));
+        }
+        let prefs = self.write(|conn| {
+            for (model, tokens) in changes {
+                if tokens.is_some() {
+                    ensure_model(conn, model)?;
+                }
+                put(conn, &context_key(model), tokens.as_ref())?;
+            }
+            load(conn)
+        })?;
+        info!(changed = changes.len(), "context overrides set");
+        Ok(prefs)
     }
 }

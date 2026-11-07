@@ -1,8 +1,8 @@
-//! The original's settings building blocks (`SettingsGroup`, `SettingsRow`, `SettingsNotice`,
-//! disclosure and folder rows) in the native settings pages' look.
+//! The original's settings building blocks (`SettingsGroup`, `SettingsRow`, `SettingsNotice` and
+//! the disclosure row) in the native settings pages' look, shared by every page.
 
 use gpui_kit::{
-    AnyElement, ClipboardItem, InteractiveElement as _, IntoElement, ParentElement as _,
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window,
     assets::IconName,
     base::{h_flex, v_flex},
@@ -10,7 +10,9 @@ use gpui_kit::{
         Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
     },
-    div, px,
+    div,
+    prelude::FluentBuilder as _,
+    px,
 };
 use thinkrail_ui::{
     Roles,
@@ -18,11 +20,8 @@ use thinkrail_ui::{
     metrics::{radius, size, space, text},
 };
 
-use super::AppearancePage;
-use crate::strings::settings_appearance as s;
-
 /// A titled group: an eyebrow title, an optional description, then its rows.
-pub fn group(
+pub(super) fn group(
     id: &'static str,
     title: &'static str,
     description: Option<&'static str>,
@@ -39,7 +38,7 @@ pub fn group(
 }
 
 /// A subheading inside a group (the original's `SettingsSubheading`).
-pub fn subheading(title: &'static str, description: &'static str, r: &Roles) -> AnyElement {
+pub(super) fn subheading(title: &'static str, description: &'static str, r: &Roles) -> AnyElement {
     v_flex()
         .pt(space::S16)
         .gap(space::S2)
@@ -49,7 +48,7 @@ pub fn subheading(title: &'static str, description: &'static str, r: &Roles) -> 
 }
 
 /// One setting: label (and description) left, control right, a rule below.
-pub fn row(
+pub(super) fn row(
     title: impl Into<gpui_kit::SharedString>,
     description: Option<String>,
     control: impl IntoElement,
@@ -73,7 +72,7 @@ pub fn row(
 }
 
 /// A warning or info line inside a group.
-pub fn notice(text_content: String, warning: bool, r: &Roles) -> AnyElement {
+pub(super) fn notice(text_content: String, warning: bool, r: &Roles) -> AnyElement {
     h_flex()
         .gap(space::S8)
         .p(space::S8)
@@ -106,7 +105,7 @@ pub fn notice(text_content: String, warning: bool, r: &Roles) -> AnyElement {
 }
 
 /// A control with a reset button beside it while it differs from the default.
-pub fn with_reset(
+pub(super) fn with_reset(
     id: &'static str,
     dirty: bool,
     reset_label: &'static str,
@@ -131,62 +130,8 @@ pub fn with_reset(
         .into_any_element()
 }
 
-use gpui_kit::prelude::FluentBuilder as _;
-
-impl AppearancePage {
-    /// A folder row: the path, 复制路径 and 打开文件夹 (the original's `SettingsFolderRow`).
-    pub(super) fn folder_row(
-        &self,
-        key: &'static str,
-        title: &'static str,
-        dir: std::path::PathBuf,
-        r: &Roles,
-        cx: &mut gpui_kit::Context<Self>,
-    ) -> AnyElement {
-        let copy_dir = dir.clone();
-        let shown = dir.display().to_string();
-        row(
-            title,
-            Some(shown.clone()),
-            h_flex()
-                .gap(space::S8)
-                .child(
-                    Button::new(format!("{key}-copy"))
-                        .outline()
-                        .small()
-                        .icon(IconName::Copy)
-                        .label(if self.copied == Some(key) {
-                            s::PATH_COPIED
-                        } else {
-                            s::COPY_PATH
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                copy_dir.display().to_string(),
-                            ));
-                            this.copied = Some(key);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new(format!("{key}-open"))
-                        .outline()
-                        .small()
-                        .icon(IconName::FolderOpen)
-                        .label(s::OPEN_FOLDER)
-                        .on_click(move |_, _, cx| {
-                            if std::fs::create_dir_all(&dir).is_ok() {
-                                cx.reveal_path(&dir);
-                            }
-                        }),
-                ),
-            r,
-        )
-    }
-}
-
 /// A disclosure row: label, summary and chevron; the body shows below when open.
-pub fn disclosure(
+pub(super) fn disclosure(
     id: &'static str,
     title: &'static str,
     summary: String,

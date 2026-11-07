@@ -1,8 +1,8 @@
 //! Route planning: which (provider, protocol) routes and models an engine gets, and its default model.
 
 use thinkrail_core::{
-    Access, BackendKind, DefaultModel, EngineProvider, Error, ModelPrefs, ProjectedModel, Protocol,
-    Provider, ProviderModel, Result,
+    Access, BackendKind, DefaultModel, EngineProvider, Error, ModelPrefs, ModelRef, ProjectedModel,
+    Protocol, Provider, ProviderModel, Result, ThinkingLevel, clamp_effort,
 };
 use tracing::info;
 
@@ -38,7 +38,24 @@ pub(super) struct PlannedRoute<'a> {
     pub(super) models: Vec<ProjectedModel>,
 }
 
-pub(super) fn project_model(model: &ProviderModel) -> ProjectedModel {
+/// The override set on the GPT 上下文窗口 settings for `model` of `provider`, if any.
+pub(super) fn context_override(
+    overrides: &[(ModelRef, u32)],
+    provider: &Provider,
+    model: &ProviderModel,
+) -> Option<u32> {
+    overrides
+        .iter()
+        .find(|(m, _)| m.provider == provider.id && m.model_id == model.model_id)
+        .map(|(_, tokens)| *tokens)
+}
+
+/// The engine-facing model; the context window is the override, else the provider setting, else
+/// [`DEFAULT_CONTEXT_WINDOW`] (agent-settings 08 §6).
+pub(super) fn project_model(
+    model: &ProviderModel,
+    context_override: Option<u32>,
+) -> ProjectedModel {
     ProjectedModel {
         id: model.model_id.clone(),
         name: model.name.clone(),
@@ -49,7 +66,9 @@ pub(super) fn project_model(model: &ProviderModel) -> ProjectedModel {
         } else {
             Vec::new()
         },
-        context_window: model.context_window.unwrap_or(DEFAULT_CONTEXT_WINDOW),
+        context_window: context_override
+            .or(model.context_window)
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW),
         max_tokens: model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
     }
 }
@@ -61,6 +80,7 @@ pub(super) fn plan<'a>(
     providers: &'a [Provider],
     backend: BackendKind,
     choice: Option<&EngineProvider>,
+    overrides: &[(ModelRef, u32)],
 ) -> Result<Vec<PlannedRoute<'a>>> {
     let chosen: Vec<&Provider> = match choice {
         Some(EngineProvider::Official) => Vec::new(),
@@ -95,7 +115,7 @@ pub(super) fn plan<'a>(
                 .models
                 .iter()
                 .filter(|m| usable(m) && m.protocols.contains(&endpoint.protocol))
-                .map(project_model)
+                .map(|m| project_model(m, context_override(overrides, provider, m)))
                 .collect();
             if models.is_empty() {
                 continue;
@@ -147,13 +167,8 @@ pub(super) fn default_model(
                 .iter()
                 .find(|m| usable(m) && m.model_id == wanted.model_id)?;
             let route = route_for(routes, provider, model)?;
-            let effort = if model.reasoning {
-                prefs
-                    .default_effort
-                    .and_then(|effort| model.efforts.iter().copied().filter(|e| *e <= effort).max())
-            } else {
-                None
-            };
+            let efforts: &[ThinkingLevel] = if model.reasoning { &model.efforts } else { &[] };
+            let effort = clamp_effort(prefs.default_effort, efforts);
             Some(DefaultModel {
                 route: route.to_owned(),
                 model_id: model.model_id.clone(),

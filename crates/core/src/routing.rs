@@ -6,8 +6,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BackendKind, ChatId, Endpoint, Header, ProjectId, Protocol, ProviderId, ProviderKeyId, Result,
-    Secret, ThinkingLevel,
+    BackendKind, ChatId, Endpoint, Header, ModelRef, ProjectId, Protocol, ProviderId,
+    ProviderKeyId, Result, Secret, ThinkingLevel,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +132,34 @@ pub struct ModelChoice {
     pub model: ProjectedModel,
 }
 
+/// Whether a saved model (default or review) can be routed, independent of any engine's 编码搭档
+/// choice. The names let the settings page say why it cannot. A missing endpoint is not a case:
+/// the store refuses a model whose protocols lack one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelStatus {
+    Available,
+    ProviderMissing,
+    ProviderDisabled {
+        provider: String,
+    },
+    ModelMissing,
+    /// Disabled, or not a chat model.
+    ModelUnusable {
+        model: String,
+    },
+}
+
+/// How one engine's 编码搭档 choice narrows the models the settings page offers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineNote {
+    /// 官方: the engine uses its own configuration, not these settings.
+    Official,
+    /// Only this provider's models reach the engine.
+    OnlyProvider { provider: String },
+    /// The chosen provider was deleted or disabled; launches fail.
+    ProviderUnavailable,
+}
+
 pub trait ModelRouter: Send + Sync {
     /// Builds one launch's routing. Direct mode advances key rotation; gateway mode registers a
     /// fresh session token for the chat.
@@ -142,6 +170,14 @@ pub trait ModelRouter: Send + Sync {
     fn release(&self, chat: &ChatId);
     /// Selectable models: enabled providers × enabled, visible models × protocols the engine supports.
     fn catalog(&self, backend: BackendKind) -> Result<Vec<ModelChoice>>;
+    /// The settings page's models: enabled providers × usable chat models, each under its first
+    /// reachable route. Ignores 编码搭档 choices and keeps hidden models.
+    fn settings_catalog(&self) -> Result<Vec<ModelChoice>>;
+    /// Whether `model` can be routed at all (see [`ModelStatus`]); ignores 编码搭档 choices.
+    fn model_status(&self, model: &ModelRef) -> Result<ModelStatus>;
+    /// Engines whose 编码搭档 choice keeps them from using the settings page's models, in
+    /// [`BackendKind::ALL`] order.
+    fn engine_notes(&self) -> Result<Vec<(BackendKind, EngineNote)>>;
 }
 
 #[derive(Clone)]

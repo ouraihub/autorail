@@ -80,8 +80,10 @@ git read-tree HEAD; git checkout-index -f -a
 
 模型、提供方、密钥、MCP、默认 Agent 和聊天绑定存在 `<exe>/data/thinkrail.db`；显式 `--data-dir <目录>` 时数据库在该目录。项目与日志默认位于 `%USERPROFILE%/.autorail`，不读取或自动迁移 `.thinkrail`、`.thinkrail-native` 的数据；旧开发版的 `agent-profiles.json` 不再读取，旧版本号的 `thinkrail.db` 需要删除后重建。API 密钥按用户选择明文存储，复制/显示才取出；请保护数据库文件。所有项目共用 OMP 的默认配置目录，MCP 集合以最后启动的项目为准。
 
-模型选择器使用 LumaKit 的 `crates/lumakit-model-picker`，以 Git 依赖固定到 GitHub 上 LumaKit 的提交（见根 `Cargo.toml`，更新步骤见 `AGENTS.md`），不依赖 LumaKit 的 AI／数据库／设计系统。入口位于聊天输入框下方，浮层向上展开；顶部不再保留模型和力度的重复下拉。图标为原 ThinkRail 使用的 Remix 4.9.0 SVG，许可保存在共享 crate 的 `LICENSE-REMIX`。
+模型选择器使用 LumaKit 的 `crates/lumakit-model-picker`，以 Git 依赖固定到 GitHub 上 LumaKit 的提交（见根 `Cargo.toml`，更新步骤见 `AGENTS.md`），不依赖 LumaKit 的 AI／数据库／设计系统。入口位于聊天输入框下方，浮层向上展开；顶部不再保留模型和力度的重复下拉。每个模型的说明为“{路由} · {上下文} 上下文”，上下文格式与设置页共用 `settings_models::format_context`（`1M`、`272K`）。图标为原 ThinkRail 使用的 Remix 4.9.0 SVG，许可保存在共享 crate 的 `LICENSE-REMIX`。
 
 2026-11-05 验证：workspace 280 项通过，原有 16 项下载／外部引擎测试保持 ignored；fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、真实 pi 会话中操作了分组、附加 high 的搜索、力度点击／拖动／键盘、默认值存储、重置 off、刷新和 Esc。未发送模型请求，不冒充上游回答验证。
+
+2026-11-07 模型页第一期（agent-settings 08 R1、R2）验证：workspace 293 项通过（16 项 ignored 不变），fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、从本机数据库复制并去掉密钥的副本中，Windows 实窗操作了：会话模型与力度单行选择并重启后保持；可见模型展开；GPT 上下文窗口无合格模型时显示“没有符合条件的模型”，有 Responses 模型时全局选 1M、单个模型自定义 400000（非法值标红不保存）、全局随之显示“按模型分别设置”，均在重启后保持。未发送模型请求。
 
 上下文状态依赖同一 LumaKit 提交中的 `lumakit-usage-status`，位于发送按钮左侧。Pi/OMP 在后台查询原生 `get_state`／`get_session_stats`，不从截断的 UI 文本推算；DSH 无报告时保持未知。Native 没有宿主模型价格字段，因此只显示 token，不套用目录参考价；若未来引擎提供用户配置价格快照，才显示金额。Windows 实窗已用真实 pi、OMP 连接隔离回环 HTTP 验证输入 1000（含缓存读取 200）、输出 50、累计 1050；未连接收费服务。共享系统图标保留 macOS/Linux 映射但未做该平台运行验收。

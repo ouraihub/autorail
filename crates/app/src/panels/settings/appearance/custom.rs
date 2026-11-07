@@ -17,8 +17,8 @@ use thinkrail_ui::{
 };
 
 use super::{
+    super::rows::{group, notice},
     AppearancePage,
-    rows::{group, notice},
 };
 use crate::{
     appearance::{AppearanceState, FileProblem, FontProblem, family_name},

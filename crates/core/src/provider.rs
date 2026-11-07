@@ -35,6 +35,17 @@ pub enum ThinkingLevel {
     Max,
 }
 
+/// The effort a launch uses for a saved preference: the highest level the model declares that is
+/// not above `saved`. `None` when nothing is saved, the model declares no levels, or every declared
+/// level is above `saved`. Routing and the settings page share this one rule.
+pub fn clamp_effort(
+    saved: Option<ThinkingLevel>,
+    efforts: &[ThinkingLevel],
+) -> Option<ThinkingLevel> {
+    let saved = saved?;
+    efforts.iter().copied().filter(|e| *e <= saved).max()
+}
+
 /// What a model does (Aether `ModelType`). Only `Chat` models are offered to engines.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
@@ -254,7 +265,13 @@ pub struct ModelPrefs {
     pub engine_providers: Vec<(crate::BackendKind, crate::EngineProvider)>,
     /// 编码搭档 设为默认: the engine new chats run (agent-settings 07).
     pub default_agent: Option<crate::BackendKind>,
+    /// GPT 上下文窗口: per-model context windows that replace the provider setting when routing
+    /// (agent-settings 08 §6). The provider's own `context_window` is never rewritten.
+    pub context_overrides: Vec<(ModelRef, u32)>,
 }
+
+/// The range a context-window override may take (the original's `MODEL_CONTEXT_WINDOW_LIMITS`).
+pub const CONTEXT_OVERRIDE_RANGE: std::ops::RangeInclusive<u32> = 272_000..=1_000_000;
 
 impl ModelPrefs {
     pub fn engine_provider(&self, backend: crate::BackendKind) -> Option<&crate::EngineProvider> {
@@ -262,6 +279,13 @@ impl ModelPrefs {
             .iter()
             .find(|(b, _)| *b == backend)
             .map(|(_, p)| p)
+    }
+
+    pub fn context_override(&self, model: &ModelRef) -> Option<u32> {
+        self.context_overrides
+            .iter()
+            .find(|(m, _)| m == model)
+            .map(|(_, tokens)| *tokens)
     }
 }
 
@@ -280,6 +304,9 @@ pub trait ModelPrefService: Send + Sync {
         choice: crate::EngineProvider,
     ) -> Result<ModelPrefs>;
     fn set_default_agent(&self, backend: Option<crate::BackendKind>) -> Result<ModelPrefs>;
+    /// Sets (`Some`) or removes (`None`) context-window overrides in one write. A value outside
+    /// [`CONTEXT_OVERRIDE_RANGE`] or an unknown model rejects the whole batch.
+    fn set_context_overrides(&self, changes: &[(ModelRef, Option<u32>)]) -> Result<ModelPrefs>;
 }
 
 #[cfg(test)]
