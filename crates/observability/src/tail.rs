@@ -73,8 +73,8 @@ fn parse_fixed(seq: usize, line: &str) -> Option<LogEntry> {
     let spans = span_text.join(": ");
     let (target, message) = rest
         .split_once(": ")
-        .or_else(|| rest.strip_suffix(':').map(|t| (t, "")))?;
-    if target.is_empty() || target.contains(' ') {
+        .or_else(|| rest.strip_suffix(':').map(|target| (target, "")))?;
+    if target.contains(' ') {
         return None;
     }
     Some(LogEntry {

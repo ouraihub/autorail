@@ -241,10 +241,12 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                 .flex_none()
         }))
         .when_some(entry.trace_id.clone(), |row, trace_id| {
+            let button_id = format!("log-trace-copy-{}", entry.seq);
             row.child(
-                Button::new("log-trace-copy")
+                Button::new(button_id)
                     .small()
                     .label(s::COPY_TRACE)
+                    .accessibility_label(s::COPY_TRACE)
                     .on_click(move |_, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
                     }),

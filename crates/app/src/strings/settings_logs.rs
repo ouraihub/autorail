@@ -13,7 +13,6 @@ pub const REFRESH: &str = "刷新";
 pub const OPEN_DIR: &str = "打开日志目录";
 pub const COPY: &str = "复制当前日志";
 pub const COPY_TRACE: &str = "复制 Trace ID";
-pub const COPY_TRACE_HINT: &str = "复制此条日志的 Trace ID";
 pub const COPIED: &str = "已复制当前显示的日志";
 pub const FILTER: &str = "筛选：Trace ID、op、chat、模块名";
 pub const EMPTY: &str = "还没有日志。";
