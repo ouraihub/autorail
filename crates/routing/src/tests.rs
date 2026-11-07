@@ -161,6 +161,8 @@ fn request(backend: BackendKind, new_session: bool) -> RouteRequest {
         project: ProjectId::from("project-1"),
         backend,
         new_session,
+        model: None,
+        effort: None,
     }
 }
 
@@ -544,6 +546,29 @@ fn default_model_only_for_new_sessions_with_clamped_effort() {
             .default_model
             .is_none()
     );
+
+    // A pinned model (a review's) replaces the default and fails rather than falling back.
+    let pinned = |id: &str, effort| RouteRequest {
+        model: Some(ModelRef {
+            provider: provider.id.clone(),
+            model_id: id.into(),
+        }),
+        effort,
+        ..request(BackendKind::Pi, true)
+    };
+    let routing = router
+        .prepare(&pinned("both", Some(ThinkingLevel::Max)))
+        .unwrap();
+    let model = routing.default_model.unwrap();
+    assert_eq!(
+        (model.model_id.as_str(), model.effort),
+        ("both", Some(ThinkingLevel::High))
+    );
+    // Without an effort of its own the saved default effort applies, clamped to this model.
+    let model = router.prepare(&pinned("both", None)).unwrap().default_model;
+    assert_eq!(model.unwrap().effort, Some(ThinkingLevel::High));
+    let error = router.prepare(&pinned("plain", None)).unwrap_err();
+    assert_eq!(error.kind(), Some(ErrorKind::Invalid));
 }
 
 fn mcp_input(name: &str, transport: McpTransport) -> McpServerInput {

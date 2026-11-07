@@ -114,7 +114,8 @@ reviewer, not for yourself.
    style** — run `git log --oneline -20` and match what you see (Conventional Commits ⇒
    `type(scope): subject`; a prose-subject repo ⇒ prose). It must be pushable as-is: no `todo:`
    prefix, no item ids, no tool attribution. Omit it and the host falls back to the step title, which
-   reads as a plan step in `git log` — so don't rely on that.
+   reads as a plan step in `git log` — so don't rely on that. Don't run `git commit` yourself: the host
+   commits the step's delta when you mark it done.
 - **Disclose scope drift.** Anything you touched beyond the step's own ask — an adjacent refactor, a
    drive-by rename, a new dependency — goes in the summary ("also touched X because Y"). The
    signature failure of agent changes is solving the asked problem *plus* neighbors; undisclosed

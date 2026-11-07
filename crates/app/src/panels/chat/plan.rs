@@ -1,5 +1,5 @@
-//! The chat's TODO strip (04 §9.2): a collapsible bar with the done / total count and, when open,
-//! the items with their status. Read-only; the Agent edits the plan through the host tools.
+//! The chat's TODO strip with review status projection.
+use std::collections::HashMap;
 
 use gpui_kit::{
     AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -9,7 +9,7 @@ use gpui_kit::{
     component::Icon,
     prelude::FluentBuilder as _,
 };
-use thinkrail_core::{Plan, PlanItem, PlanStatus};
+use thinkrail_core::{Plan, PlanItem, PlanItemId, PlanStatus, ReviewEvent, ReviewOutcome};
 use thinkrail_ui::{
     Roles,
     components::label,
@@ -19,8 +19,14 @@ use thinkrail_ui::{
 use super::transcript::Toggle;
 use crate::strings::chat as s;
 
-/// `None` for an empty plan: no strip is shown.
-pub fn strip(key: &str, plan: &Plan, open: bool, toggle: &Toggle, r: &Roles) -> Option<AnyElement> {
+pub fn strip(
+    key: &str,
+    plan: &Plan,
+    reviews: &HashMap<PlanItemId, ReviewEvent>,
+    open: bool,
+    toggle: &Toggle,
+    r: &Roles,
+) -> Option<AnyElement> {
     let items: Vec<&PlanItem> = plan
         .groups
         .iter()
@@ -74,22 +80,32 @@ pub fn strip(key: &str, plan: &Plan, open: bool, toggle: &Toggle, r: &Roles) -> 
                                     label(text::METADATA, g.title.clone())
                                         .text_color(r.text_subtle),
                                 )
-                                .children(g.items.iter().map(|i| row(i, r)))
+                                .children(g.items.iter().map(|i| row(i, reviews.get(&i.id), r)))
                         }))
-                        .children(plan.loose.iter().map(|i| row(i, r))),
+                        .children(plan.loose.iter().map(|i| row(i, reviews.get(&i.id), r))),
                 )
             })
             .into_any_element(),
     )
 }
 
-fn row(item: &PlanItem, r: &Roles) -> AnyElement {
+fn row(item: &PlanItem, review: Option<&ReviewEvent>, r: &Roles) -> AnyElement {
     let (icon, color) = match item.status {
         PlanStatus::Pending => (IconName::Circle, r.text_subtle),
         PlanStatus::InProgress => (IconName::LoaderCircle, r.feedback_info),
         PlanStatus::Done => (IconName::CircleCheck, r.feedback_success),
     };
     let title = label(text::METADATA, item.title.clone()).truncate();
+    let status = review.map(|event| match event {
+        ReviewEvent::Started { .. } => s::REVIEWING,
+        ReviewEvent::Finished { result, .. } => match result.outcome {
+            ReviewOutcome::Approved => s::REVIEW_APPROVED,
+            ReviewOutcome::ChangesFix
+            | ReviewOutcome::ChangesStop
+            | ReviewOutcome::ApproveBlocked { .. } => s::REVIEW_CHANGES,
+            ReviewOutcome::Failed { .. } => s::REVIEW_FAILED,
+        },
+    });
     h_flex()
         .gap(space::S6)
         .child(Icon::new(icon).size(size::ICON_SMALL).text_color(color))
@@ -97,6 +113,9 @@ fn row(item: &PlanItem, r: &Roles) -> AnyElement {
             PlanStatus::Done => title.text_color(r.text_subtle).line_through(),
             PlanStatus::InProgress => title.text_color(r.text_default),
             PlanStatus::Pending => title.text_color(r.text_muted),
+        })
+        .when_some(status, |row, status| {
+            row.child(label(text::METADATA, status).text_color(r.text_subtle))
         })
         .into_any_element()
 }

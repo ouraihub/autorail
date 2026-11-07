@@ -24,6 +24,7 @@ impl Render for ModelsPage {
         let r = ThinkrailTheme::global(cx).roles;
         let default_group = self.default_group(&r, window, cx);
         let visibility_group = self.visibility_group(&r, cx);
+        let review_group = self.review_group(&r, window, cx);
         let context_group = self.context_group(&r, cx);
         let empty = self
             .snapshot
@@ -42,6 +43,9 @@ impl Render for ModelsPage {
                         .children(default_group)
                         .children(visibility_group),
                 )
+            })
+            .when_some(review_group, |page, review| {
+                page.child(group("models-review", s::REVIEW_TITLE, None, &r).child(review))
             })
             .when_some(context_group, |page, context| {
                 page.child(group("models-context", s::CONTEXT_TITLE, None, &r).child(context))

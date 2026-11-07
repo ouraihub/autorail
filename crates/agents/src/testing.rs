@@ -7,8 +7,9 @@ use serde_json::Value;
 use tempfile::TempDir;
 use thinkrail_core::{
     BackendKind, DefaultModel, EngineRouting, EnvBinding, Error, HostToolAccess, HostToolHandler,
-    HostToolResult, HostToolSpec, Launch, PlanScope, ProjectedMcpServer, ProjectedMcpTransport,
-    ProjectedModel, ProjectedProvider, Protocol, Result, Secret, StartSession, ThinkingLevel,
+    HostToolOptions, HostToolResult, HostToolSpec, Launch, PlanScope, ProjectedMcpServer,
+    ProjectedMcpTransport, ProjectedModel, ProjectedProvider, Protocol, Result, Secret,
+    SessionRole, StartSession, ThinkingLevel,
 };
 
 /// Placeholder secrets of [`secret_routing`]; none may appear in a generated file.
@@ -17,11 +18,17 @@ pub(crate) const SECRETS: [&str; 3] = ["sk-test-a", "sk-test-b", "sk-test-c"];
 struct NoTools;
 
 impl HostToolHandler for NoTools {
-    fn specs(&self) -> Vec<HostToolSpec> {
+    fn specs(&self, _options: HostToolOptions) -> Vec<HostToolSpec> {
         Vec::new()
     }
 
-    fn call(&self, _scope: &PlanScope, name: &str, _arguments: Value) -> Result<HostToolResult> {
+    fn call(
+        &self,
+        _scope: &PlanScope,
+        _options: HostToolOptions,
+        name: &str,
+        _arguments: Value,
+    ) -> Result<HostToolResult> {
         Err(Error::invalid(format!("unexpected host tool call {name}")))
     }
 }
@@ -71,6 +78,7 @@ impl Fixture {
             pipe: "pipe-1".into(),
             token: "token-1".into(),
             handler: Arc::new(NoTools),
+            options: HostToolOptions::default(),
         });
         StartSession {
             chat: "chat".into(),
@@ -86,6 +94,7 @@ impl Fixture {
             host_tools,
             routing,
             support_dir: self.support(),
+            role: SessionRole::Worker,
         }
     }
 

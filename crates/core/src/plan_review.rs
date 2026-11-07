@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ChatId, PlanItemId, Result, ReviewId, WorkspaceId};
+use crate::{Baseline, ChatId, ItemChange, PlanItemId, Result, ReviewId, StepReviews, WorkspaceId};
 
 /// Plans and reviews are scoped to one chat inside one workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,6 +38,10 @@ pub struct PlanItem {
     pub summary: Option<String>,
     pub verification: Option<String>,
     pub commit_subject: Option<String>,
+    /// The step's change set (agent-settings 08 §5.8); kept when the step leaves `Done`, so a fix
+    /// round appends to it.
+    #[serde(default)]
+    pub changes: Vec<ItemChange>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -132,4 +136,26 @@ pub trait PlanReviewService: Send + Sync {
     fn remove_review(&self, scope: &PlanScope, id: &ReviewId) -> Result<()>;
     /// Fails with `Conflict` while any unresolved comment is stale; marks sent comments `Sent`.
     fn send_package(&self, scope: &PlanScope) -> Result<ReviewPackage>;
+
+    /// The chat's plan-step review state (08 §5.6, §5.8).
+    fn step_reviews(&self, scope: &PlanScope) -> Result<StepReviews>;
+    /// Atomic read-modify-write of the plan and its review state together, under the store lock.
+    fn update_reviews(
+        &self,
+        scope: &PlanScope,
+        change: &mut dyn FnMut(&mut Plan, &mut StepReviews) -> Result<()>,
+    ) -> Result<(Plan, StepReviews)>;
+    /// Drops every `pending` mark: no review survives a restart (the original's boot reconcile).
+    fn clear_pending_reviews(&self) -> Result<()>;
+    /// Opens `item`'s work window (08 §5.8) if it is still `InProgress` and has none. When another
+    /// chat of the workspace has a window open, both sides are marked `shared` in the same write.
+    /// Returns the stored baseline, `None` when nothing was opened.
+    fn open_window(
+        &self,
+        scope: &PlanScope,
+        item: &PlanItemId,
+        baseline: Baseline,
+    ) -> Result<Option<Baseline>>;
+    /// Whether another chat of the workspace has a work window open.
+    fn windows_elsewhere(&self, scope: &PlanScope) -> Result<bool>;
 }

@@ -3,26 +3,39 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
-use thinkrail_core::{Error, IoContext, Result, StartSession};
-
 use crate::{
     host,
     process::{self, LaunchSpec},
     projection_engine, workflow,
 };
+use serde_json::{Value, json};
+use thinkrail_core::{Error, IoContext, Result, SessionRole, StartSession};
 
 /// Host arguments and environment of one DSH launch: the generated patch (bundled skills,
 /// workflow rules, built-in TODO tool off, providers, `acp` default model). Also returns the
 /// staged bundled skills dir; the spec's `cwd` is the DSH home.
 pub(super) fn launch_spec(request: &StartSession) -> Result<(LaunchSpec<'_>, PathBuf)> {
     let home = dsh_home(request)?;
+    let reviewer = matches!(request.role, SessionRole::Reviewer { .. });
     let mut host_args = vec!["--profile".to_owned(), "acp".to_owned()];
-    let mut host_env: Vec<_> = process::routing_env(&request.routing).collect();
-    let skills = workflow::stage_skills(&request.support_dir)?;
-    let patch =
-        projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing, &skills)?;
-    let patch = preserve_user_routes(&home, patch, &mut host_env)?;
+    let host_env: Vec<_> = process::routing_env(&request.routing).collect();
+    let (patch, staged) = if reviewer {
+        let prompt = match &request.role {
+            SessionRole::Reviewer { system_prompt } => system_prompt,
+            SessionRole::Worker => unreachable!(),
+        };
+        (
+            projection_engine::dsh_reviewer_patch(prompt, &request.routing)?,
+            home.clone(),
+        )
+    } else {
+        let skills = workflow::stage_skills(&request.support_dir)?;
+        (
+            projection_engine::dsh_patch(request.host_tools.is_some(), &request.routing, &skills)?,
+            skills,
+        )
+    };
+    let patch = preserve_user_routes(&home, patch, &mut host_env.clone())?;
     let path = host::write_support(
         &request.support_dir,
         projection_engine::DSH_PATCH_FILE,
@@ -33,12 +46,11 @@ pub(super) fn launch_spec(request: &StartSession) -> Result<(LaunchSpec<'_>, Pat
         launch: &request.launch,
         config_root: request.config_root.as_deref(),
         host_args,
-        // DSH loads `.env` from its process cwd; keep the workspace out of that lookup.
         cwd: home,
         config_var: "DSH_HOME",
         host_env,
     };
-    Ok((spec, skills))
+    Ok((spec, staged))
 }
 
 pub(super) fn preserve_user_routes(

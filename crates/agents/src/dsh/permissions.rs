@@ -22,13 +22,7 @@ impl DshSession {
         let options = params["options"]
             .as_array()
             .filter(|o| !o.is_empty())
-            .ok_or_else(|| Error::protocol("权限请求缺少 options"))?
-            .iter()
-            .map(|o| InteractionOption {
-                id: str_of(&o["optionId"]),
-                label: str_of(&o["name"]),
-            })
-            .collect();
+            .ok_or_else(|| Error::protocol("权限请求缺少 options"))?;
         let tool_call_id = params["toolCall"]["toolCallId"]
             .as_str()
             .unwrap_or_default();
@@ -38,12 +32,33 @@ impl DshSession {
                 .and_then(|owner| tool_name(&p.snapshot(), &owner, tool_call_id))
         }
         .unwrap_or_default();
+        if self.reviewer {
+            let option = if matches!(title.as_str(), "bash" | "pwsh") {
+                options.iter().find(|o| o["optionId"] == "allow_once")
+            } else {
+                None
+            };
+            let outcome = option.map_or_else(
+                || json!({"outcome": "cancelled"}),
+                |option| json!({"outcome": {"outcome": option["optionId"]}}),
+            );
+            return self
+                .live
+                .process
+                .send(&json!({"jsonrpc": "2.0", "id": id, "result": outcome}));
+        }
         let interaction = Interaction {
             request_id: new_id(),
             kind: InteractionKind::Permission,
             title,
             message: String::new(),
-            options,
+            options: options
+                .iter()
+                .map(|o| InteractionOption {
+                    id: str_of(&o["optionId"]),
+                    label: str_of(&o["name"]),
+                })
+                .collect(),
             detail: params.clone(),
         };
         self.permissions

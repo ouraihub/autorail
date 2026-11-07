@@ -72,19 +72,46 @@ pub fn visibility_summary(hidden: usize) -> String {
     }
 }
 
-/// Why the saved default cannot be used; `None` when it can.
-pub fn unavailable(status: &ModelStatus) -> Option<String> {
+/// Why a saved model cannot be routed, naming it `subject` and ending with `effect`; `None` when
+/// it can.
+fn unroutable(status: &ModelStatus, subject: &str, effect: &str) -> Option<String> {
     Some(match status {
         ModelStatus::Available => return None,
-        ModelStatus::ProviderMissing => format!("默认模型所属的提供方已删除{NEW_SESSIONS}"),
+        ModelStatus::ProviderMissing => format!("{subject}所属的提供方已删除{effect}"),
         ModelStatus::ProviderDisabled { provider } => {
-            format!("默认模型所属的提供方「{provider}」已停用{NEW_SESSIONS}")
+            format!("{subject}所属的提供方「{provider}」已停用{effect}")
         }
-        ModelStatus::ModelMissing => format!("默认模型已从提供方中删除{NEW_SESSIONS}"),
+        ModelStatus::ModelMissing => format!("{subject}已从提供方中删除{effect}"),
         ModelStatus::ModelUnusable { model } => {
-            format!("默认模型「{model}」已停用或不是聊天模型{NEW_SESSIONS}")
+            format!("{subject}「{model}」已停用或不是聊天模型{effect}")
         }
     })
+}
+
+/// Why the saved default cannot be used; `None` when it can.
+pub fn unavailable(status: &ModelStatus) -> Option<String> {
+    unroutable(status, "默认模型", NEW_SESSIONS)
+}
+
+/// Why the pinned review model cannot be used: the review then fails rather than switching
+/// models (08 Q4).
+pub fn review_unavailable(status: &ModelStatus) -> Option<String> {
+    unroutable(status, "评审模型", "，评审会失败。请重新选择或改回默认。")
+}
+
+pub const REVIEW_TITLE: &str = "评审";
+pub const REVIEW_MODEL: &str = "评审模型";
+pub const AGENT_REVIEW: &str = "Agent 触发的评审";
+pub const AGENT_REVIEW_DESC: &str = "允许 agent 评审已完成的工作。";
+pub const AUTO_FIX: &str = "自动修复循环";
+pub const AUTO_FIX_DESC: &str = "把要求修改的反馈一次性发回给 agent。";
+
+/// The review model's first entry: the review follows the default chat model.
+pub fn review_follows(default_model: Option<&str>) -> String {
+    match default_model {
+        Some(name) => format!("{name}（默认）"),
+        None => format!("{NONE}（默认）"),
+    }
 }
 
 /// How one engine's 编码搭档 choice affects these settings.

@@ -17,7 +17,7 @@ use std::{
 use parking_lot::Mutex;
 use serde_json::Value;
 use thinkrail_core::{
-    BackendKind, Error, ErrorCode, ErrorKind, Result, SessionError, StartSession,
+    BackendKind, Error, ErrorCode, ErrorKind, Result, SessionError, SessionRole, StartSession,
 };
 use tracing::{debug, info, warn};
 
@@ -351,6 +351,11 @@ pub(crate) fn validate(request: &StartSession, backend: BackendKind) -> Result<(
             "工作目录不存在：{}",
             request.cwd.display()
         )));
+    }
+    if matches!(request.role, SessionRole::Reviewer { .. })
+        && (request.resume.is_some() || request.host_tools.is_some())
+    {
+        return Err(Error::invalid("评审会话不能恢复旧会话或使用宿主工具"));
     }
     Ok(())
 }

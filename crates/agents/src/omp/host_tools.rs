@@ -22,9 +22,10 @@ impl OmpSession {
             let result = tool_result(&id, "Host tools are not enabled for this chat.", true);
             return self.live.process.send(&result);
         };
-        let (handler, scope, cancelled) = (
+        let (handler, scope, options, cancelled) = (
             tools.handler.clone(),
             tools.scope.clone(),
+            tools.options,
             tools.cancelled.clone(),
         );
         let arguments = frame.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -32,7 +33,7 @@ impl OmpSession {
         let spawned = thread::Builder::new()
             .name("omp-host-tool".into())
             .spawn(move || {
-                let reply = match handler.call(&scope, &name, arguments) {
+                let reply = match handler.call(&scope, options, &name, arguments) {
                     Ok(result) => tool_result(&id, &result.text, result.is_error),
                     // The handler logs the failure with its chat and duration.
                     Err(error) => tool_result(&id, &error.to_string(), true),

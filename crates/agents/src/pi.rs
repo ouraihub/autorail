@@ -8,7 +8,8 @@ use std::{
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, Error, InteractionAnswer,
-    NativeSessionKey, Result, SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
+    NativeSessionKey, Result, SessionRole, SessionSink, SessionSnapshot, StartSession,
+    ThinkingLevel,
 };
 use tracing::info;
 
@@ -69,6 +70,7 @@ impl AgentRuntime for PiRuntime {
         let pi = Arc::new(PiSession {
             live: live.clone(),
             dialogs: Dialogs::default(),
+            reviewer: matches!(request.role, SessionRole::Reviewer { .. }),
         });
         let reader = pi.clone();
         let mut stream = Stream::default();
@@ -87,19 +89,40 @@ impl AgentRuntime for PiRuntime {
 /// host tools, providers, MCP servers), the bundled skills (`--skill`) and, for a new session,
 /// the default model.
 fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
+    let reviewer = matches!(request.role, SessionRole::Reviewer { .. });
     let mut host_args = vec!["--mode".to_owned(), "rpc".to_owned()];
     let mut host_env = Vec::new();
-    let extension = projection_engine::pi_extension(request.host_tools.is_some(), &request.routing);
+    let extension = if reviewer {
+        projection_engine::pi_reviewer_extension(&request.routing)
+    } else {
+        projection_engine::pi_extension(request.host_tools.is_some(), &request.routing)
+    };
     let path = host::write_support(
         &request.support_dir,
         projection_engine::PI_EXTENSION_FILE,
         &extension,
     )?;
     host_args.extend(["-e".to_owned(), path.display().to_string()]);
-    let skills = workflow::stage_skills(&request.support_dir)?;
-    host_args.extend(["--skill".to_owned(), skills.display().to_string()]);
-    if let Some(access) = &request.host_tools {
-        host_env = host::env(access);
+    if reviewer {
+        host_args.extend([
+            "--no-session".into(),
+            "--no-skills".into(),
+            "--no-prompt-templates".into(),
+            "--no-extensions".into(),
+            "--tools".into(),
+            "read,grep,find,ls,powershell".into(),
+            "--system-prompt".into(),
+            match &request.role {
+                SessionRole::Reviewer { system_prompt } => system_prompt.clone(),
+                SessionRole::Worker => unreachable!(),
+            },
+        ]);
+    } else {
+        let skills = workflow::stage_skills(&request.support_dir)?;
+        host_args.extend(["--skill".to_owned(), skills.display().to_string()]);
+        if let Some(access) = &request.host_tools {
+            host_env = host::env(access);
+        }
     }
     match &request.resume {
         Some(key) => host_args.extend(["--session".to_owned(), key.as_str().to_owned()]),
@@ -119,24 +142,22 @@ fn launch_spec(request: &StartSession) -> Result<LaunchSpec<'_>> {
 struct PiSession {
     live: Arc<Live>,
     dialogs: Dialogs,
+    reviewer: bool,
 }
 
 impl PiSession {
     fn handshake(&self, deadline: Instant) -> Result<()> {
         let state = self.call("get_state", json!({}), session::left(deadline))?;
-        let key = state["sessionFile"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                Error::protocol("pi 没有返回会话文件；请从启动参数中删除 --no-session")
-            })?;
+        let key = state["sessionFile"].as_str().filter(|s| !s.is_empty());
         let history = self.call("get_messages", json!({}), session::left(deadline))?;
         let commands = rpc::commands::or_empty(
             self.call("get_commands", json!({}), session::left(deadline))
                 .map(|data| rpc::commands::pi_commands(&data)),
         );
         let mut p = self.live.state.lock();
-        p.set_key(NativeSessionKey::from(key));
+        if let Some(key) = key {
+            p.set_key(NativeSessionKey::from(key));
+        }
         p.set_model(rpc::model(&state));
         p.set_session_name(rpc::commands::session_name(&state));
         p.set_commands(commands);
@@ -221,8 +242,12 @@ impl PiSession {
         }
         Ok(())
     }
-
     fn on_ui_request(&self, frame: &Value) -> Result<()> {
+        if self.reviewer
+            && let Some(id) = frame["id"].as_str()
+        {
+            return self.live.process.send(&crate::rpc::cancel(id));
+        }
         self.dialogs.on_request(&self.live, frame)
     }
 }

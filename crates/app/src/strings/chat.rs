@@ -9,6 +9,10 @@ pub const CLOSED_HINT: &str = "Agent 进程未运行；发送消息时会恢复�
 pub const TRUNCATED: &str = "较早的消息未在此显示（Agent 仍保留完整历史）。";
 pub const PRERELEASE: &str = "预发布";
 pub const PLAN: &str = "TODO 列表";
+pub const REVIEWING: &str = "正在评审…";
+pub const REVIEW_APPROVED: &str = "已检查";
+pub const REVIEW_CHANGES: &str = "需要修复";
+pub const REVIEW_FAILED: &str = "评审失败";
 
 pub const PHASE_IDLE: &str = "空闲";
 pub const PHASE_RUNNING: &str = "运行中";

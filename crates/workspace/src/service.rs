@@ -16,7 +16,10 @@ use thinkrail_core::{
     Project, ProjectId, Result, Workspace, WorkspaceId, WorkspaceRoots, WorkspaceService,
 };
 
-use crate::registry::{Registry, Store};
+use crate::{
+    registry::{Registry, Store},
+    window,
+};
 
 /// [`WorkspaceService`] over the local `git` executable and `<data>/workbench.json`.
 #[derive(Debug)]
@@ -171,5 +174,26 @@ impl WorkspaceService for GitWorkspaceService {
 
     fn git_checkout(&self, id: &WorkspaceId, branch: &str) -> Result<()> {
         Self::git_checkout(self, id, branch)
+    }
+
+    fn git_uncommitted_paths(&self, id: &WorkspaceId) -> Result<Vec<String>> {
+        window::uncommitted_paths(&self.root(id)?)
+    }
+
+    fn git_head(&self, id: &WorkspaceId) -> Result<Option<String>> {
+        window::head(&self.root(id)?)
+    }
+
+    fn git_log_range(&self, id: &WorkspaceId, base: &str, limit: usize) -> Result<Vec<Commit>> {
+        window::log_range(&self.root(id)?, base, limit)
+    }
+
+    fn git_commit_paths(
+        &self,
+        id: &WorkspaceId,
+        subject: &str,
+        paths: &[String],
+    ) -> Result<Option<String>> {
+        window::commit_paths(&self.root(id)?, subject, paths)
     }
 }

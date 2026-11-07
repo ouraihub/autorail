@@ -63,12 +63,14 @@ fn chat(id: &ChatId, session_name: Option<&str>) -> Chat {
         }),
         usage: super::super::usage::Usage::default(),
         routing_signature: None,
+        host_tool_options: Default::default(),
         catalog: Vec::new(),
         restart_pending: false,
         closing: false,
         starting: false,
         blocked: None,
         ordinal: 1,
+        review_cards: std::collections::HashMap::new(),
         plan: None,
     }
 }

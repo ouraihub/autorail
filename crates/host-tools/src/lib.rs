@@ -5,6 +5,8 @@
 
 mod bridge;
 mod mcp;
+#[cfg(test)]
+mod request_tests;
 mod spec;
 #[cfg(test)]
 mod tests;

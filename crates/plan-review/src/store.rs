@@ -8,8 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use thinkrail_core::{
-    Error, IoContext, NewReviewComment, Plan, PlanReviewService, PlanScope, Result, ReviewComment,
-    ReviewId, ReviewPackage, ReviewState, WorkspaceRoots,
+    Baseline, Error, IoContext, NewReviewComment, Plan, PlanItemId, PlanReviewService, PlanScope,
+    PlanStatus, Result, ReviewComment, ReviewId, ReviewPackage, ReviewState, StepReviews,
+    WorkspaceRoots,
 };
 use tracing::info;
 
@@ -33,6 +34,14 @@ struct Document {
 struct ScopeData {
     plan: Plan,
     reviews: Vec<ReviewComment>,
+    /// Plan-step reviews and work windows (agent-settings 08 §5.6, §5.8). Absent in files written
+    /// before they existed; an older binary reports a file with them as damaged (downgrade only).
+    #[serde(default, skip_serializing_if = "is_empty")]
+    steps: StepReviews,
+}
+
+fn is_empty(steps: &StepReviews) -> bool {
+    *steps == StepReviews::default()
 }
 
 impl Document {
@@ -114,13 +123,8 @@ impl JsonPlanReviewStore {
         Ok(document)
     }
 
-    /// Lock → re-read → change one scope → validate → atomic replace. Nothing is written if the
-    /// change fails.
-    fn mutate<T>(
-        &self,
-        scope: &PlanScope,
-        change: impl FnOnce(&mut ScopeData) -> Result<T>,
-    ) -> Result<T> {
+    /// The cross-process lock every write holds; released when dropped.
+    fn lock(&self) -> Result<File> {
         let lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -129,6 +133,17 @@ impl JsonPlanReviewStore {
             .open(self.dir.join(LOCK_NAME))
             .context("打开计划与评审锁")?;
         fs2::FileExt::lock_exclusive(&lock).context("锁定计划与评审数据")?;
+        Ok(lock)
+    }
+
+    /// Lock → re-read → change one scope → validate → atomic replace. Nothing is written if the
+    /// change fails.
+    fn mutate<T>(
+        &self,
+        scope: &PlanScope,
+        change: impl FnOnce(&mut ScopeData) -> Result<T>,
+    ) -> Result<T> {
+        let lock = self.lock()?;
         let mut document = self.read()?;
         let mut data = document.get(scope);
         let value = change(&mut data)?;
@@ -289,5 +304,94 @@ impl PlanReviewService for JsonPlanReviewStore {
             info!(workspace = %scope.workspace, chat = %scope.chat, comment_count, "review package built");
             Ok(ReviewPackage { prompt, comment_count })
         })
+    }
+
+    fn step_reviews(&self, scope: &PlanScope) -> Result<StepReviews> {
+        Ok(self.read()?.get(scope).steps)
+    }
+
+    fn update_reviews(
+        &self,
+        scope: &PlanScope,
+        change: &mut dyn FnMut(&mut Plan, &mut StepReviews) -> Result<()>,
+    ) -> Result<(Plan, StepReviews)> {
+        self.mutate(scope, |data| {
+            change(&mut data.plan, &mut data.steps)?;
+            Ok(())
+        })?;
+        let data = self.read()?.get(scope);
+        Ok((data.plan, data.steps))
+    }
+
+    fn clear_pending_reviews(&self) -> Result<()> {
+        let lock = self.lock()?;
+        let mut document = self.read()?;
+        let mut cleared = 0;
+        for data in document
+            .scopes
+            .values_mut()
+            .flat_map(|chats| chats.values_mut())
+        {
+            cleared += data.steps.pending.len();
+            data.steps.pending.clear();
+        }
+        if cleared > 0 {
+            self.write(&document)?;
+            info!(cleared, "pending plan-step reviews cleared");
+        }
+        drop(lock);
+        Ok(())
+    }
+
+    fn open_window(
+        &self,
+        scope: &PlanScope,
+        item: &PlanItemId,
+        mut baseline: Baseline,
+    ) -> Result<Option<Baseline>> {
+        let lock = self.lock()?;
+        let mut document = self.read()?;
+        let mut data = document.get(scope);
+        let in_progress = plan_ops::items(&data.plan)
+            .any(|i| &i.id == item && i.status == PlanStatus::InProgress);
+        if !in_progress || data.steps.baselines.contains_key(item) {
+            return Ok(None);
+        }
+        let others: Vec<&mut ScopeData> = document
+            .scopes
+            .get_mut(scope.workspace.as_str())
+            .into_iter()
+            .flat_map(|chats| chats.iter_mut())
+            .filter(|(chat, data)| {
+                chat.as_str() != scope.chat.as_str() && !data.steps.baselines.is_empty()
+            })
+            .map(|(_, data)| data)
+            .collect();
+        if !others.is_empty() {
+            baseline.shared = true;
+            for other in others {
+                for window in other.steps.baselines.values_mut() {
+                    window.shared = true;
+                }
+            }
+        }
+        data.steps.baselines.insert(item.clone(), baseline.clone());
+        document.put(scope, data);
+        self.write(&document)?;
+        drop(lock);
+        info!(workspace = %scope.workspace, chat = %scope.chat, item = %item, shared = baseline.shared, "work window opened");
+        Ok(Some(baseline))
+    }
+
+    fn windows_elsewhere(&self, scope: &PlanScope) -> Result<bool> {
+        Ok(self
+            .read()?
+            .scopes
+            .get(scope.workspace.as_str())
+            .is_some_and(|chats| {
+                chats.iter().any(|(chat, data)| {
+                    chat.as_str() != scope.chat.as_str() && !data.steps.baselines.is_empty()
+                })
+            }))
     }
 }

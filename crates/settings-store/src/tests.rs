@@ -5,7 +5,7 @@ use thinkrail_core::{
     Access, Endpoint, EnvValue, ErrorKind, Header, McpOrigin, McpScope, McpServer, McpServerInput,
     McpService, McpTransport, ModelPrefService, ModelRef, ModelType, ProjectId, Protocol, Provider,
     ProviderId, ProviderInput, ProviderKeyId, ProviderKeyInput, ProviderKeyUpdate, ProviderModel,
-    ProviderService, Result, Secret, ThinkingLevel,
+    ProviderService, Result, ReviewPrefs, ReviewSwitch, Secret, ThinkingLevel,
 };
 
 use crate::{SqliteSettingsStore, mask::mask};
@@ -936,6 +936,69 @@ fn model_prefs_defaults_and_hidden_models() {
         "a dangling default is kept for the UI"
     );
     assert_eq!(store.set_default(None, None).unwrap(), Default::default());
+}
+
+#[test]
+fn review_settings_default_off_persist_and_follow_the_default_when_cleared() {
+    let directory = TempDir::new().unwrap();
+    let store = open(&directory);
+    assert_eq!(store.prefs().unwrap().review, ReviewPrefs::default());
+    let provider = create(&store, input("relay")).unwrap();
+    let claude = ModelRef {
+        provider: provider.id.clone(),
+        model_id: "claude-test".into(),
+    };
+
+    store
+        .set_review_model(Some(claude.clone()), Some(ThinkingLevel::High))
+        .unwrap();
+    store
+        .set_review_switch(ReviewSwitch::AgentReview, true)
+        .unwrap();
+    let prefs = store
+        .set_review_switch(ReviewSwitch::AutoFix, true)
+        .unwrap();
+    let expected = ReviewPrefs {
+        model: Some(claude.clone()),
+        effort: Some(ThinkingLevel::High),
+        agent_review: true,
+        auto_fix: true,
+    };
+    assert_eq!(prefs.review, expected);
+    assert_eq!(
+        open(&directory).prefs().unwrap().review,
+        expected,
+        "durable"
+    );
+    assert_eq!(
+        prefs.default_model, None,
+        "review settings leave the default alone"
+    );
+
+    kind(
+        store.set_review_model(
+            Some(ModelRef {
+                provider: provider.id.clone(),
+                model_id: "missing".into(),
+            }),
+            None,
+        ),
+        ErrorKind::NotFound,
+    );
+    let prefs = store
+        .set_review_switch(ReviewSwitch::AutoFix, false)
+        .unwrap();
+    assert!(!prefs.review.auto_fix && prefs.review.agent_review);
+    let prefs = store.set_review_model(None, None).unwrap();
+    assert_eq!((prefs.review.model, prefs.review.effort), (None, None));
+
+    store.set_review_model(Some(claude), None).unwrap();
+    let provider = store.provider(&provider.id).unwrap();
+    ProviderService::delete(&store, &provider.id, provider.revision).unwrap();
+    assert!(
+        store.prefs().unwrap().review.model.is_some(),
+        "a dangling review model is kept so the page can say why it fails"
+    );
 }
 
 #[test]

@@ -11,8 +11,8 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorKind,
-    InteractionAnswer, Message, NativeSessionKey, Result, Role, SessionSink, SessionSnapshot,
-    StartSession, ThinkingLevel,
+    InteractionAnswer, Message, NativeSessionKey, Result, Role, SessionRole, SessionSink,
+    SessionSnapshot, StartSession, ThinkingLevel,
 };
 use tracing::{debug, info};
 
@@ -82,6 +82,7 @@ impl AgentRuntime for DshRuntime {
             live: live.clone(),
             key: Mutex::new(String::new()),
             permissions: Mutex::new(HashMap::new()),
+            reviewer: matches!(request.role, SessionRole::Reviewer { .. }),
         });
         let reader = dsh.clone();
         session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| {
@@ -101,6 +102,7 @@ struct DshSession {
     key: Mutex<String>,
     /// Open permission requests: interaction id → JSON-RPC request id to reply to.
     permissions: Mutex<HashMap<String, Value>>,
+    reviewer: bool,
 }
 
 impl DshSession {

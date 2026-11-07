@@ -5,7 +5,7 @@ use std::sync::Arc;
 use gpui_kit::Context;
 use thinkrail_core::{
     AgentSession, BackendKind, ChatBinding, ChatId, Error, Readiness, Result, RouteRequest,
-    StartSession,
+    SessionRole, StartSession,
 };
 use tracing::{debug, info};
 
@@ -48,6 +48,8 @@ fn launch_engine(
         project,
         backend,
         new_session: binding.is_none(),
+        model: None,
+        effort: None,
     };
     let routing = match services.router.prepare(&route_request) {
         Ok(routing) => routing,
@@ -73,7 +75,14 @@ fn launch_engine(
             return Err(error);
         }
     };
-    let host_tools = services.host_tools(&workspace, &chat);
+    let host_tool_options = match services.host_tool_options(backend) {
+        Ok(options) => options,
+        Err(error) => {
+            services.router.release(&chat);
+            return Err(error);
+        }
+    };
+    let host_tools = services.host_tools(&workspace, &chat, host_tool_options);
     let request = StartSession {
         chat: chat.clone(),
         workspace: workspace.clone(),
@@ -85,6 +94,7 @@ fn launch_engine(
         host_tools,
         routing,
         support_dir,
+        role: SessionRole::Worker,
     };
     let session = match services.runtime(backend).start(request, sink) {
         Ok(session) => session,
@@ -126,6 +136,7 @@ fn launch_engine(
         session,
         binding,
         routing_signature,
+        host_tool_options,
         prompt_error,
     })
 }

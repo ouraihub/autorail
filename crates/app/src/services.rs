@@ -11,10 +11,10 @@ use serde_json::Value;
 use thinkrail_agents::{DshRuntime, ManagedEngines, OmpRuntime, PiRuntime};
 use thinkrail_core::{
     AgentRuntime, AppPrefService, BackendKind, ChatBindingService, ChatId, EngineSetup, Error,
-    ErrorCode as _, HostToolAccess, HostToolHandler, HostToolResult, HostToolSpec, McpService,
-    ModelPrefService, ModelRouter, PlanReviewService, PlanScope, ProviderProbe, ProviderService,
-    Readiness, SessionEvent, SessionSink, TerminalEvent, TerminalService, TerminalSink,
-    WorkspaceId, WorkspaceRoots, WorkspaceService,
+    ErrorCode as _, HostToolAccess, HostToolHandler, HostToolOptions, HostToolResult, HostToolSpec,
+    McpService, ModelPrefService, ModelRouter, PlanReviewService, PlanScope, ProviderProbe,
+    ProviderService, Readiness, ReviewEvent, SessionEvent, SessionSink, TerminalEvent,
+    TerminalService, TerminalSink, WorkspaceId, WorkspaceRoots, WorkspaceService,
 };
 use thinkrail_host_tools::{HostTools, ToolBridge};
 use thinkrail_observability::LogHandle;
@@ -24,6 +24,7 @@ use thinkrail_settings_store::SqliteSettingsStore;
 use thinkrail_terminal::PtyTerminalService;
 use thinkrail_workspace::GitWorkspaceService;
 use tracing::{debug, info, warn};
+mod review;
 
 /// PTY output waits here when the UI falls behind (backpressure on the reader thread).
 const TERMINAL_QUEUE: usize = 256;
@@ -100,18 +101,36 @@ impl Services {
         Ok(self.engines.status(backend)?.map(|install| install.launch))
     }
 
-    /// A fresh token for one engine launch of `chat`; its tool calls land in this chat's scope.
-    pub fn host_tools(&self, workspace: &WorkspaceId, chat: &ChatId) -> Option<HostToolAccess> {
+    pub fn host_tool_options(
+        &self,
+        backend: BackendKind,
+    ) -> thinkrail_core::Result<HostToolOptions> {
+        Ok(HostToolOptions {
+            request_review: self.prefs.prefs()?.review.agent_review,
+            async_review: backend == BackendKind::Dsh,
+        })
+    }
+
+    pub fn host_tools(
+        &self,
+        workspace: &WorkspaceId,
+        chat: &ChatId,
+        options: HostToolOptions,
+    ) -> Option<HostToolAccess> {
         let hub = self.host_tools.as_ref()?;
-        let token = hub.bridge.register(PlanScope {
-            workspace: workspace.clone(),
-            chat: chat.clone(),
-        });
+        let token = hub.bridge.register(
+            PlanScope {
+                workspace: workspace.clone(),
+                chat: chat.clone(),
+            },
+            options,
+        );
         Some(HostToolAccess {
             executable: hub.executable.clone(),
             pipe: hub.bridge.pipe_name().to_owned(),
             token,
             handler: hub.handler.clone(),
+            options,
         })
     }
 
@@ -139,12 +158,11 @@ impl Services {
     }
 }
 
-/// Engine and PTY threads push events here; foreground tasks drain them.
 pub struct Channels {
     pub sessions: async_channel::Receiver<SessionEvent>,
+    pub reviews: async_channel::Receiver<ReviewEvent>,
     pub session_sink: Arc<dyn SessionSink>,
     pub terminals: async_channel::Receiver<TerminalEvent>,
-    /// The chat whose plan a host tool call may have changed.
     pub plans: async_channel::Receiver<PlanScope>,
 }
 
@@ -155,20 +173,18 @@ struct NotifyingTools {
 }
 
 impl HostToolHandler for NotifyingTools {
-    fn specs(&self) -> Vec<HostToolSpec> {
-        self.inner.specs()
+    fn specs(&self, options: HostToolOptions) -> Vec<HostToolSpec> {
+        self.inner.specs(options)
     }
-
-    /// Every engine's tool calls pass here (MCP bridge and OMP in-process): one line per call,
-    /// tool name, chat, duration and outcome only — never arguments or results (04 §3).
     fn call(
         &self,
         scope: &PlanScope,
+        options: HostToolOptions,
         name: &str,
         arguments: Value,
     ) -> thinkrail_core::Result<HostToolResult> {
         let started = std::time::Instant::now();
-        let result = self.inner.call(scope, name, arguments);
+        let result = self.inner.call(scope, options, name, arguments);
         let ms = started.elapsed().as_millis();
         match &result {
             Ok(reply) => {
@@ -178,10 +194,11 @@ impl HostToolHandler for NotifyingTools {
                 warn!(chat = %scope.chat, tool = name, ms, code = error.code(), "host tool failed")
             }
         }
-        if self.changed.try_send(scope.clone()).is_err() {
-            debug!("plan change dropped: UI is gone");
-        }
+        let _ = self.changed.try_send(scope.clone());
         result
+    }
+    fn cancel(&self, scope: &PlanScope) {
+        self.inner.cancel(scope);
     }
 }
 
@@ -248,13 +265,13 @@ pub fn build(
     let (session_tx, sessions) = async_channel::unbounded();
     let (terminal_tx, terminals) = async_channel::bounded(TERMINAL_QUEUE);
     let (plan_tx, plan_changes) = async_channel::unbounded();
+    let (review_tx, reviews) = async_channel::unbounded();
     let terminals_service = Arc::new(PtyTerminalService::new(
         data_dir,
         roots,
         Arc::new(TerminalChannel(terminal_tx)),
     ));
-    let host_tools = start_host_tools(plans.clone(), workspace.clone(), plan_tx);
-    let services = Services {
+    let mut services = Services {
         workspace,
         bindings,
         terminals: terminals_service,
@@ -272,11 +289,20 @@ pub fn build(
             Arc::new(OmpRuntime::new()),
             Arc::new(DshRuntime::new()),
         ],
-        host_tools,
+        host_tools: None,
         engine_support_dir: data_dir.join("engines"),
     };
+    let runner = review::AppReviewRunner::new(&services, data_dir.join("engines"), review_tx);
+    services.host_tools = start_host_tools(
+        services.plans.clone(),
+        services.workspace.clone(),
+        services.prefs.clone(),
+        runner,
+        plan_tx,
+    );
     let channels = Channels {
         sessions,
+        reviews,
         session_sink: Arc::new(SessionChannel(session_tx)),
         terminals,
         plans: plan_changes,
@@ -287,7 +313,9 @@ pub fn build(
 /// Host tools are an enhancement: if the pipe cannot start, chats still run, without them.
 fn start_host_tools(
     plans: Arc<dyn PlanReviewService>,
-    roots: Arc<dyn WorkspaceRoots>,
+    workspace: Arc<dyn WorkspaceService>,
+    prefs: Arc<dyn ModelPrefService>,
+    runner: Arc<dyn thinkrail_core::ReviewRunner>,
     changed: async_channel::Sender<PlanScope>,
 ) -> Option<Arc<HostToolsHub>> {
     let executable = match std::env::current_exe() {
@@ -298,7 +326,9 @@ fn start_host_tools(
         }
     };
     let handler: Arc<dyn HostToolHandler> = Arc::new(NotifyingTools {
-        inner: HostTools::new(plans, roots),
+        inner: HostTools::new(plans, workspace.clone())
+            .with_workspaces(workspace)
+            .with_reviews(runner, prefs),
         changed,
     });
     match ToolBridge::start(handler.clone()) {

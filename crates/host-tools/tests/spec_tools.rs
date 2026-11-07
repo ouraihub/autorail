@@ -51,7 +51,15 @@ impl Fixture {
             workspace: "w".into(),
             chat: "c".into(),
         };
-        let result = self.tools.call(&scope, name, args).unwrap();
+        let result = self
+            .tools
+            .call(
+                &scope,
+                thinkrail_core::HostToolOptions::default(),
+                name,
+                args,
+            )
+            .unwrap();
         assert!(
             result.text.len() <= 50 * 1024 && result.text.split('\n').count() <= 2000,
             "{name} output unbounded"

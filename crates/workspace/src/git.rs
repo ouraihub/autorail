@@ -15,6 +15,8 @@ use crate::paths::bounded_read;
 
 pub(crate) const MAX_OUTPUT: usize = 16 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// A host commit runs the user's hooks, which may run checks.
+const HOOK_TIMEOUT: Duration = Duration::from_secs(600);
 const POLL: Duration = Duration::from_millis(10);
 
 #[derive(Debug)]
@@ -26,18 +28,27 @@ pub(crate) struct Output {
 /// Runs `git` without a shell, with hooks/fsmonitor disabled, `GIT_*` env removed, a 30 s timeout
 /// and 16 MiB output limit. Exit codes in `allowed` are returned as `success: false`.
 pub(crate) fn run(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output> {
+    spawn(root, args, allowed, false)
+}
+
+/// [`run`] with the user's hooks enabled and a 10 minute timeout, for the host's commit.
+pub(crate) fn run_with_hooks(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output> {
+    spawn(root, args, allowed, true)
+}
+
+fn spawn(root: &Path, args: &[&str], allowed: &[i32], hooks: bool) -> Result<Output> {
     let started = Instant::now();
+    let timeout = if hooks { HOOK_TIMEOUT } else { TIMEOUT };
     let mut command = Command::new("git");
     command
         .current_dir(root)
-        .args([
-            "--no-optional-locks",
-            "--literal-pathspecs",
-            "-c",
-            "core.hooksPath=",
-            "-c",
-            "core.fsmonitor=false",
-        ])
+        .args(["--no-optional-locks", "--literal-pathspecs"])
+        .args(if hooks {
+            &[][..]
+        } else {
+            &["-c", "core.hooksPath="][..]
+        })
+        .args(["-c", "core.fsmonitor=false"])
         .args(["-c", "core.quotePath=false"])
         .args(args)
         .stdin(Stdio::null())
@@ -74,11 +85,12 @@ pub(crate) fn run(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output>
         if let Some(status) = child.try_wait().context("等待 git")? {
             break status;
         }
-        if started.elapsed() > TIMEOUT {
+        if started.elapsed() > timeout {
             terminate(&mut child);
             return Err(Error::timeout(format!(
-                "git {} 超过 30 秒未完成",
-                args.first().copied().unwrap_or("")
+                "git {} 超过 {} 秒未完成",
+                args.first().copied().unwrap_or(""),
+                timeout.as_secs()
             )));
         }
         thread::sleep(POLL);
@@ -223,7 +235,7 @@ pub(crate) fn default_branch(root: &Path) -> Result<String> {
     current_branch(root)
 }
 
-fn has_head(root: &Path) -> Result<bool> {
+pub(crate) fn has_head(root: &Path) -> Result<bool> {
     Ok(run(
         root,
         &["rev-parse", "--verify", "--quiet", "HEAD"],
@@ -376,16 +388,14 @@ pub(crate) fn commits(root: &Path, limit: usize) -> Result<Vec<Commit>> {
     if !has_head(root)? {
         return Ok(Vec::new());
     }
-    let output = ok(
-        root,
-        &[
-            "log",
-            "-z",
-            &format!("-{limit}"),
-            "--format=%H%x1f%s%x1f%an%x1f%ct",
-            "--",
-        ],
-    )?;
+    let output = ok(root, &["log", "-z", &format!("-{limit}"), LOG_FORMAT, "--"])?;
+    parse_log(&output)
+}
+
+/// The `--format` [`parse_log`] reads, with `-z`.
+pub(crate) const LOG_FORMAT: &str = "--format=%H%x1f%s%x1f%an%x1f%ct";
+
+pub(crate) fn parse_log(output: &str) -> Result<Vec<Commit>> {
     output
         .split('\0')
         .filter(|record| !record.trim().is_empty())

@@ -58,12 +58,14 @@ impl ChatPanel {
                                     snapshot: None,
                                     usage: super::usage::Usage::default(),
                                     routing_signature: None,
+                                    host_tool_options: Default::default(),
                                     catalog: Vec::new(),
                                     restart_pending: false,
                                     closing: false,
                                     starting: false,
                                     blocked: None,
                                     ordinal,
+                                    review_cards: std::collections::HashMap::new(),
                                     plan: None,
                                 },
                             );
@@ -106,12 +108,14 @@ impl ChatPanel {
                 snapshot: None,
                 usage: super::usage::Usage::default(),
                 routing_signature: None,
+                host_tool_options: Default::default(),
                 catalog: Vec::new(),
                 restart_pending: false,
                 closing: false,
                 starting: false,
                 blocked: None,
                 ordinal,
+                review_cards: std::collections::HashMap::new(),
                 plan: None,
             },
         );
@@ -215,6 +219,7 @@ impl ChatPanel {
                         chat.binding = Some(started.binding);
                         chat.blocked = None;
                         chat.routing_signature = Some(started.routing_signature);
+                        chat.host_tool_options = started.host_tool_options;
                         chat.catalog = Vec::new();
                         chat.restart_pending = false;
                         chat.closing = false;
