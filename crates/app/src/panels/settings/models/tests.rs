@@ -68,7 +68,7 @@ fn changing_model_keeps_the_effort_only_where_the_new_model_declares_it() {
             max_tokens: 16_384,
         },
     };
-    let kept = default_group::kept_effort;
+    let kept = model_select::kept_effort;
     assert_eq!(kept(Some(High), Some(&choice(vec![Low, High]))), Some(High));
     assert_eq!(kept(Some(High), Some(&choice(vec![Low, Medium]))), None);
     assert_eq!(kept(Some(High), Some(&choice(Vec::new()))), None);

@@ -138,13 +138,14 @@ fn model_ref(route: &str, model_id: &str) -> String {
 }
 
 /// The host tool server of the pi extension. `exposure: "direct"` declares the tools to the model
-/// (the default codemode hides them); `timeout` 600 s leaves room for long tool runs. The child
-/// inherits pi's environment, which carries `THINKRAIL_HOST_PIPE` / `THINKRAIL_HOST_TOKEN`.
+/// (the default codemode hides them); the per-request `timeout` of 1200 s outlasts a plan-step
+/// review (15 minutes, agent-settings 08 §5.5). The child inherits pi's environment, which carries
+/// `THINKRAIL_HOST_PIPE` / `THINKRAIL_HOST_TOKEN`.
 const PI_HOST_TOOLS: &str = r#"	pi.registerMcpServer("thinkrail", {
 		command: process.env.THINKRAIL_HOST_EXE,
 		args: ["mcp-host"],
 		exposure: "direct",
-		timeout: 600,
+		timeout: 1200,
 		description: "ThinkRail host: this chat's TODO plan and review comments.",
 	});
 "#;
@@ -267,6 +268,15 @@ pub(crate) fn pi_extension(host_tools: bool, routing: &EngineRouting) -> String 
     body
 }
 
+/// A reviewer's pi extension: the providers only. No workflow rules (its system prompt is the
+/// reviewer's), no host tools, no MCP servers (08 §5.4).
+pub(crate) fn pi_reviewer_extension(routing: &EngineRouting) -> String {
+    let mut body = String::from("export default function (pi) {\n");
+    body.extend(routing.providers.iter().map(pi_provider));
+    body.push_str("}\n");
+    body
+}
+
 /// pi arguments for the default model (new sessions only; a resumed session keeps its own).
 pub(crate) fn pi_model_args(routing: &EngineRouting) -> Vec<String> {
     let Some(default) = &routing.default_model else {
@@ -350,6 +360,24 @@ pub(crate) fn omp_extension(routing: &EngineRouting) -> String {
     body
 }
 
+/// A reviewer's OMP extension: the providers only, no workflow rules (08 §5.4).
+pub(crate) fn omp_reviewer_extension(routing: &EngineRouting) -> String {
+    let mut body = OMP_EXTENSION_HEAD.to_owned();
+    body.extend(routing.providers.iter().map(omp_provider));
+    body.push_str("}\n");
+    body
+}
+
+/// `provider/model[:level]`, the `--model` value of a reviewer's pi/OMP launch.
+pub(crate) fn model_flag(routing: &EngineRouting) -> Option<String> {
+    let default = routing.default_model.as_ref()?;
+    let model = model_ref(&default.route, &default.model_id);
+    Some(match default.effort {
+        Some(effort) => format!("{model}:{}", level_name(effort)),
+        None => model,
+    })
+}
+
 /// `omp-thinkrail.yml` (04 §6.3), loaded with `--config`: the bundled skills directory, project
 /// MCP configs off when there are host MCP servers, and the default model as `modelRoles.default`.
 pub(crate) fn omp_overlay(routing: &EngineRouting, skills: &std::path::Path) -> String {
@@ -412,6 +440,42 @@ pub(crate) fn dsh_patch(
     if host_tools {
         body.push_str("- id: tool-todo\n  disabled: true\n");
     }
+    dsh_routing(&mut body, routing)?;
+    Ok(body)
+}
+
+/// DSH 0.2.1-rc.5 (`dsh-base/cordis.patch.yml`) rows a plan-step reviewer must not have: writing
+/// tools, TODO/goal state, skills, workflows, subagents, the web and plan mode (08 §5.4).
+const DSH_REVIEWER_OFF: [&str; 10] = [
+    "tool-todo",
+    "tool-goal",
+    "tool-skill",
+    "tool-workflow",
+    "tool-subagent",
+    "tool-subagent-fork",
+    "tool-subagent-control",
+    "tool-subagent-list-agents",
+    "tool-web",
+    "plan-mode",
+];
+
+/// A reviewer's patch: `tool-fs` without `write`/`edit`, the rows above off, `prompt` as the
+/// persona and the same providers and model as a worker. No skills and no host tools.
+pub(crate) fn dsh_reviewer_patch(prompt: &str, routing: &EngineRouting) -> Result<String> {
+    let mut body = String::from("- id: tool-fs\n  config:\n    write: false\n    edit: false\n");
+    for row in DSH_REVIEWER_OFF {
+        body.push_str(&format!("- id: {row}\n  disabled: true\n"));
+    }
+    body.push_str(&format!(
+        "- id: system-prompt\n  config:\n    personaPrefix: {}\n",
+        quote(prompt)
+    ));
+    dsh_routing(&mut body, routing)?;
+    Ok(body)
+}
+
+/// The providers merged into `llm-pi-ai` and the `acp` default model.
+fn dsh_routing(body: &mut String, routing: &EngineRouting) -> Result<()> {
     if !routing.providers.is_empty() {
         body.push_str("- id: llm-pi-ai\n  config:\n    providers:\n");
         for provider in &routing.providers {
@@ -439,7 +503,7 @@ pub(crate) fn dsh_patch(
             quote(&default.model_id)
         ));
     }
-    Ok(body)
+    Ok(())
 }
 
 fn acp_values(server: &str, bindings: &[EnvBinding], routing: &EngineRouting) -> Result<Value> {

@@ -17,6 +17,7 @@ mod model;
 pub(crate) mod usage;
 
 pub(crate) use dialogs::Dialogs;
+pub(crate) use dialogs::cancel;
 pub(crate) use model::{model, model_event, switch_model, thinking_level};
 
 const IMAGE: &str = "[图片]";

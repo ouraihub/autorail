@@ -17,6 +17,13 @@ pub struct RouteRequest {
     pub project: ProjectId,
     pub backend: BackendKind,
     pub new_session: bool,
+    /// For a new session: this model instead of the saved default; routing fails with
+    /// `Invalid` when it cannot be routed (a review never silently changes model, 08 §5.4).
+    #[serde(default)]
+    pub model: Option<ModelRef>,
+    /// For a new session: replaces the saved default effort; clamped to the model either way.
+    #[serde(default)]
+    pub effort: Option<ThinkingLevel>,
 }
 
 /// Everything one engine launch projects. Empty when there are no providers and no MCP servers;

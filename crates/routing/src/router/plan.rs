@@ -151,13 +151,15 @@ pub(super) fn route_for<'a>(
     })
 }
 
-pub(super) fn default_model(
+/// `wanted` through the planned routes, its effort clamped to what the model declares; `None`
+/// when the provider or model is gone, disabled, not a chat model or not routed for this engine.
+pub(super) fn resolve_model(
     routes: &[PlannedRoute<'_>],
     providers: &[Provider],
-    prefs: &ModelPrefs,
+    wanted: &ModelRef,
+    effort: Option<ThinkingLevel>,
 ) -> Option<DefaultModel> {
-    let wanted = prefs.default_model.as_ref()?;
-    let found = providers
+    providers
         .iter()
         .filter(|p| p.input.enabled && p.id == wanted.provider)
         .find_map(|provider| {
@@ -168,20 +170,46 @@ pub(super) fn default_model(
                 .find(|m| usable(m) && m.model_id == wanted.model_id)?;
             let route = route_for(routes, provider, model)?;
             let efforts: &[ThinkingLevel] = if model.reasoning { &model.efforts } else { &[] };
-            let effort = clamp_effort(prefs.default_effort, efforts);
             Some(DefaultModel {
                 route: route.to_owned(),
                 model_id: model.model_id.clone(),
-                effort,
+                effort: clamp_effort(effort, efforts),
             })
-        });
+        })
+}
+
+/// The new session's model: the request's pinned model (which must route), else the saved
+/// default (which the engine's own default replaces when it cannot route). `effort` replaces the
+/// saved default effort when given.
+pub(super) fn session_model(
+    routes: &[PlannedRoute<'_>],
+    providers: &[Provider],
+    prefs: &ModelPrefs,
+    pinned: Option<&ModelRef>,
+    effort: Option<ThinkingLevel>,
+) -> Result<Option<DefaultModel>> {
+    let effort = effort.or(prefs.default_effort);
+    if let Some(wanted) = pinned {
+        return resolve_model(routes, providers, wanted, effort)
+            .map(Some)
+            .ok_or_else(|| {
+                Error::invalid(format!(
+                    "所选模型「{}」无法通过该引擎的编码搭档路由",
+                    wanted.model_id
+                ))
+            });
+    }
+    let Some(wanted) = prefs.default_model.as_ref() else {
+        return Ok(None);
+    };
+    let found = resolve_model(routes, providers, wanted, effort);
     if found.is_none() {
         info!(
             provider = wanted.provider.as_str(),
             "默认模型不可用，引擎使用自己的默认模型"
         );
     }
-    found
+    Ok(found)
 }
 
 /// Engines get enabled chat models only; image, embedding and other types stay in settings.

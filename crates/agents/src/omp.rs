@@ -13,7 +13,7 @@ use std::{
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, HostToolHandler,
+    AgentRuntime, AgentSession, BackendKind, Capabilities, Error, HostToolHandler, HostToolOptions,
     InteractionAnswer, NativeSessionKey, PlanScope, Result, SessionSink, SessionSnapshot,
     StartSession, ThinkingLevel,
 };
@@ -89,6 +89,7 @@ impl AgentRuntime for OmpRuntime {
                 workspace: request.workspace.clone(),
                 chat: request.chat.clone(),
             },
+            options: access.options,
             definitions: host::omp_definitions(access),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
         });
@@ -121,6 +122,7 @@ impl AgentRuntime for OmpRuntime {
 struct HostTools {
     handler: Arc<dyn HostToolHandler>,
     scope: PlanScope,
+    options: HostToolOptions,
     definitions: Value,
     /// Calls OMP withdrew; their late results are dropped.
     cancelled: Arc<Mutex<HashSet<String>>>,
@@ -170,19 +172,16 @@ impl OmpSession {
             )?;
         }
         let state = self.call("get_state", json!({}), session::left(deadline))?;
-        let key = state["sessionFile"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                Error::protocol("OMP 没有返回会话文件；请从启动参数中删除 --no-session")
-            })?;
+        let key = state["sessionFile"].as_str().filter(|s| !s.is_empty());
         let history = self.history(deadline)?;
         let commands = rpc::commands::or_empty(
             self.call("get_available_commands", json!({}), session::left(deadline))
                 .map(|data| rpc::commands::omp_commands(&data["commands"])),
         );
         let mut p = self.live.state.lock();
-        p.set_key(NativeSessionKey::from(key));
+        if let Some(key) = key {
+            p.set_key(NativeSessionKey::from(key));
+        }
         p.set_model(rpc::model(&state));
         p.set_session_name(rpc::commands::session_name(&state));
         p.set_commands(commands);
@@ -248,6 +247,8 @@ impl OmpSession {
             "host_tool_cancel" => {
                 if let (Some(tools), Some(target)) = (&self.tools, frame["targetId"].as_str()) {
                     tools.cancelled.lock().insert(target.to_owned());
+                    // A withdrawn `request_review` must not keep its review running (08 §5.5).
+                    tools.handler.cancel(&tools.scope);
                 }
                 Ok(())
             }

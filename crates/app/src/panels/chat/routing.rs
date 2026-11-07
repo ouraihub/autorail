@@ -4,8 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use gpui_kit::Context;
 use thinkrail_core::{
-    AgentSession, ChatId, ModelChoice, ProjectId, RouteRequest, SessionPhase, ThinkingLevel,
-    WorkspaceId,
+    AgentSession, ChatId, HostToolOptions, ModelChoice, ProjectId, RouteRequest, SessionPhase,
+    ThinkingLevel, WorkspaceId,
 };
 
 use super::{ChatPanel, engine::dispose_engine};
@@ -14,7 +14,13 @@ use crate::state::run;
 #[cfg(test)]
 mod tests;
 
-type RoutingCheck = (ChatId, RouteRequest, Option<String>, Arc<dyn AgentSession>);
+type RoutingCheck = (
+    ChatId,
+    RouteRequest,
+    Option<String>,
+    HostToolOptions,
+    Arc<dyn AgentSession>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoutingAction {
@@ -63,18 +69,27 @@ impl ChatPanel {
                         project,
                         backend,
                         new_session: false,
+                        model: None,
+                        effort: None,
                     },
                     chat.routing_signature.clone(),
+                    chat.host_tool_options,
                     session,
                 ))
             })
             .collect();
-        for (id, request, old_signature, session) in requests {
+        for (id, request, old_signature, old_options, session) in requests {
             self.refresh_catalog(&id, cx);
-            let router = services.router.clone();
+            let services_bg = services.clone();
             run(
                 cx,
-                move || router.signature(&request),
+                move || {
+                    // The 评审 switch is not routing, but a change of what the engine is offered
+                    // restarts it like a routing change (08 §5.2).
+                    let options = services_bg.host_tool_options(request.backend)?;
+                    let signature = services_bg.router.signature(&request)?;
+                    Ok((options == old_options).then_some(signature))
+                },
                 move |this, result, cx| {
                     let services = this.services(cx);
                     let Some(chat) = this.chats.get_mut(&id) else {
@@ -100,9 +115,10 @@ impl ChatPanel {
                             return;
                         }
                     };
+                    // `None`: the offered tools changed, so restart even with the same routing.
                     match routing_action(
                         old_signature.as_deref(),
-                        Some(signature.as_str()),
+                        signature.as_deref(),
                         chat.phase(),
                     ) {
                         RoutingAction::Unchanged => (),

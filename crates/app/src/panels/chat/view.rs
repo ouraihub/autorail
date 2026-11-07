@@ -95,10 +95,17 @@ impl ChatPanel {
             .unwrap_or_default();
         let truncated = snapshot.as_ref().is_some_and(|s| s.output_truncated);
         let plan_key = format!("plan/{id}");
-        let plan_strip = chat
-            .plan
-            .as_ref()
-            .and_then(|p| plan::strip(&plan_key, p, self.open.contains(&plan_key), &toggle, &r));
+        let reviews = &chat.review_cards;
+        let plan_strip = chat.plan.as_ref().and_then(|p| {
+            plan::strip(
+                &plan_key,
+                p,
+                reviews,
+                self.open.contains(&plan_key),
+                &toggle,
+                &r,
+            )
+        });
         let interactions: Vec<AnyElement> = snapshot
             .as_ref()
             .map(|s| s.interactions.clone())

@@ -29,8 +29,8 @@ use gpui_kit::{
     div, px,
 };
 use thinkrail_core::{
-    AgentSession, ChatBinding, ChatId, Error, ModelChoice, Plan, ProjectId, Readiness,
-    SessionPhase, SessionSink, SessionSnapshot, WorkspaceId,
+    AgentSession, ChatBinding, ChatId, Error, HostToolOptions, ModelChoice, Plan, PlanItemId,
+    ProjectId, Readiness, SessionPhase, SessionSink, SessionSnapshot, WorkspaceId,
 };
 use thinkrail_ui::{
     Roles, ThinkrailTheme,
@@ -52,6 +52,8 @@ struct Chat {
     snapshot: Option<SessionSnapshot>,
     usage: usage::Usage,
     routing_signature: Option<String>,
+    /// What the running engine was offered; a change of the 评审 switch restarts it (08 §5.2).
+    host_tool_options: HostToolOptions,
     catalog: Vec<ModelChoice>,
     restart_pending: bool,
     closing: bool,
@@ -59,7 +61,8 @@ struct Chat {
     /// Set when this chat's engine is not installed (07 §5.3): history stays, sending is off.
     blocked: Option<Readiness>,
     ordinal: usize,
-    /// The host-owned TODO plan; `None` until first read.
+    review_cards: HashMap<PlanItemId, thinkrail_core::ReviewEvent>,
+    /// The host keeps the durable plan; review events invalidate it for the same chat.
     plan: Option<Plan>,
 }
 
@@ -120,6 +123,7 @@ struct Started {
     session: Arc<dyn AgentSession>,
     binding: ChatBinding,
     routing_signature: String,
+    host_tool_options: HostToolOptions,
     /// A prompt sent right after starting that the engine refused.
     prompt_error: Option<Error>,
 }
@@ -150,7 +154,8 @@ pub struct ChatPanel {
     slash: slash::SlashMenu,
     model_picker: model_picker::ModelPicker,
     usage_view: Entity<lumakit_usage_status::ContextStatusView>,
-    /// Readiness guidance shown in place of the empty state when a new chat could not start.
+    /// Latest UI-visible review status by chat/item.
+    review_cards: HashMap<(ChatId, PlanItemId), thinkrail_core::ReviewEvent>,
     guide: Option<Readiness>,
     _subscriptions: Vec<Subscription>,
 }
@@ -207,6 +212,7 @@ impl ChatPanel {
             slash: slash::SlashMenu::default(),
             model_picker,
             usage_view,
+            review_cards: HashMap::new(),
             _subscriptions: subscriptions,
         };
         panel.sync_workspace(cx);
@@ -215,6 +221,22 @@ impl ChatPanel {
 
     fn services(&self, cx: &Context<Self>) -> Services {
         self.state.read(cx).services.clone()
+    }
+
+    pub fn on_review_event(&mut self, event: thinkrail_core::ReviewEvent, cx: &mut Context<Self>) {
+        let (chat_id, item_id) = match &event {
+            thinkrail_core::ReviewEvent::Started { scope, item }
+            | thinkrail_core::ReviewEvent::Finished { scope, item, .. } => {
+                (scope.chat.clone(), item.clone())
+            }
+        };
+        if let Some(chat) = self.chats.get_mut(&chat_id) {
+            chat.review_cards.insert(item_id.clone(), event.clone());
+            self.review_cards.insert((chat_id.clone(), item_id), event);
+            if self.active.as_ref() == Some(&chat_id) {
+                cx.notify();
+            }
+        }
     }
 
     fn report(&self, error: &Error, cx: &mut Context<Self>) {

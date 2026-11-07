@@ -268,6 +268,8 @@ pub struct ModelPrefs {
     /// GPT 上下文窗口: per-model context windows that replace the provider setting when routing
     /// (agent-settings 08 §6). The provider's own `context_window` is never rewritten.
     pub context_overrides: Vec<(ModelRef, u32)>,
+    /// 评审 group (agent-settings 08 §5.1).
+    pub review: crate::ReviewPrefs,
 }
 
 /// The range a context-window override may take (the original's `MODEL_CONTEXT_WINDOW_LIMITS`).
@@ -307,6 +309,13 @@ pub trait ModelPrefService: Send + Sync {
     /// Sets (`Some`) or removes (`None`) context-window overrides in one write. A value outside
     /// [`CONTEXT_OVERRIDE_RANGE`] or an unknown model rejects the whole batch.
     fn set_context_overrides(&self, changes: &[(ModelRef, Option<u32>)]) -> Result<ModelPrefs>;
+    /// 评审模型 and its effort; `(None, None)` follows the default chat model.
+    fn set_review_model(
+        &self,
+        model: Option<ModelRef>,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<ModelPrefs>;
+    fn set_review_switch(&self, switch: crate::ReviewSwitch, on: bool) -> Result<ModelPrefs>;
 }
 
 #[cfg(test)]

@@ -2,8 +2,8 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use tempfile::TempDir;
 use thinkrail_core::{
-    ErrorKind, NewReviewComment, Origin, PlanReviewService, PlanScope, PlanStatus, Result,
-    ReviewState, WorkspaceId, WorkspaceRoots,
+    Error, ErrorKind, ItemChange, NewReviewComment, Origin, PlanReviewService, PlanScope,
+    PlanStatus, Result, ReviewRecord, ReviewState, Verdict, WorkspaceId, WorkspaceRoots,
 };
 
 use crate::{
@@ -165,4 +165,81 @@ fn corrupt_storage_is_rejected_and_never_overwritten() {
             damaged
         );
     }
+}
+
+#[test]
+fn step_reviews_share_the_plan_write_and_only_pending_is_cleared() {
+    let (data, work) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let store = open(&data, &work);
+    let (a, b) = (scope("w", "a"), scope("w", "b"));
+    for s in [&a, &b] {
+        store
+            .update_reviews(s, &mut |plan, steps| {
+                let item = plan_ops::add(
+                    plan,
+                    NewItem {
+                        title: "Step".into(),
+                        ..NewItem::default()
+                    },
+                )?
+                .id;
+                steps.pending.insert(item.clone(), vec!["abc".into()]);
+                steps.auto_cycles.insert(item.clone(), 1);
+                steps.verdicts.insert(
+                    item,
+                    ReviewRecord {
+                        verdict: Verdict::RequestChanges,
+                        summary: None,
+                        findings: Vec::new(),
+                        reviewed_shas: vec!["abc".into()],
+                        model: None,
+                        at: 1,
+                    },
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+    // A failed change writes nothing, the plan included.
+    let failed = store.update_reviews(&a, &mut |plan, steps| {
+        plan.loose.clear();
+        steps.verdicts.clear();
+        Err(Error::invalid("no"))
+    });
+    assert!(failed.is_err());
+    assert_eq!(store.plan(&a).unwrap().loose.len(), 1);
+    assert_eq!(store.step_reviews(&a).unwrap().verdicts.len(), 1);
+
+    store
+        .update_plan(&b, &mut |plan| {
+            plan.loose[0].changes.push(ItemChange::Commit {
+                sha: "abc".into(),
+                label: "Step".into(),
+            });
+            Ok(())
+        })
+        .unwrap();
+    store.clear_pending_reviews().unwrap();
+    let reopened = open(&data, &work);
+    for s in [&a, &b] {
+        let steps = reopened.step_reviews(s).unwrap();
+        assert!(steps.pending.is_empty());
+        assert_eq!(steps.verdicts.len(), 1);
+        assert_eq!(steps.auto_cycles.values().copied().collect::<Vec<_>>(), [1]);
+    }
+    assert_eq!(reopened.plan(&b).unwrap().loose[0].changes.len(), 1);
+}
+
+#[test]
+fn files_without_step_reviews_still_load() {
+    let (data, work) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    fs::write(
+        data.path().join("review-plan.json"),
+        r#"{"schemaVersion":1,"scopes":{"w":{"c":{"plan":{"groups":[],"loose":[{"id":"p1","title":"Old","status":"done","origin":"agent","note":null,"summary":null,"verification":null,"commitSubject":null,"createdAt":1,"updatedAt":1}],"summary":null},"reviews":[]}}}}"#,
+    )
+    .unwrap();
+    let store = open(&data, &work);
+    let s = scope("w", "c");
+    assert_eq!(store.step_reviews(&s).unwrap(), Default::default());
+    assert!(store.plan(&s).unwrap().loose[0].changes.is_empty());
 }

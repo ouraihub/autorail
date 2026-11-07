@@ -3,8 +3,8 @@ use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use thinkrail_core::{
-    HostToolHandler, HostToolResult, HostToolSpec, NewReviewComment, PlanReviewService, PlanScope,
-    PlanStatus, Result, ReviewState, WorkspaceId, WorkspaceRoots,
+    HostToolHandler, HostToolOptions, HostToolResult, HostToolSpec, NewReviewComment,
+    PlanReviewService, PlanScope, PlanStatus, Result, ReviewState, WorkspaceId, WorkspaceRoots,
 };
 use thinkrail_plan_review::JsonPlanReviewStore;
 
@@ -44,7 +44,9 @@ fn fixture() -> Fixture {
 
 impl Fixture {
     fn call(&self, name: &str, args: Value) -> HostToolResult {
-        self.tools.call(&self.scope, name, args).unwrap()
+        self.tools
+            .call(&self.scope, HostToolOptions::default(), name, args)
+            .unwrap()
     }
 
     fn ok(&self, name: &str, args: Value) -> String {
@@ -67,7 +69,7 @@ impl Fixture {
 fn specs_are_the_original_tools_plus_resolve_comment() {
     let names: Vec<String> = fixture()
         .tools
-        .specs()
+        .specs(HostToolOptions::default())
         .into_iter()
         .map(|s| s.name)
         .collect();
@@ -283,6 +285,7 @@ fn resolve_comment_only_accepts_sent_comments_of_this_chat() {
         f.tools
             .call(
                 &other,
+                HostToolOptions::default(),
                 "resolve_comment",
                 json!({"commentId": comment.id.to_string()})
             )
@@ -303,10 +306,15 @@ fn resolve_comment_only_accepts_sent_comments_of_this_chat() {
     );
 }
 
-struct Fake;
+/// Records cancels; `slow` blocks until one arrives.
+#[derive(Default)]
+struct Fake {
+    cancels: std::sync::Mutex<usize>,
+    released: std::sync::Condvar,
+}
 
 impl mcp::Backend for Fake {
-    fn list(&mut self) -> std::result::Result<Vec<HostToolSpec>, String> {
+    fn list(&self) -> std::result::Result<Vec<HostToolSpec>, String> {
         Ok(vec![HostToolSpec {
             name: "t".into(),
             description: "d".into(),
@@ -314,22 +322,59 @@ impl mcp::Backend for Fake {
         }])
     }
 
-    fn call(
-        &mut self,
-        name: &str,
-        arguments: Value,
-    ) -> std::result::Result<HostToolResult, String> {
+    fn call(&self, name: &str, arguments: Value) -> std::result::Result<HostToolResult, String> {
+        if name == "slow" {
+            let mut cancels = self.cancels.lock().unwrap();
+            while *cancels == 0 {
+                cancels = self.released.wait(cancels).unwrap();
+            }
+        }
         Ok(HostToolResult {
             text: format!("{name}:{arguments}"),
             is_error: name == "bad",
             structured: None,
         })
     }
+
+    fn cancel(&self) {
+        *self.cancels.lock().unwrap() += 1;
+        self.released.notify_all();
+    }
+}
+
+#[derive(Clone, Default)]
+struct Shared(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Shared {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serve_mcp(frames: &[Value], backend: Arc<Fake>) -> Vec<Value> {
+    let input = frames
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let output = Shared::default();
+    mcp::serve(&mut Cursor::new(input), output.clone(), backend).unwrap();
+    let bytes = output.0.lock().unwrap().clone();
+    String::from_utf8(bytes)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
 }
 
 #[test]
 fn mcp_negotiates_lists_calls_and_rejects_unknown_methods() {
-    let input = [
+    let frames = [
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}),
@@ -337,18 +382,10 @@ fn mcp_negotiates_lists_calls_and_rejects_unknown_methods() {
         json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"bad","arguments":{"x":1}}}),
         json!({"jsonrpc":"2.0","id":5,"method":"resources/list"}),
         json!({"jsonrpc":"2.0","id":6,"method":"ping"}),
-    ]
-    .iter()
-    .map(Value::to_string)
-    .collect::<Vec<_>>()
-    .join("\n");
-    let mut output = Vec::new();
-    mcp::serve(&mut Cursor::new(input), &mut output, &mut Fake).unwrap();
-    let replies: Vec<Value> = String::from_utf8(output)
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
+    ];
+    let mut replies = serve_mcp(&frames, Arc::default());
+    // A call is answered from its own thread, so it may land after later replies.
+    replies.sort_by_key(|r| r["id"].as_i64());
     assert_eq!(replies.len(), 6, "the notification gets no reply");
     assert_eq!(replies[0]["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(replies[0]["result"]["capabilities"], json!({"tools": {}}));
@@ -364,11 +401,27 @@ fn mcp_negotiates_lists_calls_and_rejects_unknown_methods() {
 }
 
 #[test]
+fn a_cancelled_call_is_withdrawn_and_gets_no_reply() {
+    let backend = Arc::new(Fake::default());
+    let frames = [
+        json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"slow","arguments":{}}}),
+        // Not running: ignored, no cancel reaches the host.
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":99}}),
+        json!({"jsonrpc":"2.0","id":8,"method":"ping"}),
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}),
+    ];
+    let replies = serve_mcp(&frames, backend.clone());
+    // The loop kept reading while `slow` blocked; its reply is withheld.
+    assert_eq!(replies, [json!({"jsonrpc":"2.0","id":8,"result":{}})]);
+    assert_eq!(*backend.cancels.lock().unwrap(), 1);
+}
+
+#[test]
 fn pipe_bridge_scopes_calls_by_token_and_rejects_strangers() {
     let f = fixture();
     let handler: Arc<dyn HostToolHandler> = Arc::new(f.tools.clone());
     let bridge = ToolBridge::start(handler).unwrap();
-    let token = bridge.register(f.scope.clone());
+    let token = bridge.register(f.scope.clone(), HostToolOptions::default());
 
     let mut client = BridgeClient::connect(bridge.pipe_name(), &token).unwrap();
     let listed = client.request(json!({"method": "list"})).unwrap();

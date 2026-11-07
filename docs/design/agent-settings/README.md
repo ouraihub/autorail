@@ -14,6 +14,7 @@
 6. [06 提供方交接设计](06-provider-handoff.md)：Provider UI 的代码分析结论、状态边界、后续任务与验收要求。
 7. [07 默认 Agent 与新建项目引导](07-default-agent.md)：去掉 Agent 档案，默认 Agent 和聊天绑定存进数据库，新建项目时检查引擎并引导安装、设默认（设计，取代本包与多 Agent 设计包中的档案内容）。
 8. [08 模型页对标原版](08-models-page.md)：默认模型行布局、评审组（评审模型、Agent 触发的评审、自动修复循环）及其后端、GPT 上下文窗口；原版机制分析与原生版设计（讨论中）。
+9. [09 Native 多语言](../09-localization.md)：`rust-i18n` + YAML catalog、locale 选择、fallback、GPUI 刷新、迁移和验收规则。
 
 | 位置 | 内容 |
 |---|---|

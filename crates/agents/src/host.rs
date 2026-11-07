@@ -65,7 +65,7 @@ pub(crate) fn omp_definitions(access: &HostToolAccess) -> Value {
     Value::Array(
         access
             .handler
-            .specs()
+            .specs(access.options)
             .into_iter()
             .map(|spec| {
                 json!({

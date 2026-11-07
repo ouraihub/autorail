@@ -222,6 +222,18 @@ pub trait SessionSink: Send + Sync {
     fn publish(&self, event: SessionEvent);
 }
 
+/// What a session is for. A reviewer (agent-settings 08 §5.4) is a throwaway new session with
+/// read/search/shell tools only, the given system prompt, no skills and no host tools; it never
+/// waits on the user: its interaction requests are answered by the engine adapter.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SessionRole {
+    #[default]
+    Worker,
+    Reviewer {
+        system_prompt: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct StartSession {
     pub chat: ChatId,
@@ -242,6 +254,7 @@ pub struct StartSession {
     pub routing: EngineRouting,
     /// This launch's engine support directory for generated files (pi extension, DSH patch, …).
     pub support_dir: PathBuf,
+    pub role: SessionRole,
 }
 
 /// One live engine conversation. All methods return once the engine has *accepted* the command;

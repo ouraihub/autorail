@@ -15,7 +15,9 @@ use std::{
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Stream, prelude::*};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
-use thinkrail_core::{Error, ErrorCode, ErrorKind, HostToolHandler, PlanScope, Result};
+use thinkrail_core::{
+    Error, ErrorCode, ErrorKind, HostToolHandler, HostToolOptions, PlanScope, Result,
+};
 use tracing::{debug, info, warn};
 
 /// Largest request or response line.
@@ -57,7 +59,8 @@ fn bridge_error(what: &str, error: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::External, format!("{what}：{error}"))
 }
 
-type Tokens = Arc<Mutex<HashMap<String, PlanScope>>>;
+/// token → the chat it reaches and what that engine launch was offered.
+type Tokens = Arc<Mutex<HashMap<String, (PlanScope, HostToolOptions)>>>;
 
 /// The running pipe server. Dropping it does not stop the accept thread; it lives for the process.
 pub struct ToolBridge {
@@ -127,14 +130,14 @@ impl ToolBridge {
         &self.pipe
     }
 
-    /// A fresh secret for one chat (`THINKRAIL_HOST_TOKEN`).
-    pub fn register(&self, scope: PlanScope) -> String {
+    /// A fresh secret for one engine launch of a chat (`THINKRAIL_HOST_TOKEN`).
+    pub fn register(&self, scope: PlanScope, options: HostToolOptions) -> String {
         let token = format!(
             "{}{}",
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        self.tokens.lock().insert(token.clone(), scope);
+        self.tokens.lock().insert(token.clone(), (scope, options));
         token
     }
 
@@ -143,18 +146,14 @@ impl ToolBridge {
     }
 }
 
-fn serve(
-    stream: Stream,
-    tokens: &Mutex<HashMap<String, PlanScope>>,
-    handler: &dyn HostToolHandler,
-) {
+fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
     let mut reader = BufReader::new(&stream);
     let mut writer = &stream;
-    let scope = match read_line(&mut reader) {
+    let entry = match read_line(&mut reader) {
         Ok(Some(token)) => tokens.lock().get(token.trim()).cloned(),
         _ => None,
     };
-    let Some(scope) = scope else {
+    let Some((scope, options)) = entry else {
         warn!("host tool connection refused: unknown token");
         return;
     };
@@ -169,10 +168,10 @@ fn serve(
             }
         };
         // A revoked token ends the connection at the next request.
-        if !tokens.lock().values().any(|s| s == &scope) {
+        if !tokens.lock().values().any(|(s, _)| s == &scope) {
             break;
         }
-        let reply = handle(&line, &scope, handler);
+        let reply = handle(&line, &scope, options, handler);
         if let Err(error) = write_line(&mut writer, &reply) {
             debug!(%error, "host tool client went away");
             break;
@@ -181,7 +180,12 @@ fn serve(
 }
 
 /// One bridge request → reply.
-pub(crate) fn handle(line: &str, scope: &PlanScope, handler: &dyn HostToolHandler) -> Value {
+pub(crate) fn handle(
+    line: &str,
+    scope: &PlanScope,
+    options: HostToolOptions,
+    handler: &dyn HostToolHandler,
+) -> Value {
     let request: Value = match serde_json::from_str(line) {
         Ok(request) => request,
         Err(_) => {
@@ -190,18 +194,23 @@ pub(crate) fn handle(line: &str, scope: &PlanScope, handler: &dyn HostToolHandle
     };
     let id = request["id"].clone();
     match request["method"].as_str() {
-        Some("list") => json!({"id": id, "result": handler.specs()}),
+        Some("list") => json!({"id": id, "result": handler.specs(options)}),
         Some("call") => {
             let Some(name) = request["name"].as_str() else {
                 return json!({"id": id, "error": {"code": "PROTOCOL", "message": "missing tool name"}});
             };
-            match handler.call(scope, name, request["arguments"].clone()) {
+            match handler.call(scope, options, name, request["arguments"].clone()) {
                 Ok(result) => json!({"id": id, "result": result}),
                 // The handler logs the failure with its chat and duration.
                 Err(error) => {
                     json!({"id": id, "error": {"code": error.code(), "message": error.to_string()}})
                 }
             }
+        }
+        // The engine withdrew a call (MCP `notifications/cancelled`).
+        Some("cancel") => {
+            handler.cancel(scope);
+            json!({"id": id, "result": null})
         }
         _ => json!({"id": id, "error": {"code": "PROTOCOL", "message": "unknown method"}}),
     }

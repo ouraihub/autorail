@@ -6,7 +6,7 @@ use thinkrail_core::{
 
 use super::{
     Mode, NO_KEY, Router,
-    plan::{default_model, no_enabled_key, plan},
+    plan::{no_enabled_key, plan, session_model},
     short_id,
 };
 use crate::{
@@ -25,7 +25,13 @@ impl Router {
             &prefs.context_overrides,
         )?;
         let default_model = if request.new_session {
-            default_model(&routes, &providers, &prefs)
+            session_model(
+                &routes,
+                &providers,
+                &prefs,
+                request.model.as_ref(),
+                request.effort,
+            )?
         } else {
             None
         };

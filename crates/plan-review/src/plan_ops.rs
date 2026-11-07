@@ -45,6 +45,7 @@ fn item(title: String, status: PlanStatus, origin: Origin, note: Option<String>)
         summary: None,
         verification: None,
         commit_subject: None,
+        changes: Vec::new(),
         created_at: now,
         updated_at: now,
     }
@@ -56,7 +57,7 @@ pub fn items(plan: &Plan) -> impl Iterator<Item = &PlanItem> {
         .chain(plan.groups.iter().flat_map(|g| g.items.iter()))
 }
 
-fn items_mut(plan: &mut Plan) -> impl Iterator<Item = &mut PlanItem> {
+pub(crate) fn items_mut(plan: &mut Plan) -> impl Iterator<Item = &mut PlanItem> {
     plan.loose
         .iter_mut()
         .chain(plan.groups.iter_mut().flat_map(|g| g.items.iter_mut()))

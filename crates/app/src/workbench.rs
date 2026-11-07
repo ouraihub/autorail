@@ -60,6 +60,7 @@ impl Workbench {
         let changes = cx.new(|cx| ChangesPanel::new(state.clone(), files.clone(), window, cx));
         let terminal = cx.new(|cx| TerminalPanel::new(state.clone(), window, cx));
         Self::pump_sessions(&chat, channels.sessions, cx);
+        Self::pump_reviews(&chat, channels.reviews, cx);
         Self::pump_plans(&chat, channels.plans, cx);
         Self::pump_terminals(&terminal, channels.terminals, cx);
         let mut subscriptions = vec![cx.observe(&state, |_, _, cx| cx.notify())];
@@ -108,6 +109,25 @@ impl Workbench {
             while let Ok(scope) = changes.recv().await {
                 if chat
                     .update(cx, |chat, cx| chat.on_plan_changed(&scope.chat, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn pump_reviews(
+        chat: &Entity<ChatPanel>,
+        events: async_channel::Receiver<thinkrail_core::ReviewEvent>,
+        cx: &mut Context<Self>,
+    ) {
+        let chat = chat.downgrade();
+        cx.spawn(async move |_, cx| {
+            while let Ok(event) = events.recv().await {
+                if chat
+                    .update(cx, |chat, cx| chat.on_review_event(event, cx))
                     .is_err()
                 {
                     break;

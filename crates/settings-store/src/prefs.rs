@@ -1,9 +1,9 @@
-//! `ModelPrefService`: default model and effort, hidden models, 编码搭档 choices and the default
-//! Agent (agent-settings 04 §2.4, 07).
+//! `ModelPrefService`: default model and effort, hidden models, 编码搭档 choices, the default
+//! Agent, context-window overrides and the 评审 settings (agent-settings 04 §2.4, 07, 08).
 
 use thinkrail_core::{
     BackendKind, CONTEXT_OVERRIDE_RANGE, EngineProvider, Error, ModelPrefService, ModelPrefs,
-    ModelRef, Result, ThinkingLevel,
+    ModelRef, Result, ReviewSwitch, ThinkingLevel,
 };
 use tracing::info;
 
@@ -15,6 +15,11 @@ use crate::{
 const DEFAULT_MODEL: &str = "default_model";
 const DEFAULT_EFFORT: &str = "default_effort";
 const DEFAULT_AGENT: &str = "default_agent";
+/// 评审 group (agent-settings 08 §5.1); both switches are off when absent.
+const REVIEW_MODEL: &str = "review_model";
+const REVIEW_EFFORT: &str = "review_effort";
+const AGENT_REVIEW: &str = "agent_review";
+const REVIEW_AUTO_FIX: &str = "review_auto_fix";
 /// `engine_provider.pi` etc.; the value is a JSON [`EngineProvider`].
 const ENGINE_PROVIDER: &str = "engine_provider.";
 /// `context_override.<provider id>.<model id>`; the value is a token count (agent-settings 08 §6).
@@ -48,6 +53,10 @@ fn load(conn: &Conn) -> Result<ModelPrefs> {
             DEFAULT_MODEL => prefs.default_model = Some(db::json(&row, 1)?),
             DEFAULT_EFFORT => prefs.default_effort = Some(db::json(&row, 1)?),
             DEFAULT_AGENT => prefs.default_agent = Some(db::json(&row, 1)?),
+            REVIEW_MODEL => prefs.review.model = Some(db::json(&row, 1)?),
+            REVIEW_EFFORT => prefs.review.effort = Some(db::json(&row, 1)?),
+            AGENT_REVIEW => prefs.review.agent_review = db::json(&row, 1)?,
+            REVIEW_AUTO_FIX => prefs.review.auto_fix = db::json(&row, 1)?,
             key => {
                 if let Some(backend) = key.strip_prefix(ENGINE_PROVIDER) {
                     let backend: BackendKind =
@@ -204,6 +213,40 @@ impl ModelPrefService for SqliteSettingsStore {
             load(conn)
         })?;
         info!(changed = changes.len(), "context overrides set");
+        Ok(prefs)
+    }
+
+    fn set_review_model(
+        &self,
+        model: Option<ModelRef>,
+        effort: Option<ThinkingLevel>,
+    ) -> Result<ModelPrefs> {
+        let prefs = self.write(|conn| {
+            if let Some(model) = &model {
+                ensure_model(conn, model)?;
+            }
+            put(conn, REVIEW_MODEL, model.as_ref())?;
+            put(conn, REVIEW_EFFORT, effort.as_ref())?;
+            load(conn)
+        })?;
+        info!(
+            provider = prefs.review.model.as_ref().map(|m| m.provider.as_str()),
+            "review model set"
+        );
+        Ok(prefs)
+    }
+
+    fn set_review_switch(&self, switch: ReviewSwitch, on: bool) -> Result<ModelPrefs> {
+        let key = match switch {
+            ReviewSwitch::AgentReview => AGENT_REVIEW,
+            ReviewSwitch::AutoFix => REVIEW_AUTO_FIX,
+        };
+        // Off is the default, so it is stored as an absent key.
+        let prefs = self.write(|conn| {
+            put(conn, key, on.then_some(&true))?;
+            load(conn)
+        })?;
+        info!(switch = key, on, "review switch set");
         Ok(prefs)
     }
 }

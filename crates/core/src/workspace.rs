@@ -162,4 +162,21 @@ pub trait WorkspaceService: WorkspaceRoots {
     /// Unified diff text, untracked files included for unstaged diffs.
     fn git_diff(&self, id: &WorkspaceId, request: &DiffRequest) -> Result<String>;
     fn git_checkout(&self, id: &WorkspaceId, branch: &str) -> Result<()>;
+
+    /// Plan-step work windows (agent-settings 08 §5.8). Paths that differ from `HEAD` plus
+    /// untracked, not ignored files; sorted.
+    fn git_uncommitted_paths(&self, id: &WorkspaceId) -> Result<Vec<String>>;
+    /// `None` before the first commit.
+    fn git_head(&self, id: &WorkspaceId) -> Result<Option<String>>;
+    /// `base..HEAD`, oldest first, at most `limit`.
+    fn git_log_range(&self, id: &WorkspaceId, base: &str, limit: usize) -> Result<Vec<Commit>>;
+    /// Commits exactly `paths` with the first line of `subject`, running the user's hooks. `None`
+    /// when nothing was committed (nothing staged, unresolved merge, a hook refused); the index is
+    /// then as it was.
+    fn git_commit_paths(
+        &self,
+        id: &WorkspaceId,
+        subject: &str,
+        paths: &[String],
+    ) -> Result<Option<String>>;
 }

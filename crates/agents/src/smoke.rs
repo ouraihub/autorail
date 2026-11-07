@@ -41,6 +41,7 @@ fn request(backend: BackendKind, var: &str, f: &Fixture) -> StartSession {
         host_tools: None,
         routing: EngineRouting::default(),
         support_dir: std::env::temp_dir().join("thinkrail-smoke-engines"),
+        role: thinkrail_core::SessionRole::Worker,
     }
 }
 
