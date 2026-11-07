@@ -77,12 +77,12 @@ fn initialized_subscriber_correlates_threads_and_lifecycle_fields() {
     assert!(
         first_entries
             .iter()
-            .any(|entry| entry.raw.contains("error_code=\"TEST_FAILURE\""))
+            .any(|entry| entry.raw.contains("result=\"failed\""))
     );
     assert!(
         first_entries
             .iter()
-            .any(|entry| entry.raw.contains("reason=\"TEST_CANCEL\""))
+            .any(|entry| entry.raw.contains("result=\"cancelled\""))
     );
     assert!(
         second_entries

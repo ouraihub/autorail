@@ -2,6 +2,7 @@
 //! Beijing-time stamps, a runtime-switchable level, the bounded tail the log page reads and the
 //! `op` span that ties one user action's lines together.
 
+mod format;
 mod op;
 mod tail;
 
@@ -106,17 +107,18 @@ pub fn init(data_dir: &Path) -> anyhow::Result<LogHandle> {
     let (level_layer, handle) = reload::Layer::new(env.unwrap_or_else(|| filter(LogLevel::Info)));
     let timer = OffsetTime::new(BEIJING, Rfc3339);
     let file = fmt::layer()
+        .event_format(format::FlatFormat {
+            timer: timer.clone(),
+        })
         .with_writer(writer)
-        .with_ansi(false)
-        .with_target(true)
-        .with_timer(timer.clone());
+        .with_ansi(false);
     let registry = tracing_subscriber::registry().with(level_layer).with(file);
     #[cfg(debug_assertions)]
     let registry = registry.with(
         fmt::layer()
+            .event_format(format::FlatFormat { timer })
             .with_writer(std::io::stderr)
-            .with_target(true)
-            .with_timer(timer),
+            .with_ansi(true),
     );
     registry.try_init().context("日志已经初始化")?;
     Ok(LogHandle {

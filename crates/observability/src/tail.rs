@@ -25,8 +25,9 @@ pub struct LogEntry {
     pub trace_id: Option<String>,
     /// The innermost structured `operation` field, when present.
     pub operation: Option<String>,
-    /// Module path of the event.
+    /// Module path of the event or structured component.
     pub target: String,
+    pub component: Option<String>,
     /// Message followed by its event fields.
     pub message: String,
     pub raw: String,
@@ -42,6 +43,7 @@ fn parse(seq: usize, line: &str) -> LogEntry {
         trace_id: None,
         operation: None,
         target: String::new(),
+        component: None,
         message: line.to_owned(),
         raw: line.to_owned(),
     })
@@ -71,6 +73,32 @@ fn parse_fixed(seq: usize, line: &str) -> Option<LogEntry> {
         rest = rest[end..].trim_start();
     }
     let spans = span_text.join(": ");
+    if spans.is_empty() && rest.starts_with("trace_id=") {
+        let message_start = rest.find(" message=").unwrap_or(rest.len());
+        let fields = &rest[..message_start];
+        trace_id = field_value(fields, "trace_id");
+        operation = field_value(fields, "operation");
+        let component = field_value(fields, "component");
+        let message = rest[message_start..]
+            .trim()
+            .strip_prefix("message=")
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_owned();
+        let target = component.clone().unwrap_or_default();
+        return Some(LogEntry {
+            seq,
+            time: time.to_owned(),
+            level: level.to_owned(),
+            spans,
+            trace_id,
+            operation,
+            target,
+            component,
+            message,
+            raw: line.to_owned(),
+        });
+    }
     let (target, message) = rest
         .split_once(": ")
         .or_else(|| rest.strip_suffix(':').map(|target| (target, "")))?;
@@ -85,6 +113,7 @@ fn parse_fixed(seq: usize, line: &str) -> Option<LogEntry> {
         trace_id,
         operation,
         target: target.to_owned(),
+        component: (!target.is_empty()).then(|| target.to_owned()),
         message: message.to_owned(),
         raw: line.to_owned(),
     })

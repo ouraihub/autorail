@@ -212,13 +212,13 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
         _ => r.text_default,
     };
     let time = entry.time.get(11..19).unwrap_or("—").to_owned();
-    let target = entry
-        .target
-        .rsplit("::")
-        .next()
-        .unwrap_or_default()
-        .to_owned();
+    let component = entry
+        .component
+        .clone()
+        .unwrap_or_else(|| entry.target.clone());
+    let operation = entry.operation.clone().unwrap_or_default();
     h_flex()
+        .gap(space::S8)
         .items_start()
         .px(space::S8)
         .py(space::S2)
@@ -235,11 +235,18 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                 .w(px(40.))
                 .flex_none(),
         )
-        .children((!entry.spans.is_empty()).then(|| {
-            label(text::CODE_SMALL, entry.spans.clone())
-                .text_color(r.primary)
-                .flex_none()
-        }))
+        .when(!operation.is_empty(), |row| {
+            row.child(
+                label(text::CODE_SMALL, operation)
+                    .text_color(r.primary)
+                    .flex_none(),
+            )
+        })
+        .child(
+            label(text::CODE_SMALL, component)
+                .text_color(r.text_muted)
+                .flex_none(),
+        )
         .when_some(entry.trace_id.clone(), |row, trace_id| {
             let button_id = format!("log-trace-copy-{}", entry.seq);
             row.child(
@@ -252,11 +259,6 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                     }),
             )
         })
-        .child(
-            label(text::CODE_SMALL, target)
-                .text_color(r.text_muted)
-                .flex_none(),
-        )
         .child(
             label(text::CODE_SMALL, entry.message.clone())
                 .text_color(color)
