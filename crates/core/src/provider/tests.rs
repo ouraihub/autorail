@@ -29,3 +29,15 @@ fn secret_debug_hides_value() {
         assert!(!text.contains("sk-test-a"), "{text}");
     }
 }
+
+#[test]
+fn clamp_effort_takes_the_highest_declared_level_not_above_the_saved_one() {
+    use ThinkingLevel::*;
+    let declared = [Low, Medium, High];
+    assert_eq!(clamp_effort(None, &declared), None);
+    assert_eq!(clamp_effort(Some(High), &[]), None);
+    assert_eq!(clamp_effort(Some(Medium), &declared), Some(Medium));
+    assert_eq!(clamp_effort(Some(Max), &declared), Some(High));
+    assert_eq!(clamp_effort(Some(Minimal), &declared), None);
+    assert_eq!(clamp_effort(Some(Off), &[Off, High]), Some(Off));
+}

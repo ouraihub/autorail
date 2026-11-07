@@ -938,6 +938,88 @@ fn model_prefs_defaults_and_hidden_models() {
     assert_eq!(store.set_default(None, None).unwrap(), Default::default());
 }
 
+#[test]
+fn context_overrides_round_trip_validate_and_follow_model_deletion() {
+    let directory = TempDir::new().unwrap();
+    let store = open(&directory);
+    let mut relay = input("relay");
+    let mut dotted = relay.models[0].clone();
+    dotted.model_id = "openai/gpt-5.1:latest".into();
+    relay.models.push(dotted);
+    let provider = create(&store, relay).unwrap();
+    let reference = |id: &str| ModelRef {
+        provider: provider.id.clone(),
+        model_id: id.into(),
+    };
+    let (gpt, dotted, claude) = (
+        reference("gpt-test"),
+        reference("openai/gpt-5.1:latest"),
+        reference("claude-test"),
+    );
+
+    let prefs = store
+        .set_context_overrides(&[
+            (gpt.clone(), Some(1_000_000)),
+            (dotted.clone(), Some(400_000)),
+            (claude.clone(), Some(272_000)),
+        ])
+        .unwrap();
+    assert_eq!(prefs.context_override(&dotted), Some(400_000));
+    assert_eq!(
+        open(&directory).prefs().unwrap(),
+        prefs,
+        "ids with `.`, `/` and `:` read back intact"
+    );
+
+    for tokens in [271_999, 1_000_001] {
+        kind(
+            store.set_context_overrides(&[
+                (gpt.clone(), Some(500_000)),
+                (claude.clone(), Some(tokens)),
+            ]),
+            ErrorKind::Invalid,
+        );
+    }
+    kind(
+        store.set_context_overrides(&[(reference("missing"), Some(500_000))]),
+        ErrorKind::NotFound,
+    );
+    assert_eq!(
+        store.prefs().unwrap(),
+        prefs,
+        "a rejected batch changes nothing"
+    );
+
+    let prefs = store.set_context_overrides(&[(gpt.clone(), None)]).unwrap();
+    assert_eq!(prefs.context_override(&gpt), None);
+    assert_eq!(prefs.context_overrides.len(), 2);
+
+    let mut without_claude = input("relay");
+    without_claude
+        .models
+        .retain(|m| m.model_id != "claude-test");
+    let provider_now = store.provider(&provider.id).unwrap();
+    update(&store, &provider_now, without_claude).unwrap();
+    let prefs = store.prefs().unwrap();
+    assert_eq!(
+        prefs.context_override(&claude),
+        None,
+        "a removed model's override goes"
+    );
+    assert_eq!(
+        prefs.context_override(&dotted),
+        None,
+        "so does one the update dropped"
+    );
+
+    store
+        .set_context_overrides(&[(gpt.clone(), Some(600_000))])
+        .unwrap();
+    let provider_now = store.provider(&provider.id).unwrap();
+    ProviderService::delete(&store, &provider.id, provider_now.revision).unwrap();
+    assert!(store.prefs().unwrap().context_overrides.is_empty());
+}
+
 fn snapshot(directory: &Path) -> Vec<(String, Vec<u8>)> {
     let mut files: Vec<_> = fs::read_dir(directory)
         .unwrap()

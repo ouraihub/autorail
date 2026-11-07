@@ -14,11 +14,11 @@ use hyper_util::{
 use parking_lot::Mutex;
 use tempfile::TempDir;
 use thinkrail_core::{
-    Access, BackendKind, ChatId, Endpoint, EngineProvider, EngineRouting, EnvValue, ErrorKind,
-    Header, McpScope, McpServerInput, McpService, McpTransport, ModelPrefService, ModelRef,
-    ModelRouter, ModelType, ProbeTarget, ProjectId, ProjectedMcpTransport, Protocol, Provider,
-    ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel, ProviderProbe,
-    ProviderService, Result, RouteRequest, Secret, ThinkingLevel,
+    Access, BackendKind, ChatId, Endpoint, EngineNote, EngineProvider, EngineRouting, EnvValue,
+    ErrorKind, Header, McpScope, McpServerInput, McpService, McpTransport, ModelPrefService,
+    ModelRef, ModelRouter, ModelStatus, ModelType, ProbeTarget, ProjectId, ProjectedMcpTransport,
+    Protocol, Provider, ProviderInput, ProviderKeyInput, ProviderKeyUpdate, ProviderModel,
+    ProviderProbe, ProviderService, Result, RouteRequest, Secret, ThinkingLevel,
 };
 use thinkrail_settings_store::SqliteSettingsStore;
 
@@ -1468,4 +1468,178 @@ fn engine_choice_picks_gateway_official_or_one_provider() {
     ProviderService::delete(&*fx.store, &other.id, other.revision).unwrap();
     kind(router.prepare(&pi), ErrorKind::Invalid);
     assert_eq!(relay.input.name, "Relay");
+}
+
+#[test]
+fn settings_catalog_ignores_engine_choices_and_keeps_hidden_models() {
+    let fx = fixture();
+    let relay = create(&fx, input("Relay", Access::Direct), &KEYS[..1]);
+    let other = create(&fx, input("Other", Access::Direct), &KEYS[1..2]);
+    let router = router(&fx, Arc::new(FakeGateway::default()));
+    let gpt = ModelRef {
+        provider: relay.id.clone(),
+        model_id: "gpt-test".into(),
+    };
+    fx.store.set_hidden(&gpt, true).unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Pi, EngineProvider::Official)
+        .unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Omp, EngineProvider::Provider(other.id.clone()))
+        .unwrap();
+    let listed = |router: &Router| -> Vec<(String, String)> {
+        router
+            .settings_catalog()
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.provider_name, c.model.id))
+            .collect()
+    };
+    let all = vec![
+        ("Relay".to_owned(), "gpt-test".to_owned()),
+        ("Relay".to_owned(), "claude-test".to_owned()),
+        ("Other".to_owned(), "gpt-test".to_owned()),
+        ("Other".to_owned(), "claude-test".to_owned()),
+    ];
+    assert_eq!(listed(&router), all, "hidden and 官方 do not shrink it");
+
+    // An engine pointing at a deleted provider breaks its own catalog, not the settings one.
+    ProviderService::delete(&*fx.store, &other.id, other.revision).unwrap();
+    kind(router.catalog(BackendKind::Omp), ErrorKind::Invalid);
+    assert_eq!(listed(&router), all[..2]);
+}
+
+#[test]
+fn model_status_names_why_a_saved_model_cannot_be_routed() {
+    let fx = fixture();
+    let mut relay_input = input("Relay", Access::Direct);
+    let mut image = model("image-test", &[Protocol::OpenaiChat]);
+    image.model_type = ModelType::Image;
+    relay_input.models.push(image);
+    let relay = create(&fx, relay_input, &KEYS[..1]);
+    let router = router(&fx, Arc::new(FakeGateway::default()));
+    let reference = |id: &str| ModelRef {
+        provider: relay.id.clone(),
+        model_id: id.into(),
+    };
+    let status = |model: &ModelRef| router.model_status(model).unwrap();
+
+    assert_eq!(status(&reference("gpt-test")), ModelStatus::Available);
+    assert_eq!(status(&reference("missing")), ModelStatus::ModelMissing);
+    assert_eq!(
+        status(&reference("image-test")),
+        ModelStatus::ModelUnusable {
+            model: "IMAGE-TEST".into()
+        }
+    );
+    assert_eq!(
+        status(&ModelRef {
+            provider: "gone".into(),
+            model_id: "gpt-test".into()
+        }),
+        ModelStatus::ProviderMissing
+    );
+    let hidden = reference("gpt-test");
+    fx.store.set_hidden(&hidden, true).unwrap();
+    assert_eq!(
+        status(&hidden),
+        ModelStatus::Available,
+        "hidden still routes"
+    );
+
+    let mut disabled = relay.input.clone();
+    disabled.enabled = false;
+    ProviderService::update(&*fx.store, &relay.id, relay.revision, disabled).unwrap();
+    assert_eq!(
+        status(&hidden),
+        ModelStatus::ProviderDisabled {
+            provider: "Relay".into()
+        }
+    );
+}
+
+#[test]
+fn engine_notes_report_official_single_and_unavailable_choices() {
+    let fx = fixture();
+    let relay = create(&fx, input("Relay", Access::Direct), &KEYS[..1]);
+    let other = create(&fx, input("Other", Access::Direct), &KEYS[1..2]);
+    let router = router(&fx, Arc::new(FakeGateway::default()));
+    assert!(router.engine_notes().unwrap().is_empty());
+
+    fx.store
+        .set_engine_provider(BackendKind::Pi, EngineProvider::Gateway)
+        .unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Omp, EngineProvider::Official)
+        .unwrap();
+    fx.store
+        .set_engine_provider(BackendKind::Dsh, EngineProvider::Provider(relay.id.clone()))
+        .unwrap();
+    assert_eq!(
+        router.engine_notes().unwrap(),
+        [
+            (BackendKind::Omp, EngineNote::Official),
+            (
+                BackendKind::Dsh,
+                EngineNote::OnlyProvider {
+                    provider: "Relay".into()
+                }
+            ),
+        ],
+        "统一网关 uses every provider, so it has no note"
+    );
+
+    ProviderService::delete(&*fx.store, &relay.id, relay.revision).unwrap();
+    assert_eq!(
+        router.engine_notes().unwrap()[1],
+        (BackendKind::Dsh, EngineNote::ProviderUnavailable)
+    );
+    assert_eq!(other.input.name, "Other");
+}
+
+#[test]
+fn context_override_replaces_the_provider_window_in_every_projection_and_the_signature() {
+    let fx = fixture();
+    let mut relay = input("Relay", Access::Direct);
+    relay.models[0].context_window = Some(400_000);
+    let relay = create(&fx, relay, &KEYS[..1]);
+    let router = router(&fx, Arc::new(FakeGateway::default()));
+    let gpt = ModelRef {
+        provider: relay.id.clone(),
+        model_id: "gpt-test".into(),
+    };
+    let windows = |router: &Router| {
+        let launch = router.prepare(&request(BackendKind::Pi, true)).unwrap();
+        let projected = launch.providers[0].models[0].context_window;
+        let catalog = router.catalog(BackendKind::Pi).unwrap()[0]
+            .model
+            .context_window;
+        let settings = router.settings_catalog().unwrap()[0].model.context_window;
+        (projected, catalog, settings)
+    };
+    let pi = request(BackendKind::Pi, false);
+
+    assert_eq!(
+        windows(&router),
+        (400_000, 400_000, 400_000),
+        "provider setting"
+    );
+    let before = router.signature(&pi).unwrap();
+    fx.store
+        .set_context_overrides(&[(gpt.clone(), Some(1_000_000))])
+        .unwrap();
+    assert_eq!(
+        windows(&router),
+        (1_000_000, 1_000_000, 1_000_000),
+        "override wins"
+    );
+    assert_ne!(
+        router.signature(&pi).unwrap(),
+        before,
+        "idle chats restart on change"
+    );
+
+    fx.store.set_context_overrides(&[(gpt, None)]).unwrap();
+    assert_eq!(windows(&router), (400_000, 400_000, 400_000));
+    assert_eq!(router.signature(&pi).unwrap(), before);
 }

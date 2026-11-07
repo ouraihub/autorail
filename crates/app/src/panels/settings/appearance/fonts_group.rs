@@ -21,8 +21,8 @@ use thinkrail_ui::{
 };
 
 use super::{
+    super::rows::{disclosure, group, notice, row, subheading, with_reset},
     AppearancePage, PickerTarget, preview,
-    rows::{disclosure, group, notice, row, subheading, with_reset},
 };
 use crate::{
     appearance::{AppearanceState, bundled_face, family_name, role_font},

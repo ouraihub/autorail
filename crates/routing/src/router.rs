@@ -4,15 +4,16 @@
 mod build;
 mod mcp;
 mod plan;
+mod settings;
 
 use std::sync::Arc;
 
 use thinkrail_core::{
-    BackendKind, ChatId, EngineRouting, McpService, ModelChoice, ModelPrefService, ModelRouter,
-    Protocol, ProviderService, Result, RouteRequest, Secret,
+    BackendKind, ChatId, EngineNote, EngineRouting, McpService, ModelChoice, ModelPrefService,
+    ModelRef, ModelRouter, ModelStatus, Protocol, ProviderService, Result, RouteRequest, Secret,
 };
 
-use plan::{plan, project_model, route_for, usable};
+use plan::{context_override, plan, project_model, route_for, usable};
 
 /// Key placeholder for providers without any key (local model servers need no auth).
 pub(crate) const NO_KEY: &str = "thinkrail-no-key";
@@ -102,7 +103,12 @@ impl ModelRouter for Router {
     fn catalog(&self, backend: BackendKind) -> Result<Vec<ModelChoice>> {
         let providers = self.providers.providers()?;
         let prefs = self.prefs.prefs()?;
-        let routes = plan(&providers, backend, prefs.engine_provider(backend))?;
+        let routes = plan(
+            &providers,
+            backend,
+            prefs.engine_provider(backend),
+            &prefs.context_overrides,
+        )?;
         let mut out = Vec::new();
         for provider in providers.iter().filter(|p| p.input.enabled) {
             for model in provider.input.models.iter().filter(|m| usable(m)) {
@@ -121,10 +127,28 @@ impl ModelRouter for Router {
                     provider: provider.id.clone(),
                     provider_name: provider.input.name.clone(),
                     route: route.to_owned(),
-                    model: project_model(model),
+                    model: project_model(
+                        model,
+                        context_override(&prefs.context_overrides, provider, model),
+                    ),
                 });
             }
         }
         Ok(out)
+    }
+
+    fn settings_catalog(&self) -> Result<Vec<ModelChoice>> {
+        settings::catalog(&self.providers.providers()?, &self.prefs.prefs()?)
+    }
+
+    fn model_status(&self, model: &ModelRef) -> Result<ModelStatus> {
+        settings::status(&self.providers.providers()?, model)
+    }
+
+    fn engine_notes(&self) -> Result<Vec<(BackendKind, EngineNote)>> {
+        Ok(settings::notes(
+            &self.providers.providers()?,
+            &self.prefs.prefs()?,
+        ))
     }
 }

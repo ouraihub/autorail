@@ -22,6 +22,7 @@ impl Router {
             &providers,
             request.backend,
             prefs.engine_provider(request.backend),
+            &prefs.context_overrides,
         )?;
         let default_model = if request.new_session {
             default_model(&routes, &providers, &prefs)

@@ -4,10 +4,10 @@
 
 mod custom;
 mod editor_group;
+mod folder;
 mod fonts_group;
 mod picker;
 mod preview;
-mod rows;
 mod theme_group;
 
 use gpui_kit::{

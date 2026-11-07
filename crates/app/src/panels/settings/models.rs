@@ -1,19 +1,20 @@
-//! Default model, reasoning effort and model visibility preferences.
+//! 设置 → 模型 (agent-settings 08): the default model and effort, model visibility and, per
+//! engine, what its 编码搭档 choice does to these settings.
 //!
-//! Catalog choices drive the default selectors; enabled provider models drive visibility so
-//! hidden models can always be restored. One preference write runs at a time, and routing
-//! changes received during background work are coalesced into a subsequent refresh.
+//! The coordinator owns the loaded snapshot, the one-at-a-time preference write and its error.
+//! Routing changes received during background work are coalesced into a subsequent refresh.
+//! Each group renders in its own submodule and changes state only through the methods here.
 
 use gpui_kit::{
     AppContext as _, Context, Entity, SharedString, Subscription, Window,
     component::{
-        IndexPath,
         input::{InputEvent, InputState},
-        select::{SearchableVec, SelectEvent, SelectItem, SelectState},
+        select::SelectItem,
     },
 };
 use thinkrail_core::{
-    BackendKind, ModelChoice, ModelPrefs, ModelRef, Provider, ProviderModel, ThinkingLevel,
+    BackendKind, EngineNote, ModelChoice, ModelPrefs, ModelRef, ModelStatus, Provider,
+    ProviderModel, ThinkingLevel,
 };
 
 use crate::{
@@ -21,9 +22,15 @@ use crate::{
     strings::settings_models as s,
 };
 
+mod context_group;
+mod default_group;
 #[cfg(test)]
 mod tests;
 mod view;
+mod visibility;
+
+use context_group::ContextGroup;
+use default_group::DefaultGroup;
 
 #[derive(Clone)]
 struct SelectOption<T> {
@@ -43,9 +50,7 @@ impl<T: Clone + PartialEq> SelectItem for SelectOption<T> {
     }
 }
 
-type ModelOptions = SearchableVec<SelectOption<Option<ModelRef>>>;
-type EffortOptions = SearchableVec<SelectOption<ThinkingLevel>>;
-
+/// One enabled chat model of an enabled provider, hidden or not, so hidden models can be restored.
 struct VisibilityModel {
     reference: ModelRef,
     provider_name: String,
@@ -53,10 +58,12 @@ struct VisibilityModel {
 }
 
 impl VisibilityModel {
+    /// Case-insensitive substring match on name, model id or provider; `query` is lowercase.
     fn matches(&self, query: &str) -> bool {
         query.is_empty()
             || self.model.model_id.to_lowercase().contains(query)
             || self.model.name.to_lowercase().contains(query)
+            || self.provider_name.to_lowercase().contains(query)
     }
 }
 
@@ -91,6 +98,16 @@ fn model_reference(choice: &ModelChoice) -> ModelRef {
     }
 }
 
+/// Everything one load reads, applied together.
+struct Snapshot {
+    prefs: ModelPrefs,
+    /// `settings_catalog`: every routable model, hidden ones included.
+    catalog: Vec<ModelChoice>,
+    all_models: Vec<VisibilityModel>,
+    default_status: ModelStatus,
+    notes: Vec<(BackendKind, EngineNote)>,
+}
+
 #[derive(Clone)]
 enum PreferenceWrite {
     Default {
@@ -101,6 +118,8 @@ enum PreferenceWrite {
         model: ModelRef,
         hidden: bool,
     },
+    /// GPT 上下文窗口: `None` removes a model's override.
+    Context(Vec<(ModelRef, Option<u32>)>),
 }
 
 #[derive(Clone)]
@@ -116,16 +135,12 @@ struct Failure {
 
 pub struct ModelsPage {
     state: Entity<AppState>,
-    prefs: ModelPrefs,
-    catalog: Vec<ModelChoice>,
-    all_models: Vec<VisibilityModel>,
-    default_model: Entity<SelectState<ModelOptions>>,
-    default_effort: Entity<SelectState<EffortOptions>>,
-    selectors_dirty: bool,
+    snapshot: Option<Snapshot>,
+    default_group: DefaultGroup,
+    context_group: ContextGroup,
     search: Entity<InputState>,
     query: String,
     expanded: bool,
-    loaded: bool,
     loading: bool,
     saving: bool,
     reload_pending: bool,
@@ -136,69 +151,30 @@ pub struct ModelsPage {
 impl ModelsPage {
     pub fn new(state: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(s::SEARCH));
-        let default_model = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(vec![SelectOption {
-                    title: s::NONE.into(),
-                    value: None,
-                }]),
-                Some(IndexPath::default().row(0)),
-                window,
-                cx,
-            )
-            .searchable(true)
-        });
-        let default_effort = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(Vec::<SelectOption<ThinkingLevel>>::new()),
-                None,
-                window,
-                cx,
-            )
-        });
-        let subscriptions = vec![
-            cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
-                if matches!(event, AppEvent::Routing) {
-                    this.reload(cx);
-                }
-            }),
+        let (default_group, mut subscriptions) = DefaultGroup::new(window, cx);
+        let (context_group, context_subscriptions) = ContextGroup::new(window, cx);
+        subscriptions.extend(context_subscriptions);
+        subscriptions.push(cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
+            if matches!(event, AppEvent::Routing) {
+                this.reload(cx);
+            }
+        }));
+        subscriptions.push(
             cx.subscribe(&search, |this, input, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.query = input.read(cx).value().trim().to_lowercase();
                     cx.notify();
                 }
             }),
-            cx.subscribe(
-                &default_model,
-                |this, _, event: &SelectEvent<ModelOptions>, cx| {
-                    let SelectEvent::Confirm(model) = event;
-                    this.select_default(model.clone().flatten(), cx);
-                },
-            ),
-            cx.subscribe(
-                &default_effort,
-                |this, _, event: &SelectEvent<EffortOptions>, cx| {
-                    let SelectEvent::Confirm(effort) = event;
-                    if let Some(choice) = this.selected_model() {
-                        let model = Some(model_reference(choice));
-                        let effort = effort.filter(|effort| choice.model.efforts.contains(effort));
-                        this.write(PreferenceWrite::Default { model, effort }, cx);
-                    }
-                },
-            ),
-        ];
+        );
         let mut page = Self {
             state,
-            prefs: ModelPrefs::default(),
-            catalog: Vec::new(),
-            all_models: Vec::new(),
-            default_model,
-            default_effort,
-            selectors_dirty: true,
+            snapshot: None,
+            default_group,
+            context_group,
             search,
             query: String::new(),
             expanded: false,
-            loaded: false,
             loading: false,
             saving: false,
             reload_pending: false,
@@ -209,8 +185,12 @@ impl ModelsPage {
         page
     }
 
+    fn busy(&self) -> bool {
+        self.loading || self.saving
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.loading || self.saving {
+        if self.busy() {
             self.reload_pending = true;
             return;
         }
@@ -224,19 +204,24 @@ impl ModelsPage {
             cx,
             move || {
                 let prefs = prefs.prefs()?;
-                let catalog = router.catalog(BackendKind::Pi)?;
-                let all_models = visibility_models(providers.providers()?);
-                Ok((prefs, catalog, all_models))
+                let default_status = match &prefs.default_model {
+                    Some(model) => router.model_status(model)?,
+                    None => ModelStatus::Available,
+                };
+                Ok(Snapshot {
+                    catalog: router.settings_catalog()?,
+                    all_models: visibility_models(providers.providers()?),
+                    notes: router.engine_notes()?,
+                    default_status,
+                    prefs,
+                })
             },
             |this, result, cx| {
                 this.loading = false;
                 match result {
-                    Ok((prefs, catalog, all_models)) => {
-                        this.prefs = prefs;
-                        this.catalog = catalog;
-                        this.all_models = all_models;
-                        this.loaded = true;
-                        this.selectors_dirty = true;
+                    Ok(snapshot) => {
+                        this.snapshot = Some(snapshot);
+                        this.default_group.mark_dirty();
                         if this
                             .failure
                             .as_ref()
@@ -262,58 +247,48 @@ impl ModelsPage {
         cx.notify();
     }
 
-    fn selected_model(&self) -> Option<&ModelChoice> {
-        let selected = self.prefs.default_model.as_ref()?;
-        self.catalog.iter().find(|choice| {
-            choice.provider == selected.provider && choice.model.id == selected.model_id
-        })
-    }
-
-    fn select_default(&mut self, model: Option<ModelRef>, cx: &mut Context<Self>) {
-        let effort = model.as_ref().and_then(|model| {
-            let choice = self.catalog.iter().find(|choice| {
-                choice.provider == model.provider && choice.model.id == model.model_id
-            })?;
-            self.prefs
-                .default_effort
-                .filter(|effort| choice.model.efforts.contains(effort))
-        });
-        self.write(PreferenceWrite::Default { model, effort }, cx);
-    }
-
     fn write(&mut self, write: PreferenceWrite, cx: &mut Context<Self>) {
-        if self.loading || self.saving || !self.loaded {
-            self.selectors_dirty = true;
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return;
+        };
+        if self.busy() {
+            self.default_group.mark_dirty();
             cx.notify();
             return;
         }
+        let prefs = &snapshot.prefs;
         let unchanged = match &write {
             PreferenceWrite::Default { model, effort } => {
-                self.prefs.default_model == *model && self.prefs.default_effort == *effort
+                prefs.default_model == *model && prefs.default_effort == *effort
             }
-            PreferenceWrite::Hidden { model, hidden } => {
-                self.prefs.hidden.contains(model) == *hidden
-            }
+            PreferenceWrite::Hidden { model, hidden } => prefs.hidden.contains(model) == *hidden,
+            PreferenceWrite::Context(changes) => changes
+                .iter()
+                .all(|(model, tokens)| prefs.context_override(model) == *tokens),
         };
         if unchanged {
             return;
         }
         self.saving = true;
         self.failure = None;
-        let prefs = self.state.read(cx).services.prefs.clone();
+        let service = self.state.read(cx).services.prefs.clone();
         let retry = write.clone();
         run(
             cx,
             move || match write {
-                PreferenceWrite::Default { model, effort } => prefs.set_default(model, effort),
-                PreferenceWrite::Hidden { model, hidden } => prefs.set_hidden(&model, hidden),
+                PreferenceWrite::Default { model, effort } => service.set_default(model, effort),
+                PreferenceWrite::Hidden { model, hidden } => service.set_hidden(&model, hidden),
+                PreferenceWrite::Context(changes) => service.set_context_overrides(&changes),
             },
             move |this, result, cx| {
                 this.saving = false;
-                this.selectors_dirty = true;
+                this.default_group.mark_dirty();
                 match result {
+                    // Shown at once; the reload this triggers brings the new status and notes.
                     Ok(prefs) => {
-                        this.prefs = prefs;
+                        if let Some(snapshot) = this.snapshot.as_mut() {
+                            snapshot.prefs = prefs;
+                        }
                         this.state.update(cx, |_, cx| cx.emit(AppEvent::Routing));
                     }
                     Err(error) => {

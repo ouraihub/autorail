@@ -178,9 +178,9 @@ impl ChatPanel {
                 provider: choice.provider_name.clone(),
                 name: choice.model.name.clone(),
                 detail: format!(
-                    "{} · {}K 上下文",
+                    "{} · {} 上下文",
                     choice.route,
-                    choice.model.context_window / 1000
+                    crate::strings::settings_models::format_context(choice.model.context_window)
                 ),
                 has_key: self
                     .model_picker

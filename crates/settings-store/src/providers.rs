@@ -45,6 +45,30 @@ fn expect(conn: &Conn, id: &ProviderId, expect_revision: u64) -> Result<()> {
     Ok(())
 }
 
+/// Drops `context_override.<id>.*` entries whose model is gone (`all`: every entry of the
+/// provider, which is being deleted). Matched in Rust, not with `LIKE`, because ids may contain
+/// `_` or `%`.
+fn remove_stale_overrides(conn: &Conn, id: &ProviderId, all: bool) -> Result<()> {
+    let prefix = format!("{}{}.", crate::prefs::CONTEXT_OVERRIDE, id.as_str());
+    for row in conn.rows("SELECT key FROM model_prefs", ())? {
+        let key = db::text(&row, 0)?;
+        let Some(model_id) = key.strip_prefix(&prefix) else {
+            continue;
+        };
+        let stale = all
+            || conn
+                .row(
+                    "SELECT 1 FROM provider_models WHERE provider_id = ?1 AND model_id = ?2",
+                    (id.as_str(), model_id),
+                )?
+                .is_none();
+        if stale {
+            conn.execute("DELETE FROM model_prefs WHERE key = ?1", (key.as_str(),))?;
+        }
+    }
+    Ok(())
+}
+
 fn bump(conn: &Conn, id: &ProviderId) -> Result<()> {
     conn.execute(
         "UPDATE providers SET revision = revision + 1, updated_at = ?2 WHERE id = ?1",
@@ -297,6 +321,7 @@ impl ProviderService for SqliteSettingsStore {
                  AND model_id NOT IN (SELECT model_id FROM provider_models WHERE provider_id = ?1)",
                 (id.as_str(),),
             )?;
+            remove_stale_overrides(conn, id, false)?;
             load(conn, id)
         })?;
         info!(provider = %id, revision = provider.revision, "provider updated");
@@ -315,8 +340,10 @@ impl ProviderService for SqliteSettingsStore {
             if db::optional_text(&row, 0)?.is_some() {
                 return Err(Error::forbidden("内置服务商不能删除，可以停用。"));
             }
-            // Endpoints, models, keys and hidden-model rows go with it through ON DELETE CASCADE.
+            // Endpoints, models, keys and hidden-model rows go with it through ON DELETE CASCADE;
+            // context overrides live in `model_prefs` and are removed here.
             conn.execute("DELETE FROM providers WHERE id = ?1", (id.as_str(),))?;
+            remove_stale_overrides(conn, id, true)?;
             Ok(())
         })?;
         self.cursor.lock().remove(id);
