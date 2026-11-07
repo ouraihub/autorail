@@ -22,3 +22,16 @@ scripts\msvc\cargo-msvc.bat test --workspace
 ```
 
 只编译通过不能证明界面或后端行为；涉及界面的改动要在真实 GPUI 窗口中操作验证，验证方式见 `SPEC.md` 的 Verification。
+
+## LumaKit 依赖
+
+`lumakit-model-picker`、`lumakit-usage-status` 在根 `Cargo.toml` 以 Git 依赖固定到 `https://github.com/ouraihub/LumaKit.git` 的完整 40 位提交号（`rev`），`crates/app` 用 `.workspace = true` 引用。
+
+- 不得改成 `path` 依赖或指向本机检出目录：CI 和其他机器没有这个目录，读取 workspace 时就会失败。
+- 需要 LumaKit 的新改动时：
+  1. 先在 LumaKit 仓库提交并推送到 GitHub，记下完整提交号；未推送的提交不能引用。
+  2. 把根 `Cargo.toml` 两处 `rev` 改成这个提交号（两处必须相同）。
+  3. 运行 `scripts\msvc\cargo-msvc.bat metadata --format-version 1` 更新锁文件；不要用 `cargo update`，它可能顺带升级无关依赖。确认 `Cargo.lock` 里只有 LumaKit 来源及其确实改变的依赖有变化。
+  4. 跑上面三条验证命令；涉及界面的改动按 `SPEC.md` 的 Verification 实窗验证。
+- 联调 LumaKit 尚未推送的改动时，只能在本机临时加 `[patch."https://github.com/ouraihub/LumaKit.git"]` 指向本地检出；提交前删掉该 patch，并还原随之变化的 `Cargo.lock`。
+- LumaKit 与本仓库使用的 `gpui-kit` 版本必须一致；升级 GPUI Kit 时两边一起升，再按第 1～4 步更新 `rev`。
