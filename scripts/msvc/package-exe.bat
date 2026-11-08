@@ -35,13 +35,15 @@ if errorlevel 1 goto fail
 echo [3/3] Creating the portable archive...
 if exist "%ARCHIVE%" del /q "%ARCHIVE%"
 if exist "%ARCHIVE%" goto fail
-set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+set "POWERSHELL="
+for /f "delims=" %%P in ('where pwsh.exe 2^>nul') do if not defined POWERSHELL set "POWERSHELL=%%P"
+if not defined POWERSHELL set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%POWERSHELL%" set "POWERSHELL="
-if not defined POWERSHELL for /f "delims=" %%P in ('where pwsh.exe 2^>nul') do if not defined POWERSHELL set "POWERSHELL=%%P"
 if not defined POWERSHELL (
-  echo ERROR: PowerShell was not found. 1>&2
+  echo ERROR: PowerShell was not found. Install pwsh or Windows PowerShell. 1>&2
   goto fail
 )
+echo Using PowerShell: %POWERSHELL%
 set "THINKRAIL_DIST=%DIST%"
 set "THINKRAIL_ARCHIVE=%ARCHIVE%"
 "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
