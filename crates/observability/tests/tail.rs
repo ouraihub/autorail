@@ -9,10 +9,10 @@ use std::fs;
 
 use thinkrail_observability::tail;
 
-const OP: &str = "2026-11-01T15:26:55.669+08:00  INFO op{id=42 at=panels/chat.rs:312}: thinkrail_agents::pi: agent session started chat=c1";
+const OP: &str = "2026-11-01T15:26:55.669+08:00  INFO TraceId:0123456789abcdef0123456789abcdef|SpanId:2|ParentSpanId:1|Layer:agents|ME:agent.session|Target:thinkrail_agents::pi|chat_id:c1|Msg:agent session started";
 
 #[test]
-fn a_line_inside_an_operation_keeps_its_span_target_and_fields_apart() {
+fn a_business_line_inside_an_operation_keeps_trace_target_and_message_apart() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join("thinkrail-native.2026-11-01.log"),
@@ -22,38 +22,37 @@ fn a_line_inside_an_operation_keeps_its_span_target_and_fields_apart() {
     let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
     assert_eq!(entry.time, "2026-11-01T15:26:55.669+08:00");
     assert_eq!(entry.level, "INFO");
-    assert_eq!(entry.spans, "op{id=42 at=panels/chat.rs:312}");
-    assert_eq!(entry.target, "thinkrail_agents::pi");
-    assert_eq!(entry.trace_id, None);
-    assert_eq!(entry.operation, None);
-    assert_eq!(entry.message, "agent session started chat=c1");
+    assert_eq!(
+        entry.trace_id.as_deref(),
+        Some("0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(entry.operation.as_deref(), Some("agent.session"));
+    assert_eq!(entry.event, None);
+    assert_eq!(entry.component, "thinkrail_agents::pi");
+    assert_eq!(entry.message, "agent session started");
     assert_eq!(entry.raw, OP);
 }
 
 #[test]
-fn nested_structured_spans_keep_innermost_trace_fields_only() {
+fn a_lifecycle_line_shows_its_layer_event_and_duration() {
     let dir = tempfile::tempdir().unwrap();
-    let trace = "0123456789abcdef0123456789abcdef";
-    let line = format!(
-        "2026-11-01T15:26:55.669+08:00 DEBUG root{{trace_id=parent operation=ui.background}}: operation{{trace_id={trace} operation=host_tool.call event=entry}}: thinkrail_test: trace_id=message operation=faux"
-    );
+    let line = "2026-11-01T15:26:55.669+08:00 ERROR TraceId:0123456789abcdef0123456789abcdef|SpanId:3|ParentSpanId:2|Layer:host_tool|ME:host_tool.call|EV:ERROR|RT:42|Result:FAILED|Error:NOT_FOUND";
     fs::write(
         dir.path().join("thinkrail-native.2026-11-01.log"),
         format!("{line}\n"),
     )
     .unwrap();
     let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
-    assert_eq!(entry.trace_id.as_deref(), Some(trace));
     assert_eq!(entry.operation.as_deref(), Some("host_tool.call"));
-    assert_eq!(entry.message, "trace_id=message operation=faux");
-    assert_eq!(entry.raw, line);
+    assert_eq!(entry.event.as_deref(), Some("ERROR"));
+    assert_eq!(entry.duration_ms, Some(42));
+    assert_eq!(entry.component, "host_tool");
 }
 
 #[test]
-fn plain_startup_text_does_not_fabricate_trace_fields() {
+fn plain_text_does_not_fabricate_trace_fields() {
     let dir = tempfile::tempdir().unwrap();
-    let line =
-        "2026-11-01T15:26:55.669+08:00  INFO thinkrail_test: startup trace_id=not-structured";
+    let line = "2026-11-01T15:26:55.669+08:00  INFO Target:thinkrail_test|Msg:startup TraceId:not-structured";
     fs::write(
         dir.path().join("thinkrail-native.2026-11-01.log"),
         format!("{line}\n"),
@@ -62,6 +61,7 @@ fn plain_startup_text_does_not_fabricate_trace_fields() {
     let [entry] = tail(dir.path(), 10).unwrap().try_into().unwrap();
     assert_eq!(entry.trace_id, None);
     assert_eq!(entry.operation, None);
+    assert_eq!(entry.message, "startup TraceId:not-structured");
     assert_eq!(entry.raw, line);
 }
 
@@ -70,23 +70,26 @@ fn lines_outside_operations_and_unparsable_lines_still_show() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(
         dir.path().join("thinkrail-native.2026-11-01.log"),
-        "2026-11-01T15:00:00+08:00 ERROR : 无效的窗口句柄。 (0x80070578)\n\
-         2026-11-01T15:00:01+08:00  WARN thinkrail_app::state: operation failed code=NOT_FOUND\n\
-         panicked at somewhere\n",
+        "2026-11-01T15:00:00+08:00 ERROR Msg:无效的窗口句柄。 (0x80070578)\n\
+  2026-11-01T15:00:01+08:00  WARN Target:thinkrail_app::state|Msg:operation failed\n\
+  panicked at somewhere\n",
     )
     .unwrap();
     let entries = tail(dir.path(), 10).unwrap();
     assert_eq!(
         (
             entries[0].level.as_str(),
-            entries[0].target.as_str(),
+            entries[0].component.as_str(),
             entries[0].message.as_str()
         ),
         ("ERROR", "", "无效的窗口句柄。 (0x80070578)")
     );
     assert_eq!(
-        (entries[1].spans.as_str(), entries[1].target.as_str()),
-        ("", "thinkrail_app::state")
+        (
+            entries[1].trace_id.as_deref(),
+            entries[1].component.as_str()
+        ),
+        (None, "thinkrail_app::state")
     );
     assert_eq!(
         (

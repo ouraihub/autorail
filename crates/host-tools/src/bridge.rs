@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use thinkrail_core::{
     Error, ErrorCode, ErrorKind, HostToolHandler, HostToolOptions, PlanScope, Result,
 };
-use thinkrail_observability::TraceContext;
+use thinkrail_observability::{TraceContext, operation};
 use tracing::{debug, info, warn};
 
 /// Largest request or response line.
@@ -67,26 +67,9 @@ type Tokens = Arc<Mutex<HashMap<String, BridgeSession>>>;
 struct BridgeSession {
     scope: PlanScope,
     options: HostToolOptions,
-    trace: Option<TraceContext>,
+    trace: TraceContext,
     span: tracing::Span,
     dispatch: tracing::Dispatch,
-}
-
-impl BridgeSession {
-    fn span(&self, operation: &'static str) -> tracing::Span {
-        let _entered = self.span.enter();
-        match &self.trace {
-            Some(trace) => {
-                let child = trace.child(operation);
-                if child.is_disabled() {
-                    self.span.clone()
-                } else {
-                    child
-                }
-            }
-            None => self.span.clone(),
-        }
-    }
 }
 
 /// The running pipe server. Dropping it does not stop the accept thread; it lives for the process.
@@ -164,16 +147,12 @@ impl ToolBridge {
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        let (trace, root) = match TraceContext::root("host_bridge.session") {
-            Ok((trace, span)) => (Some(trace), span),
-            Err(_) => {
-                warn!("host_bridge.trace.unavailable");
-                (None, tracing::Span::current())
-            }
-        };
-        let span = tracing::info_span!(parent: &root, "host_bridge.session",
-            trace_id = trace.as_ref().map(TraceContext::trace_id), component = "host_tools",
-            chat_id = %scope.chat, workspace_id = %scope.workspace);
+        // The session is a correlation context, not one bounded operation: it lives until the
+        // engine disconnects, so it has no lifecycle guard; each request below is one operation.
+        let (trace, root) = TraceContext::root("host_bridge.session", "host_tools");
+        let span = tracing::info_span!(parent: root.span(), "host_bridge.session",
+     component = "host_tools", chat_id = %scope.chat, workspace_id = %scope.workspace);
+        root.finish("REGISTERED");
         self.tokens.lock().insert(
             token.clone(),
             BridgeSession {
@@ -224,9 +203,14 @@ fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
         {
             break;
         }
-        let span = session.span("host_bridge.request");
-        let _request = span.enter();
+        let _request = session.span.enter();
+        let operation = operation(&session.trace, "host_bridge.request", "host_tools");
         let reply = handle(&line, scope, options, handler);
+        if reply.get("error").is_some() {
+            operation.fail(reply["error"]["code"].as_str().unwrap_or("PROTOCOL"));
+        } else {
+            operation.finish("SUCCESS");
+        }
         if let Err(error) = write_line(&mut writer, &reply) {
             debug!(%error, "host tool client went away");
             break;

@@ -8,8 +8,9 @@ use tracing::{debug, warn};
 use crate::services::Services;
 
 /// Runs blocking service work on the background executor and hands the result back to the view.
-/// Each operation gets one TraceContext propagated through the job and completion callback.
-/// The caller source location remains a diagnostic field during the migration.
+/// Each call is one `ui.background` root: ENTRY when issued, one terminal after the view applied
+/// the result (EXIT, or ERROR with the stable code). The job and the completion run inside the
+/// root span, so their lines carry the same TraceId; `at` keeps the caller location.
 #[track_caller]
 pub fn run<V: 'static, T: Send + 'static>(
     cx: &mut Context<V>,
@@ -17,27 +18,25 @@ pub fn run<V: 'static, T: Send + 'static>(
     done: impl FnOnce(&mut V, Result<T>, &mut Context<V>) + 'static,
 ) {
     let caller = std::panic::Location::caller();
-    let (span, job_span) = match thinkrail_observability::TraceContext::root("ui.background") {
-        Ok((_trace, span)) => (span.clone(), span),
-        Err(error) => {
-            debug!(%error, "trace context unavailable; using legacy operation span");
-            let span = thinkrail_observability::op(std::panic::Location::caller());
-            (span.clone(), span)
-        }
-    };
-    let started = std::time::Instant::now();
+    let (_trace, root) = thinkrail_observability::TraceContext::root("ui.background", "ui");
+    let span = root.span().clone();
+    let job_span = span.clone();
     let task = cx
         .background_executor()
         .spawn(async move { job_span.in_scope(job) });
     cx.spawn(async move |this, cx| {
         let result = task.await;
         let _entered = span.enter();
-        let ok = result.is_ok();
+        let code = result.as_ref().err().map(ErrorCode::code);
         if this.update(cx, |view, cx| done(view, result, cx)).is_err() {
-            debug!(at = %format!("{}:{}", caller.file(), caller.line()), "view closed before background job finished");
+            debug!(at = %caller, "view closed before background job finished");
         }
-        thinkrail_observability::finish(started, ok);
-    }).detach();
+        match code {
+            None => root.finish("SUCCESS"),
+            Some(code) => root.fail(code),
+        }
+    })
+    .detach();
 }
 
 /// A user-facing failure: the stable code plus the human message (04 §2).

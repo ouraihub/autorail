@@ -184,37 +184,24 @@ impl HostToolHandler for NotifyingTools {
         arguments: Value,
     ) -> thinkrail_core::Result<HostToolResult> {
         let started = std::time::Instant::now();
-        let context = thinkrail_observability::TraceContext::root("host_tool.call");
-        let (trace, span) = match context {
-            Ok((trace, span)) => (Some(trace), span),
-            Err(_) => {
-                warn!("host_tool.trace_unavailable");
-                (None, tracing::info_span!("host_tool"))
-            }
-        };
-        let call_span = tracing::info_span!(parent: &span, "host_tool", chat_id = %scope.chat,
+        let (_trace, root) =
+            thinkrail_observability::TraceContext::root("host_tool.call", "host_tool");
+        let call_span = tracing::info_span!(parent: root.span(), "host_tool", chat_id = %scope.chat,
             workspace_id = %scope.workspace, tool = name);
         let _entered = call_span.enter();
-        let operation = trace
-            .as_ref()
-            .map(|trace| thinkrail_observability::operation(trace, "host_tool.call", "host_tool"));
         let result = self.inner.call(scope, options, name, arguments);
         let ms = started.elapsed().as_millis();
         match &result {
             Ok(reply) => {
-                if let Some(operation) = operation {
-                    if reply.is_error {
-                        operation.fail("host_tool_error");
-                    } else {
-                        operation.finish("ok");
-                    }
+                if reply.is_error {
+                    root.fail("host_tool_error");
+                } else {
+                    root.finish("SUCCESS");
                 }
                 info!(ms, is_error = reply.is_error, "host_tool.called");
             }
             Err(error) => {
-                if let Some(operation) = operation {
-                    operation.fail(error.code());
-                }
+                root.fail(error.code());
                 warn!(ms, code = error.code(), "host_tool.failed");
             }
         }

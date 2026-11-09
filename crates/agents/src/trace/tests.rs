@@ -54,7 +54,7 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
         let mut request = fixture.request(BackendKind::Pi, None, false, EngineRouting::default());
         request.chat = chat.into();
         let trace = Arc::new(SessionTrace::new(&request));
-        ids.push(trace.context.as_ref().unwrap().trace_id().to_owned());
+        ids.push(trace.context.trace_id().to_owned());
         #[cfg(windows)]
         let mut command = {
             let root = std::env::var_os("SystemRoot").unwrap();

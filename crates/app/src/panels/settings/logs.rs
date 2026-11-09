@@ -212,10 +212,7 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
         _ => r.text_default,
     };
     let time = entry.time.get(11..19).unwrap_or("—").to_owned();
-    let component = entry
-        .component
-        .clone()
-        .unwrap_or_else(|| entry.target.clone());
+    let component = entry.component.clone();
     let operation = entry.operation.clone().unwrap_or_default();
     h_flex()
         .gap(space::S8)
@@ -260,11 +257,35 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
             )
         })
         .child(
-            label(text::CODE_SMALL, entry.message.clone())
+            label(text::CODE_SMALL, summary(entry))
                 .text_color(color)
                 .flex_1()
                 .min_w_0(),
         )
+}
+
+/// Lifecycle lines carry no message; show their event, duration and terminal code instead, so
+/// ENTRY and EXIT/ERROR of the same operation are distinguishable in the list.
+fn summary(entry: &LogEntry) -> String {
+    let Some(event) = &entry.event else {
+        return entry.message.clone();
+    };
+    let mut text = event.clone();
+    if let Some(ms) = entry.duration_ms {
+        text.push_str(&format!(" {ms}ms"));
+    }
+    for key in ["|Error:", "|Reason:"] {
+        if let Some(value) = entry
+            .raw
+            .split(key)
+            .nth(1)
+            .and_then(|v| v.split('|').next())
+        {
+            text.push(' ');
+            text.push_str(value);
+        }
+    }
+    text
 }
 
 impl Render for LogsPage {

@@ -1,11 +1,17 @@
 //! Owned diagnostic context for one engine session, explicitly restored at every worker boundary.
+//!
+//! The session is a correlation context that lives until dispose, not one bounded operation, so
+//! its root is closed as `REGISTERED` right away; boundaries below run inside its span and carry
+//! the same TraceId. Per-boundary ENTRY/EXIT lifecycles are task L9.
 
 use thinkrail_core::StartSession;
 use thinkrail_observability::TraceContext;
 use tracing::Span;
 
 pub(crate) struct SessionTrace {
-    context: Option<TraceContext>,
+    /// Read by the isolation test; production only needs the span it opened.
+    #[cfg(test)]
+    pub(crate) context: TraceContext,
     span: Span,
     dispatch: tracing::Dispatch,
 }
@@ -17,25 +23,19 @@ pub(crate) struct TraceGuard {
 
 impl SessionTrace {
     pub(crate) fn new(request: &StartSession) -> Self {
-        let (context, root) = match TraceContext::root("agent.session") {
-            Ok((context, span)) => (Some(context), span),
-            Err(_) => {
-                tracing::warn!("agent.trace.unavailable");
-                (None, Span::current())
-            }
-        };
+        let (_context, root) = TraceContext::root("agent.session", "agents");
         let span = tracing::info_span!(
-            parent: &root,
-            "agent.session",
-            trace_id = context.as_ref().map(TraceContext::trace_id),
-            operation = "agent.session",
-            component = "agents",
-            chat_id = %request.chat,
-            workspace_id = %request.workspace,
-            backend = request.backend.label(),
-        );
+        parent: root.span(),
+        "agent.session",
+        component = "agents",
+               chat_id = %request.chat,
+        workspace_id = %request.workspace,
+        backend = request.backend.label(),
+           );
+        root.finish("REGISTERED");
         Self {
-            context,
+            #[cfg(test)]
+            context: _context,
             span,
             dispatch: tracing::dispatcher::get_default(Clone::clone),
         }
@@ -43,17 +43,7 @@ impl SessionTrace {
 
     pub(crate) fn span(&self, operation: &'static str) -> Span {
         let _dispatch = tracing::dispatcher::set_default(&self.dispatch);
-        let _entered = self.span.enter();
-        let child = self
-            .context
-            .as_ref()
-            .map(|context| context.child(operation));
-        let parent = child
-            .as_ref()
-            .filter(|span| !span.is_disabled())
-            .unwrap_or(&self.span);
-        tracing::info_span!(parent: parent, "agent.boundary",
-            trace_id = self.context.as_ref().map(TraceContext::trace_id), operation)
+        tracing::info_span!(parent: &self.span, "agent.boundary", boundary = operation)
     }
 
     pub(crate) fn enter(&self, operation: &'static str) -> TraceGuard {

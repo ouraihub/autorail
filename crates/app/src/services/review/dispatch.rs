@@ -32,16 +32,9 @@ impl ReviewRunner for AppReviewRunner {
             .get()
             .and_then(Weak::upgrade)
             .ok_or_else(|| thinkrail_core::Error::external("review runner unavailable"))?;
-        let context = thinkrail_observability::TraceContext::root("review.run");
-        let (trace, root) = match context {
-            Ok((trace, span)) => (Some(trace), span),
-            Err(_) => {
-                tracing::warn!("review.trace_unavailable");
-                (None, tracing::Span::current())
-            }
-        };
-        let span = tracing::info_span!(parent: &root, "review", chat_id = %scope.chat,
-            workspace_id = %scope.workspace, item_id = %item);
+        let (_trace, root) = thinkrail_observability::TraceContext::root("review.run", "review");
+        let span = tracing::info_span!(parent: root.span(), "review", chat_id = %scope.chat,
+     workspace_id = %scope.workspace, item_id = %item);
         let handle = ReviewHandle::default();
         let cancelled = Arc::new(AtomicBool::new(false));
         let active = Running {
@@ -65,21 +58,16 @@ impl ReviewRunner for AppReviewRunner {
                         item: worker_item.clone(),
                     },
                 ));
-                let operation = trace
-                    .as_ref()
-                    .map(|trace| thinkrail_observability::operation(trace, "review.run", "review"));
                 let result = runner.run(&worker_scope, &worker_item, &cancelled);
-                if let Some(operation) = operation {
-                    if cancelled.load(Ordering::Acquire) {
-                        operation.cancel("user");
-                    } else {
-                        match &result.outcome {
-                            ReviewOutcome::Failed { .. } => operation.fail("review_failed"),
-                            ReviewOutcome::Approved
-                            | ReviewOutcome::ApproveBlocked { .. }
-                            | ReviewOutcome::ChangesFix
-                            | ReviewOutcome::ChangesStop => operation.finish("ok"),
-                        }
+                if cancelled.load(Ordering::Acquire) {
+                    root.cancel("user");
+                } else {
+                    match &result.outcome {
+                        ReviewOutcome::Failed { .. } => root.fail("review_failed"),
+                        ReviewOutcome::Approved
+                        | ReviewOutcome::ApproveBlocked { .. }
+                        | ReviewOutcome::ChangesFix
+                        | ReviewOutcome::ChangesStop => root.finish("SUCCESS"),
                     }
                 }
                 tracing::info!(
