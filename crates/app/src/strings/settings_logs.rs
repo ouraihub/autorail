@@ -12,7 +12,7 @@ pub const ONLY_PROBLEMS: &str = "只看问题";
 pub const REFRESH: &str = "刷新";
 pub const OPEN_DIR: &str = "打开日志目录";
 pub const COPY: &str = "复制当前日志";
-pub const COPY_TRACE: &str = "复制 Trace ID";
+pub const COPY_TRACE: &str = "复制";
 pub const COPIED: &str = "已复制当前显示的日志";
 pub const FILTER: &str = "筛选：Trace ID、op、chat、模块名";
 pub const EMPTY: &str = "还没有日志。";
@@ -22,4 +22,9 @@ pub const READ_FAILED: &str = "日志读取失败：";
 
 pub fn recent(count: usize) -> String {
     format!("最近 {count} 条 · 每 2 秒刷新")
+}
+
+/// Tooltip and accessible name of a row's short TraceId tag.
+pub fn filter_trace(short: &str) -> String {
+    format!("只看 Trace {short}… 的日志；再点一次取消筛选")
 }

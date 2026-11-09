@@ -13,7 +13,7 @@ use gpui_kit::{
     base::{h_flex, v_flex},
     component::{
         Disableable as _, Sizable as _,
-        button::Button,
+        button::{Button, ButtonVariants as _},
         input::{Input, InputEvent, InputState},
         switch::Switch,
     },
@@ -203,9 +203,21 @@ impl LogsPage {
         self.copied = true;
         cx.notify();
     }
+
+    /// A TraceId tag selects its whole chain; the same tag again clears the filter.
+    fn filter_trace(&mut self, trace_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if self.filter.read(cx).value().trim() == trace_id {
+            String::new()
+        } else {
+            trace_id.to_owned()
+        };
+        self.filter
+            .update(cx, |input, cx| input.set_value(next, window, cx));
+        cx.notify();
+    }
 }
 
-fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
+fn row(entry: &LogEntry, r: &Roles, cx: &Context<LogsPage>) -> impl IntoElement + use<> {
     let color = match entry.level.as_str() {
         "ERROR" => r.feedback_error,
         "WARN" => r.feedback_warning,
@@ -214,6 +226,7 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
     let time = entry.time.get(11..19).unwrap_or("—").to_owned();
     let component = entry.component.clone();
     let operation = entry.operation.clone().unwrap_or_default();
+    let is_entry = entry.event.as_deref() == Some("ENTRY");
     h_flex()
         .gap(space::S8)
         .items_start()
@@ -232,6 +245,34 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                 .w(px(40.))
                 .flex_none(),
         )
+        .when_some(entry.trace_id.clone(), |row, trace_id| {
+            let short: String = trace_id.chars().take(8).collect();
+            let tag_label = s::filter_trace(&short);
+            let filter_id = trace_id.clone();
+            row.child(
+                Button::new(("log-trace", entry.seq))
+                    .link()
+                    .xsmall()
+                    .label(short)
+                    .tooltip(tag_label.clone())
+                    .accessibility_label(tag_label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.filter_trace(&filter_id, window, cx)
+                    })),
+            )
+            .when(is_entry, |row| {
+                row.child(
+                    Button::new(("log-trace-copy", entry.seq))
+                        .link()
+                        .xsmall()
+                        .label(s::COPY_TRACE)
+                        .accessibility_label(s::COPY_TRACE)
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
+                        }),
+                )
+            })
+        })
         .when(!operation.is_empty(), |row| {
             row.child(
                 label(text::CODE_SMALL, operation)
@@ -244,18 +285,6 @@ fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
                 .text_color(r.text_muted)
                 .flex_none(),
         )
-        .when_some(entry.trace_id.clone(), |row, trace_id| {
-            let button_id = format!("log-trace-copy-{}", entry.seq);
-            row.child(
-                Button::new(button_id)
-                    .small()
-                    .label(s::COPY_TRACE)
-                    .accessibility_label(s::COPY_TRACE)
-                    .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
-                    }),
-            )
-        })
         .child(
             label(text::CODE_SMALL, summary(entry))
                 .text_color(color)
@@ -303,7 +332,7 @@ impl Render for LogsPage {
         } else {
             s::NO_MATCHES
         };
-        let rows: Vec<_> = visible.iter().map(|e| row(e, &r)).collect();
+        let rows: Vec<_> = visible.iter().map(|e| row(e, &r, cx)).collect();
         let count = visible.len();
         let setting = |title: &'static str, hint: &'static str, control: gpui_kit::AnyElement| {
             h_flex()
