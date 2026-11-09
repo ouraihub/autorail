@@ -1,6 +1,7 @@
 //! 后台日志 (native-multi-agent 06 §5, after AutoNote `LogSettings` / `LogPanel`): the 显示后台日志
 //! switch and level, and — while shown and this page is open — the newest log lines, refreshed
-//! every 2 s, filterable by `op{id=…`, `chat=…` or module, copyable as raw lines.
+//! every 2 s, narrowed by 只看问题, event, layer and free text (TraceId, op, chat or module),
+//! copyable as raw lines.
 //!
 //! The reads here bypass `state::run` on purpose: polling must not write an `op` line every 2 s.
 
@@ -42,7 +43,7 @@ pub struct LogsPage {
     state: Entity<AppState>,
     prefs: Option<AppPrefs>,
     entries: Vec<LogEntry>,
-    only_problems: bool,
+    narrow: Narrow,
     filter: Entity<InputState>,
     read_error: Option<String>,
     copied: bool,
@@ -65,7 +66,7 @@ impl LogsPage {
             state,
             prefs: None,
             entries: Vec::new(),
-            only_problems: false,
+            narrow: Narrow::default(),
             filter,
             read_error: None,
             copied: false,
@@ -181,14 +182,13 @@ impl LogsPage {
         );
     }
 
-    /// Newest first, after 只看问题 and the filter text.
+    /// Newest first, after the event / layer / 只看问题 choices and the filter text.
     fn visible(&self, cx: &Context<Self>) -> Vec<&LogEntry> {
         let query = self.filter.read(cx).value().trim().to_owned();
         self.entries
             .iter()
             .rev()
-            .filter(|e| !self.only_problems || e.level == "ERROR" || e.level == "WARN")
-            .filter(|e| query.is_empty() || e.raw.contains(&query))
+            .filter(|e| self.narrow.keeps(e, &query))
             .collect()
     }
 
@@ -217,8 +217,11 @@ impl LogsPage {
     }
 }
 
+mod filter;
+mod menus;
 mod row;
 
+use filter::Narrow;
 use row::row;
 
 impl Render for LogsPage {
@@ -231,7 +234,12 @@ impl Render for LogsPage {
         let visible = self.visible(cx);
         let empty = if self.entries.is_empty() {
             s::EMPTY
-        } else if self.only_problems {
+        } else if self.narrow
+            == (Narrow {
+                only_problems: true,
+                ..Narrow::default()
+            })
+        {
             s::NO_PROBLEMS
         } else {
             s::NO_MATCHES
@@ -315,10 +323,10 @@ impl Render for LogsPage {
                                 )
                                 .child(
                                     Switch::new("logs-problems")
-                                        .checked(self.only_problems)
+                                        .checked(self.narrow.only_problems)
                                         .label(s::ONLY_PROBLEMS)
                                         .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                            this.only_problems = *checked;
+                                            this.narrow.only_problems = *checked;
                                             cx.notify();
                                         })),
                                 )
@@ -349,7 +357,19 @@ impl Render for LogsPage {
                                         })),
                                 ),
                         )
-                        .child(Input::new(&self.filter).small())
+                        .child(
+                            h_flex()
+                                .gap(space::S8)
+                                .items_center()
+                                .child(self.event_menu(cx))
+                                .child(self.layer_menu(cx))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&self.filter).small()),
+                                ),
+                        )
                         .when(self.copied, |d| {
                             d.child(label(text::METADATA, s::COPIED).text_color(r.feedback_success))
                         })

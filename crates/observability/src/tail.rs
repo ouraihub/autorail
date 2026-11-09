@@ -28,7 +28,9 @@ pub struct LogEntry {
     pub event: Option<String>,
     /// The `RT` segment: elapsed milliseconds of a finished operation.
     pub duration_ms: Option<u64>,
-    /// `Layer` of lifecycle lines, otherwise the event's module (`Target`); empty when neither.
+    /// The `Layer` segment: the layer of the operation the line was written in (`ui`, `review`…).
+    pub layer: Option<String>,
+    /// The event's module (`Target`), or the `Layer` of a lifecycle line; empty when neither.
     pub component: String,
     /// The `Msg` segment; the whole line when it does not follow the format.
     pub message: String,
@@ -45,7 +47,11 @@ fn parse(seq: usize, line: &str) -> LogEntry {
         operation: parsed.operation,
         event: parsed.event,
         duration_ms: parsed.duration_ms,
-        component: parsed.target.or(parsed.layer).unwrap_or_default(),
+        component: parsed
+            .target
+            .or_else(|| parsed.layer.clone())
+            .unwrap_or_default(),
+        layer: parsed.layer,
         message: parsed.message,
         raw: parsed.raw,
     }
