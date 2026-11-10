@@ -1,8 +1,8 @@
 //! 详情页的 API 密钥区：密钥行、显示明文、首个密钥输入与按线路检测。
 
+use super::super::theme;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
+    AnyElement, Context, IntoElement, ParentElement as _, Styled as _,
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
@@ -12,13 +12,13 @@ use gpui_kit::{
         switch::Switch,
     },
     prelude::FluentBuilder as _,
-    px,
 };
+use lumakit_design::components::settings::KeyRow;
+use lumakit_gpui::providers as ui;
 use thinkrail_core::{KeyCheck, ProbeTarget, Provider, provider_preset};
 use thinkrail_ui::{
-    ThinkrailTheme,
-    components::{IconButton, label},
-    metrics::{radius, space, text},
+    components::label,
+    metrics::{space, text},
 };
 
 use crate::{
@@ -29,7 +29,7 @@ use crate::{
 
 impl ProvidersPage {
     pub(super) fn render_key(&self, provider: &Provider, cx: &mut Context<Self>) -> AnyElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let key_url = provider
             .preset_id
             .as_deref()
@@ -42,122 +42,54 @@ impl ProvidersPage {
             Some(key) => {
                 let (id, copy, edit) = (key.id.clone(), key.id.clone(), key.clone());
                 let text_value = self.revealed.clone().unwrap_or_else(|| key.masked.clone());
-                h_flex()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .h(px(32.))
-                    .px(space::S8)
-                    .gap(space::S8)
-                    .rounded(radius::MD)
-                    .border_1()
-                    .border_color(if self.key_hover {
-                        r.control_border_active
-                    } else {
-                        r.border_default
-                    })
-                    .children(
-                        key.label
-                            .clone()
-                            .map(|l| label(text::UI, l).text_color(r.text_muted)),
-                    )
-                    .child(label(text::CODE_TEXT, text_value).truncate())
-                    .when(enabled.len() > 1, |d| {
-                        d.child(
-                            label(text::METADATA, s::more_keys(enabled.len() - 1))
-                                .text_color(r.text_subtle),
-                        )
-                    })
-                    .child(gpui_kit::div().flex_1())
-                    // Copy / edit appear while the pointer is on the eye; the cluster keeps them
-                    // open as the pointer moves left onto them.
-                    .child(
-                        h_flex()
-                            .id("provider-key-actions")
-                            .gap(space::S2)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                this.key_hover = *hovered;
-                                cx.notify();
-                            }))
-                            .when(self.key_hover, |d| {
-                                d.child(
-                                    IconButton::new("provider-key-copy", IconName::Copy)
-                                        .tooltip(s::KEY_COPY)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.copy_key(copy.clone(), cx)
-                                        })),
-                                )
-                                .child(
-                                    IconButton::new("provider-key-edit", IconName::Pencil)
-                                        .tooltip(s::KEY_EDIT)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_keys_dialog(Some(edit.clone()), window, cx)
-                                        })),
-                                )
-                            })
-                            .child(
-                                IconButton::new(
-                                    "provider-key-reveal",
-                                    if self.revealed.is_some() {
-                                        IconName::EyeOff
-                                    } else {
-                                        IconName::Eye
-                                    },
-                                )
-                                .tooltip(if self.revealed.is_some() {
-                                    s::KEY_HIDE
-                                } else {
-                                    s::KEY_SHOW
-                                })
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| this.toggle_reveal(id.clone(), cx),
-                                )),
-                            ),
+                KeyRow::new("provider-key", text_value, self.revealed.is_some())
+                    .roles(r)
+                    .hover_actions(true)
+                    .more(enabled.len().saturating_sub(1))
+                    .when_some(key.label.clone(), |row, label| row.label(label))
+                    .on_copy(cx.listener(move |this, _, _, cx| this.copy_key(copy.clone(), cx)))
+                    .on_edit(cx.listener(move |this, _, window, cx| {
+                        this.open_keys_dialog(Some(edit.clone()), window, cx)
+                    }))
+                    .on_reveal(
+                        cx.listener(move |this, _, _, cx| this.toggle_reveal(id.clone(), cx)),
                     )
                     .into_any_element()
             }
         };
         let saved = !self.dirty && !self.saving && self.failed.is_none();
-        v_flex()
-            .gap(space::S6)
-            .child(
-                h_flex()
-                    .gap(space::S8)
-                    .child(label(text::TITLE_COMPACT, s::API_KEY).text_color(r.text_muted))
-                    .children(key_url.map(|url| {
-                        Button::new("provider-get-key")
-                            .link()
-                            .xsmall()
-                            .label(s::GET_KEY)
-                            .on_click(move |_, _, cx| cx.open_url(url))
-                    })),
-            )
-            .child(
-                h_flex()
-                    .gap(space::S8)
-                    .child(value)
-                    .child(
-                        Button::new("provider-keys")
-                            .outline()
-                            .icon(IconName::KeyRound)
-                            .tooltip(s::KEYS_MANAGE)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_keys_dialog(None, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("provider-check")
-                            .outline()
-                            .label(if self.checking { s::CHECKING } else { s::CHECK })
-                            .disabled(self.checking || !saved)
-                            .on_click(cx.listener(|this, _, _, cx| this.check(cx))),
-                    ),
-            )
-            .children(self.render_checks(provider, cx))
-            .into_any_element()
+        ui::key_section(
+            key_url.map(|url| {
+                Button::new("provider-get-key")
+                    .link()
+                    .xsmall()
+                    .label(s::GET_KEY)
+                    .on_click(move |_, _, cx| cx.open_url(url))
+                    .into_any_element()
+            }),
+            value,
+            Button::new("provider-keys")
+                .outline()
+                .icon(IconName::KeyRound)
+                .tooltip(s::KEYS_MANAGE)
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.open_keys_dialog(None, window, cx)),
+                )
+                .into_any_element(),
+            Button::new("provider-check")
+                .outline()
+                .label(if self.checking { s::CHECKING } else { s::CHECK })
+                .disabled(self.checking || !saved || self.key_saving)
+                .on_click(cx.listener(|this, _, _, cx| this.check(cx)))
+                .into_any_element(),
+            self.render_checks(provider, cx),
+            &r,
+        )
+        .into_any_element()
     }
 
     fn render_checks(&self, provider: &Provider, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let checks = match self.checks.as_ref()? {
             Err(error) => {
                 return error_text(Some(error.clone()), cx).map(IntoElement::into_any_element);
@@ -231,6 +163,8 @@ impl ProvidersPage {
     }
 
     fn toggle_reveal(&mut self, key: thinkrail_core::ProviderKeyId, cx: &mut Context<Self>) {
+        self.key_generation = self.key_generation.wrapping_add(1);
+        let generation = self.key_generation;
         if self.revealed.take().is_some() {
             cx.notify();
             return;
@@ -245,7 +179,7 @@ impl ProvidersPage {
                     .map(|secret| secret.expose().to_owned())
             },
             move |this, result, cx| match result {
-                Ok(value) if this.selected == selected => {
+                Ok(value) if this.selected == selected && this.key_generation == generation => {
                     this.revealed = Some(value);
                     cx.notify();
                 }
@@ -265,17 +199,48 @@ impl ProvidersPage {
         let Some(id) = self.selected.clone() else {
             return;
         };
-        if value.is_empty() || self.provider().is_some_and(|p| !p.keys.is_empty()) {
+        if self.key_saving
+            || value.is_empty()
+            || self.provider().is_some_and(|p| !p.keys.is_empty())
+        {
             return;
         }
-        self.key_input
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let key = thinkrail_core::ProviderKeyInput {
-            label: None,
-            key: thinkrail_core::Secret::new(value),
-            enabled: true,
-        };
-        write(self, cx, move |service| service.add_key(&id, key));
+        self.key_saving = true;
+        let generation = self.key_generation;
+        let target = id.clone();
+        let service = self.service(cx);
+        let handle = window.window_handle();
+        run(
+            cx,
+            move || {
+                service.add_key(
+                    &id,
+                    thinkrail_core::ProviderKeyInput {
+                        label: None,
+                        key: thinkrail_core::Secret::new(value),
+                        enabled: true,
+                    },
+                )
+            },
+            move |this, result, cx| {
+                this.key_saving = false;
+                match result {
+                    Ok(provider) => {
+                        if this.selected.as_ref() == Some(&target)
+                            && this.key_generation == generation
+                        {
+                            let input = this.key_input.clone();
+                            let _ = handle.update(cx, |_, window, cx| {
+                                input.update(cx, |input, cx| input.set_value("", window, cx))
+                            });
+                        }
+                        this.stored(provider, cx);
+                    }
+                    Err(error) => this.report(&error, cx),
+                }
+                cx.notify();
+            },
+        );
     }
 
     /// "检测": lists the current line's models once per enabled key; with no key, once without one.

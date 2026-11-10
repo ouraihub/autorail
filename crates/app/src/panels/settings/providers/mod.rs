@@ -1,28 +1,16 @@
 //! 模型服务页（agent-settings 04 §7.6，对标 Aether `ProvidersSettings`）：左侧服务商栏，右侧选中的
 //! 服务商。每次编辑立即保存（`commit`）；保存失败时修改留在 `draft` 里，可重试。
 
-use std::rc::Rc;
-
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Pixels, Render,
-    Styled as _, Subscription, Window,
-    base::{h_flex, v_flex},
-    component::{
-        WindowExt as _,
-        button::{Button, ButtonVariants as _},
-        dialog::DialogFooter,
-        input::{InputEvent, InputState},
-    },
-    div, px,
+    App, AppContext as _, Context, Entity, IntoElement, Render, Styled as _, Subscription, Window,
+    component::input::{InputEvent, InputState},
+    px,
 };
+use lumakit_gpui::providers as ui;
 use thinkrail_core::{
     Error, KeyCheck, Protocol, Provider, ProviderId, ProviderInput, ProviderService, Result,
 };
-use thinkrail_ui::{
-    ThinkrailTheme,
-    components::label,
-    metrics::{radius, space, text},
-};
+use thinkrail_ui::{ThinkrailTheme, components::label, metrics::text};
 
 use crate::{
     state::{AppEvent, AppState, run},
@@ -31,9 +19,15 @@ use crate::{
 
 mod detail;
 mod dialogs;
+mod forms;
 mod keys;
 mod models;
 mod rail;
+#[cfg(test)]
+mod tests;
+mod theme;
+
+use forms::open_form;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Filter {
@@ -57,6 +51,9 @@ pub struct ProvidersPage {
     /// Set when the url input must be refilled from `draft` on the next render.
     sync_inputs: bool,
     url_error: bool,
+    key_saving: bool,
+    key_generation: u64,
+    reset_key: bool,
     key_input: Entity<InputState>,
     models: models::ModelView,
     saving: bool,
@@ -66,8 +63,6 @@ pub struct ProvidersPage {
     checks: Option<std::result::Result<Vec<KeyCheck>, String>>,
     /// Plaintext of the shown key; cleared on every selection change and when settings close.
     revealed: Option<String>,
-    /// Pointer is on the key row's eye cluster: copy / edit are shown.
-    key_hover: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -110,6 +105,9 @@ impl ProvidersPage {
                 &key_input,
                 window,
                 |this, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.key_generation = this.key_generation.wrapping_add(1);
+                    }
                     if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
                         this.add_first_key(window, cx);
                     }
@@ -133,10 +131,12 @@ impl ProvidersPage {
             saving: false,
             dirty: false,
             failed: None,
+            key_saving: false,
+            key_generation: 0,
+            reset_key: false,
             checking: false,
             checks: None,
             revealed: None,
-            key_hover: false,
             _subscriptions: subscriptions,
         };
         page.reload(cx);
@@ -191,6 +191,7 @@ impl ProvidersPage {
 
     /// Reloads `draft` from the stored snapshot (no pending edits exist).
     fn adopt(&mut self, id: ProviderId, cx: &mut Context<Self>) {
+        let previous_url = self.line_url();
         if let Some(provider) = self.providers.iter().find(|p| p.id == id) {
             self.draft = Some(provider.input.clone());
             self.revealed = None;
@@ -202,12 +203,14 @@ impl ProvidersPage {
             {
                 self.line = provider.input.default_protocol;
             }
-            self.sync_inputs = true;
+            self.sync_inputs |= self.line_url() != previous_url;
             cx.notify();
         }
     }
 
     fn select(&mut self, id: ProviderId, cx: &mut Context<Self>) {
+        self.key_generation = self.key_generation.wrapping_add(1);
+        self.reset_key = true;
         self.selected = Some(id.clone());
         self.draft = None;
         self.failed = None;
@@ -221,23 +224,29 @@ impl ProvidersPage {
         }
         self.adopt(id, cx);
     }
-
-    pub(crate) fn clear_sensitive(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn clear_sensitive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.key_generation = self.key_generation.wrapping_add(1);
+        self.key_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
         self.revealed = None;
         self.checks = None;
         self.sync_inputs = true;
         cx.notify();
     }
 
-    /// Stores a fresh snapshot from a write and tells chats routing changed.
     fn stored(&mut self, provider: Provider, cx: &mut Context<Self>) {
         let id = provider.id.clone();
-        match self.providers.iter_mut().find(|p| p.id == id) {
-            Some(slot) => *slot = provider,
-            None => self.providers.push(provider),
-        }
+        self.store_snapshot(provider, cx);
         if self.selected.as_ref() == Some(&id) && !self.dirty {
             self.adopt(id, cx);
+        }
+    }
+
+    /// Publishes a saved snapshot without replacing a form's pending draft.
+    fn store_snapshot(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        match self.providers.iter_mut().find(|p| p.id == provider.id) {
+            Some(slot) => *slot = provider,
+            None => self.providers.push(provider),
         }
         self.state.update(cx, |_, cx| cx.emit(AppEvent::Routing));
     }
@@ -263,10 +272,11 @@ impl ProvidersPage {
         };
         self.saving = true;
         let service = self.service(cx);
+        let target = id.clone();
         run(
             cx,
             move || service.update(&id, revision, input),
-            |this, result, cx| {
+            move |this, result, cx| {
                 this.saving = false;
                 match result {
                     Ok(provider) => {
@@ -276,7 +286,10 @@ impl ProvidersPage {
                         }
                     }
                     // The edit stays in `draft`; "重试" saves it again.
-                    Err(error) => this.failed = Some(error.to_string()),
+                    Err(error) if this.selected.as_ref() == Some(&target) => {
+                        this.failed = Some(error.to_string())
+                    }
+                    Err(error) => this.report(&error, cx),
                 }
                 cx.notify();
             },
@@ -327,86 +340,28 @@ impl Render for ProvidersPage {
             let url = self.line_url();
             self.url
                 .update(cx, |input, cx| input.set_value(url, window, cx));
-            self.key_input
-                .update(cx, |input, cx| input.set_value("", window, cx));
             self.url_error = false;
         }
-        h_flex()
-            .w_full()
-            .items_start()
-            .gap(space::S16)
-            .child(self.render_rail(cx))
-            .child(self.render_detail(cx))
+        if std::mem::take(&mut self.reset_key) {
+            self.key_input
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        let viewport = window.viewport_size().width;
+        let stacked_nav = viewport < lumakit_design::metrics::size::NARROW;
+        let content_width = viewport.min(px(1040.))
+            - thinkrail_ui::metrics::space::S64
+            - if stacked_nav { px(0.) } else { px(192.) };
+        ui::page(
+            self.render_rail(cx),
+            self.render_detail(cx),
+            content_width >= lumakit_design::metrics::size::NARROW,
+        )
     }
 }
 
-/// Small bordered square with a provider's or model's initial (Aether avatar).
+/// Provider/model initial used by the coding settings page as well.
 pub(in crate::panels::settings) fn avatar(name: &str, cx: &App) -> impl IntoElement {
-    let r = ThinkrailTheme::global(cx).roles;
-    let initial: String = name
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().collect())
-        .unwrap_or_default();
-    div()
-        .size(px(24.))
-        .flex_none()
-        .rounded(radius::MD)
-        .bg(r.primary_subtle)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(label(text::EMPHASIS, initial).text_color(r.primary))
-}
-
-/// A dialog with `body` and a 取消 / `ok` footer; `ok` returns true to close.
-fn open_form<V: Render>(
-    window: &mut Window,
-    cx: &mut App,
-    title: &'static str,
-    width: Pixels,
-    body: Entity<V>,
-    ok: &'static str,
-    on_ok: impl Fn(&mut V, &mut Window, &mut Context<V>) -> bool + 'static,
-) {
-    let on_ok = Rc::new(on_ok);
-    window.open_dialog(cx, move |dialog, _, _| {
-        let (enter_body, enter_ok, body, on_ok) =
-            (body.clone(), on_ok.clone(), body.clone(), on_ok.clone());
-        // Enter in a field runs the same check as the button; false keeps the dialog open.
-        dialog
-            .title(title)
-            .w(width)
-            .child(body.clone())
-            .on_ok(move |_, window, cx| {
-                enter_body.update(cx, |view, cx| enter_ok(view, window, cx))
-            })
-            .footer(
-                DialogFooter::new()
-                    .child(
-                        Button::new("form-cancel")
-                            .outline()
-                            .label(s::CANCEL)
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(Button::new("form-ok").primary().label(ok).on_click(
-                        move |_, window, cx| {
-                            if body.update(cx, |view, cx| on_ok(view, window, cx)) {
-                                window.close_dialog(cx);
-                            }
-                        },
-                    )),
-            )
-    });
-}
-
-/// A labeled form field.
-fn field(title: &'static str, control: impl IntoElement, cx: &App) -> impl IntoElement {
-    let r = ThinkrailTheme::global(cx).roles;
-    v_flex()
-        .gap(space::S4)
-        .child(label(text::TITLE_COMPACT, title).text_color(r.text_muted))
-        .child(control)
+    lumakit_design::components::settings::avatar(name, &theme::roles(cx))
 }
 
 fn error_text(message: Option<String>, cx: &App) -> Option<impl IntoElement> {

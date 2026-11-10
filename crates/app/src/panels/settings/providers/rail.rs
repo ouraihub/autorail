@@ -1,28 +1,20 @@
 //! 服务商栏：搜索、筛选、服务商行（头像、名称、状态点、⋯ 菜单）、新建。
 
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
+    AnyElement, Context, IntoElement, Styled as _,
     assets::IconName,
-    base::{h_flex, v_flex},
     component::{
         Icon, Sizable as _,
         button::{Button, ButtonVariants as _},
         input::Input,
         menu::{DropdownMenu as _, PopupMenuItem},
     },
-    div,
     prelude::FluentBuilder as _,
-    px,
 };
+use lumakit_gpui::providers as ui;
 use thinkrail_core::Provider;
-use thinkrail_ui::{
-    ThinkrailTheme,
-    components::label,
-    metrics::{radius, size, space, text},
-};
 
-use super::{Filter, ProvidersPage, avatar};
+use super::{Filter, ProvidersPage, theme};
 use crate::strings::settings_providers as s;
 
 impl ProvidersPage {
@@ -41,7 +33,7 @@ impl ProvidersPage {
     }
 
     pub(super) fn render_rail(&self, cx: &mut Context<Self>) -> AnyElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let page = cx.entity();
         let filter = self.filter;
         let filter_menu = Button::new("providers-filter")
@@ -72,53 +64,34 @@ impl ProvidersPage {
             });
         let visible = self.visible(cx);
         let rows: Vec<AnyElement> = if visible.is_empty() && self.loaded {
-            vec![
-                label(text::METADATA, s::NO_MATCHES)
-                    .text_color(r.text_subtle)
-                    .p(space::S8)
-                    .into_any_element(),
-            ]
+            vec![ui::empty(s::NO_MATCHES, &r)]
         } else {
             visible.iter().map(|p| self.render_row(p, cx)).collect()
         };
-        v_flex()
-            .w(size::PROVIDER_LIST)
-            .flex_none()
-            .gap(space::S4)
-            .child(
-                h_flex()
-                    .gap(space::S6)
-                    .child(
-                        Input::new(&self.search)
-                            .prefix(Icon::new(IconName::Search).small())
-                            .flex_1(),
-                    )
-                    .child(filter_menu),
-            )
-            .children(rows)
-            .child(
-                Button::new("providers-add")
-                    .w_full()
-                    .icon(IconName::Plus)
-                    .label(s::ADD)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.open_name_dialog(None, window, cx)),
-                    ),
-            )
-            .into_any_element()
+        ui::rail(
+            Input::new(&self.search)
+                .prefix(Icon::new(IconName::Search).small())
+                .into_any_element(),
+            filter_menu.into_any_element(),
+            rows,
+            Button::new("providers-add")
+                .w_full()
+                .icon(IconName::Plus)
+                .label(s::ADD)
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.open_name_dialog(None, window, cx)),
+                )
+                .into_any_element(),
+        )
+        .into_any_element()
     }
 
     fn render_row(&self, provider: &Provider, cx: &mut Context<Self>) -> AnyElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let id = provider.id.clone();
         let current = self.selected.as_ref() == Some(&id);
         let enabled = provider.input.enabled;
         let has_key = provider.keys.iter().any(|k| k.enabled);
-        let dot = enabled.then_some(if has_key {
-            r.feedback_success
-        } else {
-            r.feedback_warning
-        });
         let page = cx.entity();
         let menu_target = provider.clone();
         let menu = Button::new(format!("provider-menu-{id}"))
@@ -151,34 +124,25 @@ impl ProvidersPage {
                         }),
                 )
             });
-        h_flex()
-            .id(format!("provider-row-{id}"))
-            .h(px(36.))
-            .px(space::S8)
-            .gap(space::S8)
-            .rounded(radius::MD)
-            .cursor_pointer()
-            .when(current, |d| d.bg(r.control_bg_selected))
-            .when(!current, |d| d.hover(|s| s.bg(r.control_bg_hovered)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.selected.as_ref() != Some(&id) {
-                    this.select(id.clone(), cx)
-                }
-            }))
-            .child(avatar(&provider.input.name, cx))
-            .child(
-                label(text::UI, provider.input.name.clone())
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
-                    .text_color(if enabled {
-                        r.text_default
-                    } else {
-                        r.text_muted
-                    }),
-            )
-            .children(dot.map(|color| div().size(px(6.)).flex_none().rounded_full().bg(color)))
-            .child(menu)
-            .into_any_element()
+        ui::provider_row(
+            format!("provider-row-{id}"),
+            provider.input.name.clone(),
+            current,
+            enabled,
+            has_key,
+            menu.into_any_element(),
+            &r,
+        )
+        .on_select({
+            let page = cx.entity();
+            move |_, cx| {
+                page.update(cx, |this, cx| {
+                    if this.selected.as_ref() != Some(&id) {
+                        this.select(id.clone(), cx);
+                    }
+                });
+            }
+        })
+        .into_any_element()
     }
 }

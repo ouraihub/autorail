@@ -4547,9 +4547,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumakit-design"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "serde",
+ "serde_json",
+ "tracing",
+ "ttf-parser",
+]
+
+[[package]]
+name = "lumakit-gpui"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "gpui-kit",
+ "lumakit-design",
+]
+
+[[package]]
 name = "lumakit-model-picker"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3#a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "gpui-kit",
 ]
@@ -4557,7 +4579,7 @@ dependencies = [
 [[package]]
 name = "lumakit-observability"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3#a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "lumakit-support",
  "serde",
@@ -4571,7 +4593,7 @@ dependencies = [
 [[package]]
 name = "lumakit-support"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3#a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "getrandom 0.3.4",
  "rusqlite",
@@ -4585,7 +4607,7 @@ dependencies = [
 [[package]]
 name = "lumakit-usage-status"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3#a5b9bf35e0aeb3158e330bf2295c4a95aeec22c3"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "gpui-kit",
 ]
@@ -8044,6 +8066,8 @@ dependencies = [
  "anyhow",
  "async-channel",
  "gpui-kit",
+ "lumakit-design",
+ "lumakit-gpui",
  "lumakit-model-picker",
  "lumakit-usage-status",
  "serde_json",
