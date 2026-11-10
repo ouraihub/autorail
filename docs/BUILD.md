@@ -144,3 +144,7 @@ CI run `42750421487` / job `129617640445` 的真实失败是 `real_process_reade
 边界：Gateway 只能真实关联 token 注册的 session/setup span，没有可信 per-turn header，不能宣称当前 turn 全链路已贯通；Agent 使用会话关联 TraceId 与 child turn span。Rust hook 不覆盖系统强杀、访问违规、栈溢出/断电；文件系统无法写入时不能保证诊断落盘。未重新发送真实 Pi/OMP/DSH 模型请求，历史 smoke 不是本轮全部复测。
 
 模块规模评审：日志入口145行/panic67行；gateway按监听与转发拆为292/169行，Git按领域查询/进程生命周期拆为338/155行。main197/state299/services357行，资源与错误边界未复制。既有大模块本轮保留窄改动：provider存储457行（同一事务/CRUD所有者）、spec工具436行（同一公开工具合同）、Projection403行（同一事件状态机）、日志页402行（同一读取/筛选投影）、picker409行（同一选择草稿/保存所有者）；其中少量增长作为本轮错误边界修复例外，不为分行扩大公开接口或拆散状态所有权。其余既有超过阈值文件未新增行为，不将此记录当作已完成全仓规模重构。
+
+整改代码 `0de6d2c` 已推送 main；`package-exe.bat` 已重建原发布目录与 ZIP，包内 EXE/发布 EXE SHA-256 一致：`ea77957c9530eeabb14d1a39b3c187068dc96e9e171115835cd58a43691f6fbc`。release 实窗同步打开 picker，选中模型后重启并再次选择原服务商，`audit-model-safe` 仍在模型列表；截图 `release-sync-success.png`、`release-sync-model-added.png`、`release-restart-selected-provider.png`（同上隔离目录）。保存证据为应用自身重启读取及真实服务持久化回归。
+
+GitHub 新运行 [42756799363](https://github.com/ouraihub/autorail/actions/runs/42756799363) 在 `0de6d2c` 的 Format、Clippy、Test 全部成功，rust job 129632937278 用时4分55秒；原失败运行保留历史，不重跑旧提交。现有 action 的 Node 20 弃用提示为非失败注解，本轮未无关升级 action。
