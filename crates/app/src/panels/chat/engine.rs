@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use gpui_kit::Context;
 use thinkrail_core::{
-    AgentSession, BackendKind, ChatBinding, ChatId, Error, Readiness, Result, RouteRequest,
-    SessionRole, StartSession,
+    AgentSession, BackendKind, ChatBinding, ChatId, Error, ErrorCode as _, Readiness, Result,
+    RouteRequest, SessionRole, StartSession,
 };
-use tracing::{debug, info};
+use tracing::{error, info, warn};
 
 use super::{ChatPanel, StartInput, Started};
 use crate::{services::Services, state::run};
@@ -78,6 +78,7 @@ fn launch_engine(
     let host_tool_options = match services.host_tool_options(backend) {
         Ok(options) => options,
         Err(error) => {
+            cleanup_support(&services, &chat);
             services.router.release(&chat);
             return Err(error);
         }
@@ -100,7 +101,7 @@ fn launch_engine(
         Ok(session) => session,
         Err(error) => {
             services.router.release(&chat);
-            let _ = services.remove_support_dir(&chat);
+            cleanup_support(&services, &chat);
             return Err(error);
         }
     };
@@ -110,9 +111,11 @@ fn launch_engine(
             let key = match session.snapshot().native_session_key {
                 Some(key) => key,
                 None => {
-                    let _ = session.dispose();
+                    if let Err(error) = session.dispose() {
+                        warn!(code = error.code(), chat_id = %chat, "chat.engine.cleanup_dispose_failed");
+                    }
                     services.router.release(&chat);
-                    let _ = services.remove_support_dir(&chat);
+                    cleanup_support(&services, &chat);
                     return Err(Error::protocol("Agent 没有返回会话 locator"));
                 }
             };
@@ -123,15 +126,20 @@ fn launch_engine(
                 native_session_key: key,
             };
             if let Err(error) = services.bindings.bind(binding.clone()) {
-                let _ = session.dispose();
+                if let Err(error) = session.dispose() {
+                    warn!(code = error.code(), chat_id = %chat, "chat.engine.cleanup_dispose_failed");
+                }
                 services.router.release(&chat);
-                let _ = services.remove_support_dir(&chat);
+                cleanup_support(&services, &chat);
                 return Err(error);
             }
             binding
         }
     };
     let prompt_error = prompt.and_then(|text| session.prompt(&text).err());
+    if let Some(error) = &prompt_error {
+        error!(code = error.code(), chat_id = %chat, "chat.prompt.failed");
+    }
     Ok(Started {
         session,
         binding,
@@ -139,6 +147,12 @@ fn launch_engine(
         host_tool_options,
         prompt_error,
     })
+}
+
+fn cleanup_support(services: &Services, chat: &ChatId) {
+    if let Err(error) = services.remove_support_dir(chat) {
+        warn!(code = error.code(), chat_id = %chat, "chat.engine.cleanup_failed");
+    }
 }
 
 /// Disposes an engine, revokes routing and removes generated files. `unbind` only when closing.
@@ -156,18 +170,30 @@ pub(super) fn dispose_engine(
     run(
         cx,
         move || {
-            if let Some(session) = session
-                && let Err(error) = session.dispose()
-            {
-                debug!(code = %error, "dispose of a closed chat failed");
-            }
+            let disposed = session.map_or(Ok(()), |session| session.dispose());
             router.release(&chat);
             let cleanup = support.remove_support_dir(&chat);
-            if unbind {
-                bindings.unbind(&chat)?;
+            if disposed.is_err()
+                && let Err(error) = &cleanup
+            {
+                warn!(code = error.code(), chat_id = %chat, "chat.engine.cleanup_failed");
             }
-            info!(chat = %chat, "chat engine disposed");
-            cleanup
+            let unbound = if unbind {
+                bindings.unbind(&chat)
+            } else {
+                Ok(())
+            };
+            if (disposed.is_err() || cleanup.is_err())
+                && let Err(error) = &unbound
+            {
+                warn!(code = error.code(), chat_id = %chat, "chat.binding.cleanup_failed");
+            }
+            // Perform every cleanup even when an earlier step failed, then propagate the first.
+            let result = disposed.and(cleanup).and(unbound);
+            if result.is_ok() {
+                info!(chat_id = %chat, "chat.engine.disposed");
+            }
+            result
         },
         move |this, result, cx| {
             if let Some(chat) = this.chats.get_mut(&callback_chat) {

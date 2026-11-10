@@ -83,12 +83,13 @@ impl Workbench {
     /// One foreground task per channel; each event goes to the panel that owns it.
     fn pump_sessions(
         chat: &Entity<ChatPanel>,
-        events: async_channel::Receiver<SessionEvent>,
+        events: async_channel::Receiver<(tracing::Span, SessionEvent)>,
         cx: &mut Context<Self>,
     ) {
         let chat = chat.downgrade();
         cx.spawn(async move |_, cx| {
-            while let Ok(event) = events.recv().await {
+            while let Ok((span, event)) = events.recv().await {
+                let _entered = span.enter();
                 if chat
                     .update(cx, |chat, cx| chat.on_session_event(event, cx))
                     .is_err()
@@ -102,12 +103,13 @@ impl Workbench {
 
     fn pump_plans(
         chat: &Entity<ChatPanel>,
-        changes: async_channel::Receiver<thinkrail_core::PlanScope>,
+        changes: async_channel::Receiver<(tracing::Span, thinkrail_core::PlanScope)>,
         cx: &mut Context<Self>,
     ) {
         let chat = chat.downgrade();
         cx.spawn(async move |_, cx| {
-            while let Ok(scope) = changes.recv().await {
+            while let Ok((span, scope)) = changes.recv().await {
+                let _entered = span.enter();
                 if chat
                     .update(cx, |chat, cx| chat.on_plan_changed(&scope.chat, cx))
                     .is_err()
@@ -142,12 +144,13 @@ impl Workbench {
 
     fn pump_terminals(
         terminal: &Entity<TerminalPanel>,
-        events: async_channel::Receiver<thinkrail_core::TerminalEvent>,
+        events: async_channel::Receiver<(tracing::Span, thinkrail_core::TerminalEvent)>,
         cx: &mut Context<Self>,
     ) {
         let terminal = terminal.downgrade();
         cx.spawn(async move |_, cx| {
-            while let Ok(event) = events.recv().await {
+            while let Ok((span, event)) = events.recv().await {
+                let _entered = span.enter();
                 if terminal
                     .update(cx, |terminal, cx| terminal.on_terminal_event(event, cx))
                     .is_err()

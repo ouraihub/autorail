@@ -6,7 +6,7 @@ use thinkrail_core::{
     ProviderKeySummary, ProviderKeyUpdate, ProviderModel, ProviderService, Result, Secret,
     SelectedKey,
 };
-use tracing::info;
+use tracing::debug;
 use turso::Row;
 
 use crate::{
@@ -286,7 +286,7 @@ impl ProviderService for SqliteSettingsStore {
             let id = insert(conn, &input, None)?;
             load(conn, &id)
         })?;
-        info!(provider = %provider.id, "provider created");
+        debug!(provider = %provider.id, "settings.provider.created");
         Ok(provider)
     }
 
@@ -324,7 +324,7 @@ impl ProviderService for SqliteSettingsStore {
             remove_stale_overrides(conn, id, false)?;
             load(conn, id)
         })?;
-        info!(provider = %id, revision = provider.revision, "provider updated");
+        debug!(provider = %id, revision = provider.revision, "settings.provider.updated");
         Ok(provider)
     }
 
@@ -347,7 +347,7 @@ impl ProviderService for SqliteSettingsStore {
             Ok(())
         })?;
         self.cursor.lock().remove(id);
-        info!(provider = %id, "provider deleted");
+        debug!(provider = %id, "settings.provider.deleted");
         Ok(())
     }
 
@@ -366,7 +366,7 @@ impl ProviderService for SqliteSettingsStore {
             bump(conn, id)?;
             load(conn, id)
         })?;
-        info!(provider = %id, key = %key_id, "provider key added");
+        debug!(provider = %id, key = %key_id, "settings.key.added");
         Ok(provider)
     }
 
@@ -397,7 +397,7 @@ impl ProviderService for SqliteSettingsStore {
             bump(conn, id)?;
             load(conn, id)
         })?;
-        info!(provider = %id, key = %key_id, "provider key updated");
+        debug!(provider = %id, key = %key_id, "settings.key.updated");
         Ok(provider)
     }
 
@@ -411,7 +411,7 @@ impl ProviderService for SqliteSettingsStore {
             bump(conn, id)?;
             load(conn, id)
         })?;
-        info!(provider = %id, key = %key_id, "provider key deleted");
+        debug!(provider = %id, key = %key_id, "settings.key.deleted");
         Ok(provider)
     }
 
@@ -450,7 +450,7 @@ impl ProviderService for SqliteSettingsStore {
     fn seed_presets(&self) -> Result<Vec<Provider>> {
         let seeded = self.write(crate::presets::seed)?;
         if seeded > 0 {
-            info!(count = seeded, "provider presets seeded");
+            debug!(count = seeded, "settings.presets.seeded");
         }
         self.providers()
     }

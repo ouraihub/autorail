@@ -42,10 +42,11 @@ fn a_failed_background_job_leaves_its_trace_id_on_the_notice(cx: &mut TestAppCon
     assert_eq!(trace_id.len(), 32);
     assert!(trace_id.bytes().all(|b| b.is_ascii_hexdigit()));
 
-    // Reported outside a background completion: no TraceId to point at.
+    // Direct failures own a root too, so their notice still has a diagnostic ID.
     cx.update(|cx| state.update(cx, |state, cx| state.report(&Error::invalid("direct"), cx)));
     let direct = cx
         .update(|cx| state.read(cx).notice.clone())
         .expect("notice shown");
-    assert_eq!(direct.trace_id, None);
+    let direct_trace = direct.trace_id.expect("direct failure has a TraceId");
+    assert_ne!(direct_trace, trace_id);
 }

@@ -8,6 +8,9 @@ use crate::state::run;
 
 impl ProvidersPage {
     pub(super) fn sync_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.models.syncing {
+            return;
+        }
         let Some(provider) = self.provider().cloned() else {
             return;
         };
@@ -21,6 +24,7 @@ impl ProvidersPage {
             return;
         };
         self.models.syncing = true;
+        let provider_id = provider.id.clone();
         self.models.sync_error = None;
         let (service, probe) = (self.service(cx), self.state.read(cx).services.probe.clone());
         let (line, selected) = (self.line, self.selected.clone());
@@ -42,6 +46,7 @@ impl ProvidersPage {
             },
             move |this, result, cx| {
                 if this.selected != selected || this.line != line {
+                    tracing::debug!("providers.discovery.stale");
                     return;
                 }
                 this.models.syncing = false;
@@ -53,11 +58,27 @@ impl ProvidersPage {
                             .as_ref()
                             .map(|d| d.models.clone())
                             .unwrap_or_default();
-                        let _ = handle.update(cx, |_, window, cx| {
-                            super::picker::open_picker(page, found, draft, line, window, cx)
-                        });
+                        if handle
+                            .update(cx, |_, window, cx| {
+                                super::picker::open_picker(
+                                    page,
+                                    provider_id,
+                                    found,
+                                    draft,
+                                    line,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .is_err()
+                        {
+                            tracing::debug!("providers.discovery.window_closed");
+                        }
                     }
-                    Err(error) => this.models.sync_error = Some(error.to_string()),
+                    Err(error) => {
+                        this.models.sync_error = Some(error.to_string());
+                        this.report(&error, cx);
+                    }
                 }
                 cx.notify();
             },

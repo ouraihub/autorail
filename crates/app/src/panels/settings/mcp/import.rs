@@ -183,6 +183,13 @@ impl McpPage {
                         Err(error) => failure = Some(error),
                     }
                 }
+                if let Some(error) = &failure {
+                    tracing::error!(
+                        code = thinkrail_core::ErrorCode::code(error),
+                        succeeded_count = succeeded,
+                        "mcp.import.partial_failure"
+                    );
+                }
                 Ok((succeeded, failure))
             },
             move |this, result, cx| {

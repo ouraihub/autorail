@@ -33,20 +33,12 @@ enum Phase {
 
 /// Map an engine error without echoing bound parameters (which may hold keys).
 fn engine_error(phase: Phase, error: turso::Error) -> Error {
-    if let turso::Error::Constraint(message) = &error
-        && message.contains("UNIQUE")
-    {
-        return Error::conflict("与已有数据重复，请修改后重试。");
+    if matches!(error, turso::Error::Constraint(_)) {
+        return Error::conflict("数据约束冲突，请修改后重试。");
     }
-    let detail = match &error {
-        turso::Error::ToSqlConversionFailure(_) | turso::Error::ConversionFailure(_) => {
-            "数据类型转换失败".to_owned()
-        }
-        other => other.to_string(),
-    };
     match phase {
-        Phase::Open => Error::corrupt(format!("设置数据库无法打开（{detail}）。")),
-        Phase::Runtime => Error::external(format!("设置数据库操作失败（{detail}）。")),
+        Phase::Open => Error::corrupt("设置数据库无法打开。"),
+        Phase::Runtime => Error::external("设置数据库操作失败。"),
     }
 }
 
@@ -103,11 +95,17 @@ impl Conn {
     fn transaction<T>(&self, begin: &str, body: impl FnOnce(&Self) -> Result<T>) -> Result<T> {
         self.execute(begin, ())?;
         let result = body(self).and_then(|value| self.execute("COMMIT", ()).map(|_| value));
-        if result.is_err()
-            && !self.inner.is_autocommit().unwrap_or(true)
-            && let Err(error) = self.execute("ROLLBACK", ())
-        {
-            warn!(code = error.code(), "settings rollback failed");
+        if result.is_err() {
+            let active = match self.inner.is_autocommit() {
+                Ok(autocommit) => !autocommit,
+                Err(_) => {
+                    warn!(code = "EXTERNAL", "settings.transaction.state_unavailable");
+                    true
+                }
+            };
+            if active && let Err(error) = self.execute("ROLLBACK", ()) {
+                warn!(code = error.code(), "settings.transaction.rollback_failed");
+            }
         }
         result
     }
@@ -132,12 +130,7 @@ pub(crate) fn open(path: &Path) -> Result<turso::Database> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let unwritable = || {
-        Error::invalid(format!(
-            "无法在 {} 创建数据库，请用 --data-dir 指定可写目录。",
-            directory.display()
-        ))
-    };
+    let unwritable = || Error::invalid("无法创建数据库，请用 --data-dir 指定可写目录。");
     fs::create_dir_all(directory).map_err(|_| unwritable())?;
     let text = path
         .to_str()
@@ -150,7 +143,7 @@ pub(crate) fn open(path: &Path) -> Result<turso::Database> {
             },
         )?;
     migrate(&Conn::open(&db, Phase::Open)?)?;
-    info!(version = SCHEMA_VERSION, "settings database opened");
+    info!(version = SCHEMA_VERSION, "settings.database.opened");
     Ok(db)
 }
 
@@ -166,7 +159,7 @@ fn migrate(conn: &Conn) -> Result<()> {
         .map(|row| text(row, 0))
         .collect::<Result<Vec<_>>>()?;
     if names.is_empty() {
-        return conn.transaction("BEGIN IMMEDIATE", |conn| {
+        conn.transaction("BEGIN IMMEDIATE", |conn| {
             for sql in TABLES {
                 conn.execute(sql, ())?;
             }
@@ -174,9 +167,10 @@ fn migrate(conn: &Conn) -> Result<()> {
                 "INSERT INTO schema_meta (version) VALUES (?1)",
                 (SCHEMA_VERSION,),
             )?;
-            info!(version = SCHEMA_VERSION, "settings database created");
             Ok(())
-        });
+        })?;
+        info!(version = SCHEMA_VERSION, "settings.database.created");
+        return Ok(());
     }
     if !names.iter().any(|name| name == "schema_meta") {
         return Err(Error::corrupt("这不是 ThinkRail 的设置数据库。"));

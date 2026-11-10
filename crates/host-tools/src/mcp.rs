@@ -64,8 +64,8 @@ impl Backend for Pipe {
 
     fn cancel(&self) {
         let mut main = self.main.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Err(error) = Self::request(&mut main, json!({"method": "cancel"})) {
-            tracing::debug!(%error, "host tool cancel not delivered");
+        if Self::request(&mut main, json!({"method": "cancel"})).is_err() {
+            tracing::warn!(code = "MCP_BRIDGE_FAILED", "mcp.cancel.delivery_failed");
         }
     }
 }
@@ -192,99 +192,132 @@ pub(crate) fn serve<W: Write + Send + 'static>(
     let output = Arc::new(Mutex::new(output));
     let running: Arc<Mutex<HashMap<String, tracing::Span>>> = Arc::default();
     let cancelled: Arc<Mutex<HashSet<String>>> = Arc::default();
-    let mut workers = Vec::new();
+    let mut workers: Vec<thread::JoinHandle<std::io::Result<()>>> = Vec::new();
     let write = |output: &Mutex<W>, value: &Value| -> std::io::Result<()> {
         let mut out = output.lock().unwrap_or_else(PoisonError::into_inner);
         bridge::write_line(&mut *out, value)
     };
-    while let Some(line) = bridge::read_line(input)? {
-        if line.trim().is_empty() {
-            continue;
-        }
-        match parse(&line, backend.as_ref()) {
-            Frame::Reply(value) => write(&output, &value)?,
-            Frame::Ignore => {}
-            Frame::Cancelled(id) => {
-                let key = id.to_string();
-                let call_span = running
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .get(&key)
-                    .cloned();
-                if let Some(span) = call_span {
-                    let _entered = span.enter();
-                    tracing::debug!("mcp.call.cancel_requested");
-                    cancelled
+    let result = (|| -> std::io::Result<()> {
+        while let Some(line) = bridge::read_line(input)? {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse(&line, backend.as_ref()) {
+                Frame::Reply(value) => write(&output, &value)?,
+                Frame::Ignore => {}
+                Frame::Cancelled(id) => {
+                    let key = id.to_string();
+                    let call_span = running
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
-                        .insert(key);
-                    backend.cancel();
+                        .get(&key)
+                        .cloned();
+                    if let Some(span) = call_span {
+                        let _entered = span.enter();
+                        tracing::debug!("mcp.call.cancel_requested");
+                        cancelled
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(key);
+                        backend.cancel();
+                    }
                 }
-            }
-            Frame::Call {
-                id,
-                name,
-                arguments,
-            } => {
-                let key = id.to_string();
-                let span = tracing::info_span!(parent: &session_span, "mcp.call",
+                Frame::Call {
+                    id,
+                    name,
+                    arguments,
+                } => {
+                    let key = id.to_string();
+                    let span = tracing::info_span!(parent: &session_span, "mcp.call",
      component = "host_tools");
-                running
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(key.clone(), span.clone());
-                let trace = trace.clone();
-                let dispatch = tracing::dispatcher::get_default(Clone::clone);
-                let (backend, output, running, cancelled) = (
-                    backend.clone(),
-                    output.clone(),
-                    running.clone(),
-                    cancelled.clone(),
-                );
-                let worker =
-                    thread::Builder::new()
-                        .name("mcp-host-call".into())
-                        .spawn(move || {
-                            let _dispatch = tracing::dispatcher::set_default(&dispatch);
-                            let _entered = span.enter();
-                            let call = operation(&trace, "mcp.call", "host_tools");
-                            let reply = backend.call(&name, arguments);
-                            running
-                                .lock()
-                                .unwrap_or_else(PoisonError::into_inner)
-                                .remove(&key);
-                            let withdrawn = cancelled
-                                .lock()
-                                .unwrap_or_else(PoisonError::into_inner)
-                                .remove(&key);
-                            // Backend errors are bridge/transport strings without a stable code.
-                            match (&reply, withdrawn) {
-                                (_, true) => call.cancel("engine_withdrew"),
-                                (Ok(result), false) if result.is_error => {
-                                    call.fail("host_tool_error")
-                                }
-                                (Ok(_), false) => call.finish("SUCCESS"),
-                                (Err(_), false) => call.fail("MCP_BRIDGE_FAILED"),
-                            }
-                            let response = call_reply(&id, reply);
-                            tracing::debug!(cancelled = withdrawn, "mcp.call.returned");
-                            if !withdrawn {
+                    running
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(key.clone(), span.clone());
+                    let trace = trace.clone();
+                    let dispatch = tracing::dispatcher::get_default(Clone::clone);
+                    let (backend, output, running, cancelled) = (
+                        backend.clone(),
+                        output.clone(),
+                        running.clone(),
+                        cancelled.clone(),
+                    );
+                    let worker =
+                        thread::Builder::new()
+                            .name("mcp-host-call".into())
+                            .spawn(move || {
+                                let _dispatch = tracing::dispatcher::set_default(&dispatch);
+                                let _entered = span.enter();
+                                let call = operation(&trace, "mcp.call", "host_tools");
+                                let call_span = call.span().clone();
+                                let _call = call_span.enter();
+                                let reply = backend.call(&name, arguments);
+                                running
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner)
+                                    .remove(&key);
+                                let withdrawn = cancelled
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner)
+                                    .remove(&key);
+                                let failure = match (&reply, withdrawn) {
+                                    (_, true) => {
+                                        call.cancel("engine_withdrew");
+                                        return Ok(());
+                                    }
+                                    (Ok(result), false) if result.is_error => {
+                                        Some("HOST_TOOL_ERROR")
+                                    }
+                                    (Ok(_), false) => None,
+                                    (Err(_), false) => Some("MCP_BRIDGE_FAILED"),
+                                };
+                                let response = call_reply(&id, reply);
                                 let mut out = output.lock().unwrap_or_else(PoisonError::into_inner);
                                 if let Err(error) = bridge::write_line(&mut *out, &response) {
-                                    tracing::debug!(%error, "MCP reply not written");
+                                    call.fail("MCP_WRITE_FAILED");
+                                    return Err(error);
                                 }
-                            }
-                        })?;
-                workers.retain(|worker: &thread::JoinHandle<()>| !worker.is_finished());
-                workers.push(worker);
+                                if let Some(code) = failure {
+                                    call.fail(code);
+                                } else {
+                                    call.finish("SUCCESS");
+                                }
+                                Ok(())
+                            })?;
+                    workers.push(worker);
+                    let mut index = 0;
+                    while index < workers.len() {
+                        if workers[index].is_finished() {
+                            join_worker(workers.swap_remove(index))?;
+                        } else {
+                            index += 1;
+                        }
+                    }
+                }
             }
         }
-    }
+        Ok(())
+    })();
+    let mut result = result;
     for worker in workers {
-        let _ = worker.join();
+        let joined = join_worker(worker);
+        if result.is_ok() {
+            result = joined;
+        }
     }
-    session.finish("CLOSED");
-    Ok(())
+    if result.is_ok() {
+        session.finish("CLOSED");
+    } else {
+        session.fail("MCP_CONNECTION_FAILED");
+    }
+    result
+}
+
+fn join_worker(worker: thread::JoinHandle<std::io::Result<()>>) -> std::io::Result<()> {
+    match worker.join() {
+        Ok(result) => result,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// Body of `thinkrail-native.exe mcp-host`: connect with `THINKRAIL_HOST_PIPE` /

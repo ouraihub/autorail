@@ -33,10 +33,21 @@ pub(crate) fn env(access: &HostToolAccess) -> Vec<(String, OsString)> {
 pub(crate) fn write_support(dir: &Path, name: &str, content: &str) -> Result<PathBuf> {
     fs::create_dir_all(dir).context("无法创建引擎辅助目录")?;
     let path = dir.join(name);
-    if fs::read_to_string(&path).ok().as_deref() != Some(content) {
+    let unchanged = match fs::read_to_string(&path) {
+        Ok(current) => current == content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("无法读取引擎辅助文件"),
+    };
+    if !unchanged {
         let temp = dir.join(format!("{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
-        fs::write(&temp, content).context("无法写入引擎辅助文件")?;
-        fs::rename(&temp, &path).context("无法写入引擎辅助文件")?;
+        let result = fs::write(&temp, content).and_then(|()| fs::rename(&temp, &path));
+        if result.is_err()
+            && let Err(error) = fs::remove_file(&temp)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(error_kind = ?error.kind(), "agent.support.cleanup_failed");
+        }
+        result.context("无法写入引擎辅助文件")?;
     }
     Ok(plain_path(&path))
 }
@@ -78,4 +89,19 @@ pub(crate) fn omp_definitions(access: &HostToolAccess) -> Value {
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_existing_support_entry_is_not_treated_as_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("support.json");
+        fs::create_dir(&target).unwrap();
+        assert!(write_support(dir.path(), "support.json", "private support content").is_err());
+        assert!(target.is_dir());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }

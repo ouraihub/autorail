@@ -41,7 +41,7 @@ impl WindowQueue {
             id: &scope.workspace,
         };
         if let Err(error) = window::reconcile(plans, scope, &git) {
-            warn!(workspace = %scope.workspace, chat = %scope.chat, code = error.code(), %error, "work window reconcile skipped");
+            warn!(workspace = %scope.workspace, chat = %scope.chat, code = error.code(), "host_tool.window.reconcile_skipped");
         }
     }
 

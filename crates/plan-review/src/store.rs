@@ -12,7 +12,7 @@ use thinkrail_core::{
     PlanStatus, Result, ReviewComment, ReviewId, ReviewPackage, ReviewState, StepReviews,
     WorkspaceRoots,
 };
-use tracing::info;
+use tracing::debug;
 
 use crate::{anchor, plan_ops};
 
@@ -112,8 +112,8 @@ impl JsonPlanReviewStore {
         if bytes.len() as u64 > MAX_BYTES {
             return Err(Error::corrupt("计划与评审数据超过 64 MiB"));
         }
-        let document: Document = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::corrupt(format!("计划与评审数据无法解析：{e}")))?;
+        let document: Document =
+            serde_json::from_slice(&bytes).map_err(|_| Error::corrupt("计划与评审数据无法解析"))?;
         if document.schema_version != SCHEMA_VERSION {
             return Err(Error::corrupt(format!(
                 "计划与评审数据版本 {} 不受支持",
@@ -156,7 +156,7 @@ impl JsonPlanReviewStore {
 
     fn write(&self, document: &Document) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(document)
-            .map_err(|e| Error::invalid(format!("无法序列化：{e}")))?;
+            .map_err(|_| Error::invalid("计划与评审数据无法序列化"))?;
         let target = self.dir.join(FILE_NAME);
         let temporary = self
             .dir
@@ -174,8 +174,9 @@ impl JsonPlanReviewStore {
         .context("保存计划与评审数据");
         if result.is_err()
             && let Err(error) = fs::remove_file(&temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            tracing::debug!(%error, "review-plan temporary cleanup failed");
+            tracing::warn!(code = "IO", io_kind = ?error.kind(), "review.store.cleanup_failed");
         }
         result
     }
@@ -277,7 +278,7 @@ impl PlanReviewService for JsonPlanReviewStore {
 
     fn send_package(&self, scope: &PlanScope) -> Result<ReviewPackage> {
         let root = self.roots.workspace_root(&scope.workspace)?;
-        self.mutate(scope, |data| {
+        let package = self.mutate(scope, |data| {
             for comment in &mut data.reviews {
                 anchor::refresh(&root, comment);
             }
@@ -301,9 +302,10 @@ impl PlanReviewService for JsonPlanReviewStore {
             for comment in open {
                 comment.state = ReviewState::Sent;
             }
-            info!(workspace = %scope.workspace, chat = %scope.chat, comment_count, "review package built");
             Ok(ReviewPackage { prompt, comment_count })
-        })
+        })?;
+        debug!(workspace = %scope.workspace, chat = %scope.chat, comment_count = package.comment_count, "review.package.built");
+        Ok(package)
     }
 
     fn step_reviews(&self, scope: &PlanScope) -> Result<StepReviews> {
@@ -337,7 +339,7 @@ impl PlanReviewService for JsonPlanReviewStore {
         }
         if cleared > 0 {
             self.write(&document)?;
-            info!(cleared, "pending plan-step reviews cleared");
+            debug!(cleared, "review.pending.cleared");
         }
         drop(lock);
         Ok(())
@@ -379,7 +381,7 @@ impl PlanReviewService for JsonPlanReviewStore {
         document.put(scope, data);
         self.write(&document)?;
         drop(lock);
-        info!(workspace = %scope.workspace, chat = %scope.chat, item = %item, shared = baseline.shared, "work window opened");
+        debug!(workspace = %scope.workspace, chat = %scope.chat, item = %item, shared = baseline.shared, "review.window.opened");
         Ok(Some(baseline))
     }
 

@@ -200,7 +200,7 @@ pub trait ProviderProbe: Send + Sync {
 }
 ```
 
-`KeyCheck.error` 是已脱敏的中文说明：状态码 + 上游 `error.message` 的前 200 字符，经 `redact` 处理。
+`KeyCheck.error` 只显示 HTTP 状态码与稳定中文说明，不回传上游 `error.message`、HTML 或任意响应正文；日志只记录稳定 code/status。参见[日志与异常规范](../../日志与异常规范.md)。
 
 - §2.3、§2.5 的类型同样 `#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]`、`rename_all = "camelCase"`（`McpOrigin` 另加 `Copy`）。含 `Secret` 的 `EngineRouting`、`ProbeTarget` 只 `derive(Clone)`（`EngineRouting` 另加 `Default`），`Debug` 手写：`Secret` 显示为 `Secret(***)`，`ProbeTarget.headers` 只显示请求头名。
 

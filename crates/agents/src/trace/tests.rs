@@ -63,13 +63,13 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
                     .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
             );
             command.args(["-NoProfile", "-NonInteractive", "-Command",
-                "$line=[Console]::ReadLine(); [Console]::Error.WriteLine('secret-stderr-body'); [Console]::WriteLine($line)"]);
+                "[Console]::WriteLine('{\"ready\":true}'); $line=[Console]::ReadLine(); [Console]::Error.WriteLine('secret-stderr-body'); [Console]::WriteLine($line)"]);
             command
         };
         #[cfg(unix)]
         let mut command = {
             let mut command = Command::new("sh");
-            command.args(["-c", "IFS= read -r line; printf '%s\\n' 'secret-stderr-body' >&2; printf '%s\\n' \"$line\""]);
+            command.args(["-c", "printf '%s\\n' '{\"ready\":true}'; IFS= read -r line; printf '%s\\n' 'secret-stderr-body' >&2; printf '%s\\n' \"$line\""]);
             command
         };
         command
@@ -81,27 +81,39 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
         let projection = Projection::new(session::identity(&request, Default::default()), sink);
         let live = Live::new(process, projection, BackendKind::Pi);
         let reader = live.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
         session::spawn_reader(live.clone(), stdout, MAX_FRAME, move |frame| {
-            let _ = reader.resolve("same-request", Ok(frame));
+            if frame.get("ready").and_then(serde_json::Value::as_bool) == Some(true) {
+                ready_tx.send(()).unwrap();
+            } else {
+                reader.resolve("same-request", Ok(frame));
+            }
             Ok(())
         })
         .unwrap();
+        // Shell cold startup is not request latency. Do not begin the bounded RPC until ready.
+        ready_rx.recv_timeout(Duration::from_secs(60)).unwrap();
         sessions.push(live);
     }
     assert_ne!(ids[0], ids[1]);
-    let workers: Vec<_> =
-        sessions
-            .iter()
-            .cloned()
-            .map(|live| {
-                std::thread::spawn(move || {
-                    live.request_then("same-request".into(),
-            &json!({"id": "same-request", "type": "probe", "body": "secret-prompt-body"}),
-            Duration::from_secs(20), |_| tracing::info!("trace.callback.executed")).unwrap();
-                    live.shutdown();
-                })
+    let workers: Vec<_> = sessions
+        .iter()
+        .cloned()
+        .map(|live| {
+            std::thread::spawn(move || {
+                live.request_then(
+                    "same-request".into(),
+                    &json!({"id": "same-request", "type": "probe", "body": "secret-prompt-body"}),
+                    Duration::from_secs(20),
+                    |_| tracing::info!("trace.callback.executed"),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{error}; child stderr: {}", live.process.stderr_summary())
+                });
+                live.shutdown();
             })
-            .collect();
+        })
+        .collect();
     for worker in workers {
         worker.join().unwrap();
     }
@@ -114,13 +126,8 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
         for event in [
             "agent process started",
             "agent process exited",
-            "agent.stdin.started",
-            "agent.stderr.started",
-            "agent.stderr.closed",
-            "agent.stdout.started",
-            "agent.request.replied",
             "trace.callback.executed",
-            "agent session disposed",
+            "agent.session.disposed",
         ] {
             let matching: Vec<_> = output
                 .lines()
@@ -140,6 +147,11 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
     }
     assert!(!output.contains("secret-prompt-body"), "{output}");
     assert!(!output.contains("secret-stderr-body"), "{output}");
+    assert!(!output.contains("agent.stdin.started"), "{output}");
+    assert!(!output.contains("agent.stderr.started"), "{output}");
+    assert!(!output.contains("agent.stdout.started"), "{output}");
+    assert!(!output.contains("agent.protocol.send"), "{output}");
+    assert!(!output.contains("agent.request.replied"), "{output}");
 }
 
 #[test]
@@ -170,6 +182,11 @@ fn turn_failure_and_cancellation_do_not_become_success_or_unlock_before_settle()
     projection.error(thinkrail_core::SessionError {
         code: "EXTERNAL".into(),
         message: "private response".into(),
+        trace_id: None,
+    });
+    projection.error(thinkrail_core::SessionError {
+        code: "EXTERNAL".into(),
+        message: "duplicate engine failure frame".into(),
         trace_id: None,
     });
     assert!(
@@ -208,6 +225,13 @@ fn turn_failure_and_cancellation_do_not_become_success_or_unlock_before_settle()
         1
     );
     assert!(!output.contains("private response"));
+    let failures: Vec<_> = output
+        .lines()
+        .filter(|line| line.contains("ERROR") && line.contains("agent.session.failed"))
+        .collect();
+    assert_eq!(failures.len(), 1, "{output}");
+    assert!(failures[0].contains(&id), "{output}");
+    assert!(!output.contains("duplicate engine failure frame"));
 }
 
 #[test]
@@ -252,7 +276,8 @@ fn pending_real_process_request_records_timeout_with_configured_limit() {
     let error = live
         .request(
             "timeout-request".into(),
-            &json!({"type":"get_state"}),
+            &json!({"type":"private-protocol-type", "id":"private-request-id",
+                "toolName":"private-tool-name", "body":"private-frame-body"}),
             Duration::from_millis(20),
         )
         .unwrap_err();
@@ -268,4 +293,12 @@ fn pending_real_process_request_records_timeout_with_configured_limit() {
     assert_eq!(terminals.len(), 1, "{output}");
     assert!(terminals[0].contains("limit_ms=20"), "{output}");
     assert!(!output.contains("event=\"UNFINISHED\""), "{output}");
+    for secret in [
+        "private-protocol-type",
+        "private-request-id",
+        "private-tool-name",
+        "private-frame-body",
+    ] {
+        assert!(!output.contains(secret), "{output}");
+    }
 }

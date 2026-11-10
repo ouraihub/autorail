@@ -1,7 +1,7 @@
 //! `AppPrefService`: host-side preferences in `app_prefs` (native-multi-agent 06 §4, 08).
 
 use thinkrail_core::{AppPrefService, AppPrefs, AppearancePrefs, LogLevel, Result};
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     db::{self, Conn},
@@ -47,7 +47,7 @@ impl AppPrefService for SqliteSettingsStore {
             put(conn, LOGS_VISIBLE, &visible)?;
             load(conn)
         })?;
-        info!(visible, "log page visibility set");
+        debug!(visible, "settings.logs.visibility_stored");
         Ok(prefs)
     }
 
@@ -56,7 +56,7 @@ impl AppPrefService for SqliteSettingsStore {
             put(conn, LOG_LEVEL, &level)?;
             load(conn)
         })?;
-        info!(level = level.as_str(), "log level stored");
+        debug!(level = level.as_str(), "settings.logs.level_stored");
         Ok(prefs)
     }
 
@@ -65,7 +65,7 @@ impl AppPrefService for SqliteSettingsStore {
             put(conn, APPEARANCE, appearance)?;
             load(conn)
         })?;
-        info!(theme = %prefs.appearance.theme, "appearance stored");
+        debug!("settings.appearance.stored");
         Ok(prefs)
     }
 }

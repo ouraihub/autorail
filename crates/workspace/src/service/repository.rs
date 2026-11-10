@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use thinkrail_core::{
     Branch, Commit, DiffRequest, Error, GitStatus, IoContext, Result, WorkspaceId,
 };
-use tracing::info;
+use tracing::debug;
 
 use super::GitWorkspaceService;
 use crate::{
@@ -67,7 +67,7 @@ impl GitWorkspaceService {
             return Err(Error::not_found(format!("分支 {branch}")));
         }
         git::ok(&root, &["switch", "--no-guess", "--", branch])?;
-        info!(workspace = %id, "branch switched");
+        debug!(workspace = %id, "workspace.branch.switched");
         Ok(())
     }
 

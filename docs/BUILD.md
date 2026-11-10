@@ -119,3 +119,28 @@ scripts\msvc\cargo-msvc.bat build -p thinkrail-native --config <临时配置>
 之后按原始参照将真实 enabled `Switch` 移到共享 `KeyRow::trailing`，使开关与标签／掩码／动作处于同一边框内，删除 Native 外层行包装；原有保存语义保持不变。该调整通过 wrapper `fmt`、定向 `check -p thinkrail-native` 和 debug build。最终实窗证据为同目录 `key-manager-bordered-switch-320.png` 与 `key-manager-bordered-switch-wide.png`：320 内标签／掩码一行，复制／编辑／删除／开关在边框内第二行，宽屏同一边框内单行。实际点击开关关闭／开启，计数分别显示 `0 / 1 已启用`、`1 / 1 已启用`，截图为 `key-manager-bordered-switch-disabled-320.png`、`key-manager-bordered-switch-enabled-320.png`。自启进程 PID 24312 正常退出；最终远程 Git pin 的构建仍由集成验收记录补充。
 
 最终依赖已固定到推送后的 LumaKit `f263608cdc5efcb107ab7d3d060a9caba85d0afa`，所有 LumaKit rev 一致；不需要本地 patch。无临时配置的 all-targets check、fmt、宿主严格 clippy、5项提供方 UI回归通过。临时 patch 阶段 workspace严格clippy和全部测试通过，16项既有下载/引擎/ConPTY测试仍按原约定ignored。锁文件只保留新增共享组件及LumaKit来源变化，不升级无关依赖。
+
+## 2026-11-10 日志异常整改与同步闪退
+
+后续人工/AI 开发先读[日志与异常规范](日志与异常规范.md)；AGENTS 与 SPEC 已接入，04/06 日志设计、Trace API 和模型探测错误合同已同步，旧 op/child 模板不再适用。
+
+| 已发现问题 | 整改 |
+| --- | --- |
+| 同步成功打开 picker 时读取正在 update 的 ProvidersPage | 传捕获的 provider ID，不重入 page.read；保留 stale guard、重复请求禁用、失败可重试；模型添加使用可访问原生按钮 |
+| panic 只留下 UNFINISHED，退出前异步队列可能未写完 | 独立同步 ERROR 层与原滚动文件共用 writer，记录位置/线程/栈/安全哈希；不原样输出 payload，不捕获后假装成功 |
+| UI report、后台 root、tool wrapper 重复记录/平行 trace | root 负责最终 ERROR；notice 只显示已有诊断 ID；跨 session/terminal/plan channel 传真实 span，tool wrapper 继承调用者 |
+| startup process::exit 跳过日志 Drop，raw anyhow 泄漏 | 稳定 code 与诊断 ID；服务失败释放 logger 后退出；字体可恢复降级记 WARN |
+| 协议 send/read、线程开始等 INFO 噪音 | 降 DEBUG，仅安全结构/大小；生命周期仍 INFO，异常不降级伪成功 |
+| DB SQL、Git stderr、上游 body、key label、技能绝对路径泄漏 | 稳定分类/status/内部 ID 替代原文；DEBUG 亦禁密钥/正文/绝对路径 |
+| 清理/事务恢复/channel/thread 失败被丢弃或误报成功 | 明确异常责任、清理失败摘要、事务提交后再报告完成；worker panic 保持传播；不完整 spec 索引拒绝读写 |
+| 日志 filter 解析失败静默 fallback | 无效配置拒绝初始化，不改变用户选择 |
+
+本地验证命令（均经便携 MSVC wrapper）：`fmt --all -- --check`、`clippy --workspace --all-targets --locked -- -D warnings`、`test --workspace --locked`、`build -p thinkrail-native --locked`。352 项通过，16 项既有外部引擎/下载/ConPTY ignored 未改。新增回归覆盖同步真实 HTTP + GPUI picker 添加持久化/失败重试、panic abort 前落盘/off 过滤/脱敏、DB commit 失败、Git index 恢复失败、MCP worker 写失败/panic、部分 spec 索引拒绝、安装清理和 stderr 读取失败。panic release 定向 3 项通过；release 缺少符号时允许地址栈，不保证函数名。
+
+实际 debug 程序使用隔离 `C:/Users/Administrator/AppData/Local/Temp/native-log-audit-4efuo0fq/` 与本地回环，观察同步成功、HTTP 429 失败、重试成功且窗口继续存活，截图 `sync-success.png` / `sync-failure.png` / `sync-retry.png`。失败 TraceId `fe38f608bc726771845c3cb428a96149` 只有一个最终 ERROR，成功均 ENTRY/EXIT；日志无测试上游正文。正式数据与真实供应商未访问。
+
+CI run `42750421487` / job `129617640445` 的真实失败是 `real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info`：两个 PowerShell 冷启动被算入 20 秒 RPC 时限，收到 Timeout。测试现先等待子进程输出 ready 帧，再开始原 20 秒 RPC；不延长产品超时、不忽略回归。定向与本地全 workspace 均通过，不能据此宣称 GitHub 新运行已通过。
+
+边界：Gateway 只能真实关联 token 注册的 session/setup span，没有可信 per-turn header，不能宣称当前 turn 全链路已贯通；Agent 使用会话关联 TraceId 与 child turn span。Rust hook 不覆盖系统强杀、访问违规、栈溢出/断电；文件系统无法写入时不能保证诊断落盘。未重新发送真实 Pi/OMP/DSH 模型请求，历史 smoke 不是本轮全部复测。
+
+模块规模评审：日志入口145行/panic67行；gateway按监听与转发拆为292/169行，Git按领域查询/进程生命周期拆为338/155行。main197/state299/services357行，资源与错误边界未复制。既有大模块本轮保留窄改动：provider存储457行（同一事务/CRUD所有者）、spec工具436行（同一公开工具合同）、Projection403行（同一事件状态机）、日志页402行（同一读取/筛选投影）、picker409行（同一选择草稿/保存所有者）；其中少量增长作为本轮错误边界修复例外，不为分行扩大公开接口或拆散状态所有权。其余既有超过阈值文件未新增行为，不将此记录当作已完成全仓规模重构。

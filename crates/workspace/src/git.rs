@@ -1,143 +1,14 @@
+//! Git domain queries and parsing; subprocess lifecycle lives in `process`.
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
 };
 
 use thinkrail_core::{Branch, Change, ChangeStatus, Commit, Error, GitStatus, IoContext, Result};
-use tracing::debug;
+use tracing::warn;
 
-use crate::paths::bounded_read;
-
-pub(crate) const MAX_OUTPUT: usize = 16 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(30);
-/// A host commit runs the user's hooks, which may run checks.
-const HOOK_TIMEOUT: Duration = Duration::from_secs(600);
-const POLL: Duration = Duration::from_millis(10);
-
-#[derive(Debug)]
-pub(crate) struct Output {
-    pub success: bool,
-    pub stdout: String,
-}
-
-/// Runs `git` without a shell, with hooks/fsmonitor disabled, `GIT_*` env removed, a 30 s timeout
-/// and 16 MiB output limit. Exit codes in `allowed` are returned as `success: false`.
-pub(crate) fn run(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output> {
-    spawn(root, args, allowed, false)
-}
-
-/// [`run`] with the user's hooks enabled and a 10 minute timeout, for the host's commit.
-pub(crate) fn run_with_hooks(root: &Path, args: &[&str], allowed: &[i32]) -> Result<Output> {
-    spawn(root, args, allowed, true)
-}
-
-fn spawn(root: &Path, args: &[&str], allowed: &[i32], hooks: bool) -> Result<Output> {
-    let started = Instant::now();
-    let timeout = if hooks { HOOK_TIMEOUT } else { TIMEOUT };
-    let mut command = Command::new("git");
-    command
-        .current_dir(root)
-        .args(["--no-optional-locks", "--literal-pathspecs"])
-        .args(if hooks {
-            &[][..]
-        } else {
-            &["-c", "core.hooksPath="][..]
-        })
-        .args(["-c", "core.fsmonitor=false"])
-        .args(["-c", "core.quotePath=false"])
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (key, _) in std::env::vars_os() {
-        if key
-            .to_string_lossy()
-            .to_ascii_uppercase()
-            .starts_with("GIT_")
-        {
-            command.env_remove(key);
-        }
-    }
-    command
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_PAGER", "cat");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command
-        .spawn()
-        .context("无法启动 git，请确认已安装 Git 并在 PATH 中")?;
-    let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
-        (Some(out), Some(err)) => (out, err),
-        _ => return Err(Error::external("git 输出管道不可用")),
-    };
-    let out_rx = drain(stdout);
-    let err_rx = drain(stderr);
-    let status = loop {
-        if let Some(status) = child.try_wait().context("等待 git")? {
-            break status;
-        }
-        if started.elapsed() > timeout {
-            terminate(&mut child);
-            return Err(Error::timeout(format!(
-                "git {} 超过 {} 秒未完成",
-                args.first().copied().unwrap_or(""),
-                timeout.as_secs()
-            )));
-        }
-        thread::sleep(POLL);
-    };
-    let stdout = received(&out_rx)?;
-    let stderr = received(&err_rx)?;
-    debug!(
-        command = args.first().copied().unwrap_or(""),
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "git"
-    );
-    if !status.success() && !status.code().is_some_and(|code| allowed.contains(&code)) {
-        let detail = String::from_utf8_lossy(&stderr);
-        let detail: String = detail.trim().chars().take(2048).collect();
-        return Err(Error::external(format!(
-            "git {} 失败：{detail}",
-            args.first().copied().unwrap_or("")
-        )));
-    }
-    let stdout = String::from_utf8(stdout).map_err(|_| Error::external("git 输出不是 UTF-8"))?;
-    Ok(Output {
-        success: status.success(),
-        stdout,
-    })
-}
-
-fn drain(reader: impl Read + Send + 'static) -> mpsc::Receiver<Result<Vec<u8>>> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(bounded_read(reader, MAX_OUTPUT));
-    });
-    rx
-}
-
-fn received(rx: &mpsc::Receiver<Result<Vec<u8>>>) -> Result<Vec<u8>> {
-    rx.recv_timeout(TIMEOUT)
-        .map_err(|_| Error::timeout("读取 git 输出超时"))?
-}
-
-fn terminate(child: &mut std::process::Child) {
-    if let Err(error) = child.kill() {
-        debug!(%error, "git kill failed");
-    }
-    if let Err(error) = child.wait() {
-        debug!(%error, "git reap failed");
-    }
-}
+mod process;
+pub(crate) use process::{MAX_OUTPUT, run, run_with_hooks};
 
 /// `git` that must succeed; returns stdout.
 pub(crate) fn ok(root: &Path, args: &[&str]) -> Result<String> {
@@ -156,8 +27,11 @@ pub(crate) fn path_arg(path: &Path) -> Result<String> {
 }
 
 pub(crate) fn toplevel(dir: &Path) -> Result<PathBuf> {
-    let top = ok(dir, &["rev-parse", "--show-toplevel"])
-        .map_err(|_| Error::invalid("所选文件夹不是 Git 仓库"))?;
+    let output = run(dir, &["rev-parse", "--show-toplevel"], &[128])?;
+    if !output.success {
+        return Err(Error::invalid("所选文件夹不是 Git 仓库"));
+    }
+    let top = output.stdout;
     fs::canonicalize(top.trim_end_matches(['\r', '\n'])).context("解析仓库路径")
 }
 
@@ -454,8 +328,11 @@ pub(crate) fn bootstrap(root: &Path) -> Result<()> {
         ]);
         ok(root, &args).map(|_| ())
     })();
-    if committed.is_err() {
-        let _ = fs::remove_dir_all(root.join(".git"));
+    if committed.is_err()
+        && let Err(error) = fs::remove_dir_all(root.join(".git"))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        warn!(code = "IO", io_kind = ?error.kind(), "workspace.git.bootstrap_cleanup_failed");
     }
     committed
 }

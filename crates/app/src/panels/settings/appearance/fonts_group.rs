@@ -89,10 +89,15 @@ impl AppearancePage {
             {
                 let page = cx.entity().downgrade();
                 move |_, cx| {
-                    let _ = page.update(cx, |page, cx| {
-                        page.advanced_open = !page.advanced_open;
-                        cx.notify();
-                    });
+                    if page
+                        .update(cx, |page, cx| {
+                            page.advanced_open = !page.advanced_open;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("appearance.fonts.view_closed");
+                    }
                 }
             },
         ));

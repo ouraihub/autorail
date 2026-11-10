@@ -56,7 +56,7 @@ fn parse(commands: &Value, fields: impl Fn(&Value) -> Option<Fields>) -> Vec<Sla
             continue;
         };
         let Some((source, hint, scope)) = fields(entry) else {
-            debug!(%name, "slash command with an unknown source skipped");
+            debug!("agent.commands.unknown_source");
             continue;
         };
         out.push(SlashCommand {

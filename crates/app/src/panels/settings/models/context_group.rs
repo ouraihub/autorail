@@ -243,7 +243,12 @@ impl ModelsPage {
         } else {
             segment.on_select(move |index, window, cx| {
                 let target = target.clone();
-                let _ = page.update(cx, |page, cx| page.choose(target, *index, window, cx));
+                if page
+                    .update(cx, |page, cx| page.choose(target, *index, window, cx))
+                    .is_err()
+                {
+                    tracing::debug!("models.context.view_closed");
+                }
             })
         };
         let draft = self.context_group.input.read(cx).value();
@@ -319,10 +324,15 @@ impl ModelsPage {
             {
                 let page = cx.entity().downgrade();
                 move |_, cx| {
-                    let _ = page.update(cx, |page, cx| {
-                        page.context_group.each_open = !page.context_group.each_open;
-                        cx.notify();
-                    });
+                    if page
+                        .update(cx, |page, cx| {
+                            page.context_group.each_open = !page.context_group.each_open;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("models.context.view_closed");
+                    }
                 }
             },
         );

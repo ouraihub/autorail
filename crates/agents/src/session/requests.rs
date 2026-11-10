@@ -29,14 +29,14 @@ impl Waiter {
         } else {
             self.operation.finish("SUCCESS");
         }
-        tracing::info!(is_error, "agent.request.replied");
+        debug!(is_error, "agent.request.replied");
         (self.callback)(result);
     }
 
     pub(super) fn close(self) {
         let _entered = self.trace.enter_operation(&self.operation);
         self.operation.fail("SESSION_CLOSED");
-        tracing::info!("agent.request.closed");
+        debug!("agent.request.closed");
         (self.callback)(Err(closed()));
     }
 

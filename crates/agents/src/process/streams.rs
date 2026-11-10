@@ -13,10 +13,10 @@ use tracing::{debug, info, warn};
 use super::{Life, STDERR_TAIL};
 use crate::trace::SessionTrace;
 pub(super) fn write_stdin(mut stdin: impl Write, receiver: mpsc::Receiver<Vec<u8>>) {
-    info!("agent.stdin.started");
+    debug!("agent.stdin.started");
     for bytes in receiver {
         if let Err(error) = stdin.write_all(&bytes).and_then(|()| stdin.flush()) {
-            debug!(%error, "agent stdin closed");
+            warn!(error_kind = ?error.kind(), "agent.stdin.write_failed");
             return;
         }
     }
@@ -27,11 +27,16 @@ pub(super) fn read_stderr(
     tail: &Mutex<Vec<u8>>,
     life: &(Mutex<Life>, Condvar),
 ) {
-    info!("agent.stderr.started");
+    debug!("agent.stderr.started");
     let mut buffer = [0; 4096];
     loop {
         match stderr.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                warn!(error_kind = ?error.kind(), "agent.stderr.read_failed");
+                break;
+            }
             Ok(count) => {
                 let mut tail = tail.lock();
                 tail.extend_from_slice(&buffer[..count]);
@@ -42,7 +47,7 @@ pub(super) fn read_stderr(
             }
         }
     }
-    info!("agent.stderr.closed");
+    debug!("agent.stderr.closed");
     life.0.lock().stderr_closed = true;
     life.1.notify_all();
 }
@@ -64,16 +69,13 @@ pub(super) fn wait_child(
             };
             (result, code)
         }
-        Err(error) => {
-            warn!(%error, "cannot wait for agent process");
-            (Err("PROCESS_WAIT_FAILED"), None)
-        }
+        Err(_) => (Err("PROCESS_WAIT_FAILED"), None),
     };
     let mut state = life.0.lock();
-    state.exited = true;
+    state.exited = wait_result != Err("PROCESS_WAIT_FAILED");
     state.code = code;
     drop(child);
-    {
+    if state.exited {
         let _entered = trace.enter_operation(&operation);
         info!(
             code,

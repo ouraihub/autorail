@@ -67,7 +67,7 @@ fn bounded(mut text: String, continuation: &str) -> String {
             path.display()
         ),
         Err(error) => {
-            tracing::warn!(%error, "spec tool output capture failed");
+            tracing::warn!(error_kind = ?error.kind(), "spec.output.capture_failed");
             "Full output unavailable: temporary-file capture failed. Narrow a read query; do not repeat a mutation to retrieve its output.".to_owned()
         }
     };

@@ -33,10 +33,15 @@ impl ModelsPage {
             {
                 let page = cx.entity().downgrade();
                 move |_, cx| {
-                    let _ = page.update(cx, |page, cx| {
-                        page.expanded = !page.expanded;
-                        cx.notify();
-                    });
+                    if page
+                        .update(cx, |page, cx| {
+                            page.expanded = !page.expanded;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("models.visibility.view_closed");
+                    }
                 }
             },
         );

@@ -40,8 +40,22 @@ pub fn open(state: Entity<AppState>, window: &mut Window, cx: &mut App) {
     let workspace = state.read(cx).services.workspace.clone();
     let handle = window.window_handle();
     cx.spawn(async move |cx| {
-        let Ok(Ok(Some(paths))) = picked.await else {
-            return;
+        let paths = match picked.await {
+            Ok(Ok(Some(paths))) => paths,
+            Ok(Ok(None)) => return,
+            Ok(Err(_)) | Err(_) => {
+                cx.update(|cx| {
+                    state.update(cx, |state, cx| {
+                        state.report(
+                            &thinkrail_core::Error::external(
+                                "目录选择失败 [DIRECTORY_PICKER_FAILED]",
+                            ),
+                            cx,
+                        );
+                    })
+                });
+                return;
+            }
         };
         let Some(path) = paths.into_iter().next() else {
             return;
@@ -51,13 +65,18 @@ pub fn open(state: Entity<AppState>, window: &mut Window, cx: &mut App) {
             .background_executor()
             .spawn(async move { workspace.is_repository(&probe) })
             .await;
-        let _ = handle.update(cx, |_, window, cx| {
-            if repo {
-                state.update(cx, |state, cx| state.open_project(path, cx));
-            } else {
-                confirm_init(state, path, window, cx);
-            }
-        });
+        if handle
+            .update(cx, |_, window, cx| {
+                if repo {
+                    state.update(cx, |state, cx| state.open_project(path, cx));
+                } else {
+                    confirm_init(state, path, window, cx);
+                }
+            })
+            .is_err()
+        {
+            tracing::debug!("projects.open.window_closed");
+        }
     })
     .detach();
 }
@@ -124,17 +143,43 @@ impl CreateForm {
             prompt: None,
         });
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = picked.await else {
-                return;
+            let paths = match picked.await {
+                Ok(Ok(Some(paths))) => paths,
+                Ok(Ok(None)) => return,
+                Ok(Err(_)) | Err(_) => {
+                    if this
+                        .update_in(cx, |this, _, cx| {
+                            this.error = Some("目录选择失败 [DIRECTORY_PICKER_FAILED]".into());
+                            this.state.update(cx, |state, cx| {
+                                state.report(
+                                    &thinkrail_core::Error::external(
+                                        "目录选择失败 [DIRECTORY_PICKER_FAILED]",
+                                    ),
+                                    cx,
+                                )
+                            });
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("projects.browse.view_closed");
+                    }
+                    return;
+                }
             };
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.parent.update(cx, |input, cx| {
-                    input.set_value(path.display().to_string(), window, cx)
-                });
-            });
+            if this
+                .update_in(cx, |this, window, cx| {
+                    this.parent.update(cx, |input, cx| {
+                        input.set_value(path.display().to_string(), window, cx)
+                    });
+                })
+                .is_err()
+            {
+                tracing::debug!("projects.browse.view_closed");
+            }
         })
         .detach();
     }
@@ -177,7 +222,12 @@ impl CreateForm {
                             }
                             state.opened(project, cx)
                         });
-                        let _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
+                        if handle
+                            .update(cx, |_, window, cx| window.close_dialog(cx))
+                            .is_err()
+                        {
+                            tracing::debug!("projects.create.window_closed");
+                        }
                     }
                     Err(error) => this.error = Some(error.to_string()),
                 }

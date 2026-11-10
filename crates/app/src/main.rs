@@ -20,7 +20,7 @@ use gpui_kit::{
     px, size,
 };
 use thinkrail_ui::{UiAssets, fonts};
-use tracing::{error, info};
+use tracing::{info, warn};
 
 struct Args {
     data_dir: PathBuf,
@@ -74,27 +74,47 @@ fn main() {
         .nth(1)
         .is_some_and(|arg| arg == "mcp-host")
     {
-        if let Err(error) = thinkrail_host_tools::run_mcp_stdio() {
+        if thinkrail_host_tools::run_mcp_stdio().is_err() {
             use std::io::Write as _;
-            let _ = writeln!(std::io::stderr(), "{error}");
+            if writeln!(
+                std::io::stderr(),
+                "ThinkRail MCP host failed [MCP_HOST_FAILED]"
+            )
+            .is_err()
+            {
+                std::process::exit(3);
+            }
             std::process::exit(1);
         }
         return;
     }
     let args = match args() {
         Ok(args) => args,
-        Err(error) => fail(&format!("{error:#}")),
+        Err(_) => fail("启动参数无效，请检查 --data-dir <目录> [STARTUP_ARGUMENTS_INVALID]"),
     };
     let log = match thinkrail_observability::init(&args.data_dir) {
         Ok(handle) => std::sync::Arc::new(handle),
-        Err(error) => fail(&format!("{error:#}")),
+        Err(_) => fail("日志初始化失败，请检查数据目录权限 [LOG_INIT_FAILED]"),
     };
-    info!(version = env!("CARGO_PKG_VERSION"), "app starting");
-    let (services, channels) = match services::build(&args.data_dir, &args.db_path, log.clone()) {
+    info!(version = env!("CARGO_PKG_VERSION"), "app.starting");
+    let (startup_trace, startup) =
+        thinkrail_observability::TraceContext::root("app.startup", "app");
+    let startup_span = startup.span().clone();
+    let built =
+        startup_span.in_scope(|| services::build(&args.data_dir, &args.db_path, log.clone()));
+    let (services, channels) = match built {
         Ok(built) => built,
         Err(error) => {
-            error!(error = %format!("{error:#}"), "startup failed");
-            fail(&format!("{error:#}"))
+            let code = error
+                .downcast_ref::<thinkrail_core::Error>()
+                .map(thinkrail_core::ErrorCode::code)
+                .unwrap_or("STARTUP_FAILED");
+            startup.fail(code);
+            drop(log);
+            fail(&format!(
+                "应用服务初始化失败 [{code}]，诊断 ID：{}",
+                startup_trace.trace_id()
+            ))
         }
     };
     let terminals = services.terminals.clone();
@@ -106,10 +126,11 @@ fn main() {
         ))
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
+            let _entered = startup_span.enter();
             gpui_kit::init(cx);
             dialog_keys::init(cx);
-            if let Err(error) = fonts::register_bundled(cx) {
-                error!(error = %error, "bundled fonts not registered; system fonts are used");
+            if fonts::register_bundled(cx).is_err() {
+                warn!(code = "BUNDLED_FONTS_UNAVAILABLE", "app.fonts.fallback");
             }
             // Before the window opens, so its first frame already has the user's theme (08 A7).
             appearance::AppearanceState::init(app_prefs, &data_dir, cx);
@@ -126,13 +147,15 @@ fn main() {
             let opened = gpui_kit::open_window(options, cx, move |window, cx| {
                 cx.new(|cx| workbench::Workbench::new(services, channels, window, cx))
             });
-            if let Err(error) = opened {
-                error!(error = %format!("{error:#}"), "cannot open window");
+            if opened.is_err() {
+                startup.fail("WINDOW_OPEN_FAILED");
                 cx.quit();
+            } else {
+                startup.finish("SUCCESS");
             }
         });
     terminals.shutdown();
-    info!("app exited");
+    info!("app.exited");
 }
 
 /// Reports a failure that happens before logging exists (04 §3 allows stderr only here), then exits.

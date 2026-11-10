@@ -109,11 +109,24 @@ impl Live {
         self.disposing.store(true, Ordering::Release);
         self.process.close_stdin();
         if self.process.wait_exit(EXIT_GRACE).is_none() {
+            warn!(
+                limit_ms = EXIT_GRACE.as_millis() as u64,
+                "agent.process.shutdown_timeout"
+            );
             self.process.kill_tree();
-            self.process.wait_exit(EXIT_GRACE);
+            if self.process.wait_exit(EXIT_GRACE).is_none() {
+                warn!(
+                    limit_ms = EXIT_GRACE.as_millis() as u64,
+                    "agent.process.termination_unconfirmed"
+                );
+            }
         }
         self.close(None);
-        info!(backend = self.backend.label(), "agent session disposed");
+        info!(
+            backend = self.backend.label(),
+            exit_confirmed = self.process.wait_exit(Duration::ZERO).is_some(),
+            "agent.session.disposed"
+        );
     }
 
     /// Kills a session whose handshake failed and builds the start error, with the redacted
@@ -122,7 +135,12 @@ impl Live {
         let _entered = self.process.trace.enter("agent.session.start_failed");
         self.disposing.store(true, Ordering::Release);
         self.process.kill_tree();
-        self.process.wait_exit(EXIT_GRACE);
+        if self.process.wait_exit(EXIT_GRACE).is_none() {
+            warn!(
+                limit_ms = EXIT_GRACE.as_millis() as u64,
+                "agent.process.termination_unconfirmed"
+            );
+        }
         self.close(None);
         warn!(
             backend = self.backend.label(),
@@ -224,18 +242,16 @@ pub(crate) fn spawn_reader(
         .name("agent-stdout".into())
         .spawn(move || {
             let _entered = live.process.trace.enter("agent.stdout");
-            info!("agent.stdout.started");
+            debug!("agent.stdout.started");
             let mut reader = BufReader::with_capacity(64 * 1024, stdout);
             let failure = loop {
                 match framing::read_frame(&mut reader, limit) {
                     Ok(Some(frame)) => {
                         debug!(
                             backend = live.backend.label(),
-                            frame = frame["type"]
-                                .as_str()
-                                .or(frame["method"].as_str())
-                                .unwrap_or("reply"),
-                            "agent frame"
+                            is_rpc = frame.get("jsonrpc").is_some(),
+                            has_id = frame.get("id").is_some(),
+                            "agent.protocol.received"
                         );
                         if let Err(error) = handle(frame) {
                             break Some(error);
@@ -245,7 +261,7 @@ pub(crate) fn spawn_reader(
                     Err(error) => break Some(error),
                 }
             };
-            info!(is_error = failure.is_some(), "agent.stdout.closed");
+            debug!(is_error = failure.is_some(), "agent.stdout.closed");
             live.finish(failure);
         })
         .map(drop)

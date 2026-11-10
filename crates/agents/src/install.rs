@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use thinkrail_core::{
     BackendKind, EngineInstall, EngineSetup, EngineSource, Error, Launch, Result,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 /// A runtime archive: official URL, its SHA-256 and the executable inside it.
 struct Runtime {
@@ -229,8 +229,35 @@ fn io(path: &Path) -> impl FnOnce(std::io::Error) -> Error + '_ {
     move |e| Error::external(format!("无法写入 {}：{e}", path.display()))
 }
 
+/// Missing artifacts are already clean; every other removal failure remains actionable.
+fn remove_artifact(path: &Path, directory: bool) -> std::io::Result<()> {
+    let removed = if directory {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    match removed {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+fn reject_archive(archive: &Path, runtime: &str) -> Error {
+    match remove_artifact(archive, false) {
+        Ok(()) => Error::external(format!(
+            "{runtime} 的校验和不符，已删除下载的文件。请检查网络或代理后重试。"
+        )),
+        Err(error) => {
+            warn!(error_kind = ?error.kind(), "agent.install.archive_cleanup_failed");
+            Error::external(format!(
+                "{runtime} 的校验和不符，且无法删除下载的文件；文件未被使用。请检查目录权限后重试。"
+            ))
+        }
+    }
+}
+
 impl ManagedEngines {
-    /// Downloads and unpacks `runtime` once; a checksum mismatch deletes the download.
+    /// Downloads and unpacks `runtime` once; rejects a bad checksum and reports cleanup failure.
     fn ensure_runtime(&self, runtime: &Runtime) -> Result<()> {
         if self.runtime_exe(runtime).is_file() {
             return Ok(());
@@ -245,23 +272,21 @@ impl ManagedEngines {
         run(curl, &format!("下载 {}", runtime.name))?;
         let actual = sha256_file(&archive)?;
         if actual != runtime.sha256 {
-            let _ = fs::remove_file(&archive);
-            return Err(Error::external(format!(
-                "{} 的校验和不符，已删除下载的文件。请检查网络或代理后重试。",
-                runtime.name
-            )));
+            return Err(reject_archive(&archive, runtime.name));
         }
         // Unpack beside the target and rename, so a half-unpacked runtime is never used.
         let staging = dir.join(format!("{}.part", runtime.name));
-        let _ = fs::remove_dir_all(&staging);
+        remove_artifact(&staging, true).map_err(io(&staging))?;
         fs::create_dir_all(&staging).map_err(io(&staging))?;
         let mut tar = hidden(Path::new("tar.exe"));
         tar.arg("-xf").arg(&archive).arg("-C").arg(&staging);
         run(tar, &format!("解压 {}", runtime.name))?;
         let target = dir.join(runtime.name);
-        let _ = fs::remove_dir_all(&target);
+        remove_artifact(&target, true).map_err(io(&target))?;
         fs::rename(&staging, &target).map_err(io(&target))?;
-        let _ = fs::remove_file(&archive);
+        if let Err(error) = remove_artifact(&archive, false) {
+            warn!(error_kind = ?error.kind(), "agent.install.archive_cleanup_failed");
+        }
         info!(runtime = runtime.name, "runtime installed");
         Ok(())
     }
@@ -326,41 +351,4 @@ impl EngineSetup for ManagedEngines {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Real download and install of all three engines into a temp dir (network, minutes).
-    /// `cargo test -p thinkrail-agents install::tests::installs_all_engines -- --ignored`
-    #[test]
-    #[ignore = "downloads Node, Bun and three npm packages"]
-    fn installs_all_engines() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let engines = ManagedEngines::new(dir.path());
-        for backend in BackendKind::ALL {
-            let installed = engines
-                .install(backend)
-                .unwrap_or_else(|e| panic!("{}: {e}", backend.label()));
-            assert_eq!(installed.source, EngineSource::Managed);
-            assert_eq!(installed.version.as_deref(), Some(package(backend).version));
-            assert_eq!(
-                engines.status(backend).unwrap(),
-                Some(installed.clone()),
-                "status finds the install"
-            );
-            let Launch::External { executable, args } = installed.launch;
-            let out = hidden(&executable)
-                .args(&args)
-                .arg("--version")
-                .output()
-                .unwrap();
-            let text = String::from_utf8_lossy(&out.stdout).into_owned()
-                + &String::from_utf8_lossy(&out.stderr);
-            println!(
-                "{} --version -> {} {}",
-                backend.label(),
-                out.status,
-                text.trim()
-            );
-        }
-    }
-}
+mod tests;

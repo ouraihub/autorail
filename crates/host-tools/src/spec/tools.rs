@@ -141,7 +141,7 @@ fn grep(root: &Path, args: &Value) -> Outcome {
 
     let mut matches: Vec<String> = Vec::new();
     let (mut skipped, mut bytes, mut next_offset) = (0, 0, None);
-    'files: for file in &scan(root) {
+    'files: for file in &scan(root)? {
         let fm = &file.fm;
         if kind.is_some_and(|k| scalar(fm, TYPE) != Some(k))
             || parent.is_some_and(|p| scalar(fm, PARENT) != Some(p))
@@ -190,7 +190,7 @@ fn grep(root: &Path, args: &Value) -> Outcome {
 
 fn get(root: &Path, args: &Value) -> Outcome {
     let id = required(args, "id")?;
-    let files = scan(root);
+    let files = scan(root)?;
     let graph = Graph::build(&files);
     let node = graph.node(id).ok_or_else(|| no_spec(id))?;
     let fmt = |kind: &str, target: &str| match graph.node(target) {
@@ -240,7 +240,7 @@ fn graph(root: &Path, args: &Value) -> Outcome {
         None | Some(Value::Null) => 1.0,
         Some(v) => v.as_f64().ok_or("`depth` must be a number.")?,
     };
-    let files = scan(root);
+    let files = scan(root)?;
     let graph = Graph::build(&files);
     let Some(node) = graph.node(start) else {
         return Err(no_spec(start));
@@ -294,7 +294,7 @@ fn create(root: &Path, args: &Value) -> Outcome {
     if fs::symlink_metadata(&abs).is_ok() {
         return Err(format!("File already exists: {rel}"));
     }
-    if Graph::build(&scan(root)).node(id).is_some() {
+    if Graph::build(&scan(root)?).node(id).is_some() {
         return Err(format!("Spec id \"{id}\" is already in use."));
     }
     let scalar = |s: Option<&str>| FmValue::Scalar(s.unwrap_or_default().to_owned());
@@ -365,7 +365,7 @@ fn update(root: &Path, args: &Value) -> Outcome {
         add_list: list_group(args, "addList")?,
         remove_list: list_group(args, "removeList")?,
     };
-    let files = scan(root);
+    let files = scan(root)?;
     let file = files
         .iter()
         .find(|f| scalar(&f.fm, ID) == Some(id))
@@ -377,7 +377,7 @@ fn update(root: &Path, args: &Value) -> Outcome {
 
 fn delete(root: &Path, args: &Value) -> Outcome {
     let id = required(args, "id")?;
-    let files = scan(root);
+    let files = scan(root)?;
     let graph = Graph::build(&files);
     let file = graph.node(id).ok_or_else(|| no_spec(id))?.file;
     fs::remove_file(&file.abs).map_err(|e| format!("Failed to delete {}: {e}", file.rel))?;
@@ -385,7 +385,7 @@ fn delete(root: &Path, args: &Value) -> Outcome {
 }
 
 fn validate(root: &Path) -> Outcome {
-    let files = scan(root);
+    let files = scan(root)?;
     let graph = Graph::build(&files);
     let (dangling, cycles) = (dangling_links(&graph), parent_cycles(&graph));
     let mut sections = Vec::new();

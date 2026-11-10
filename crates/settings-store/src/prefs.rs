@@ -5,7 +5,7 @@ use thinkrail_core::{
     BackendKind, CONTEXT_OVERRIDE_RANGE, EngineProvider, Error, ModelPrefService, ModelPrefs,
     ModelRef, Result, ReviewSwitch, ThinkingLevel,
 };
-use tracing::info;
+use tracing::debug;
 
 use crate::{
     db::{self, Conn},
@@ -130,12 +130,12 @@ impl ModelPrefService for SqliteSettingsStore {
             put(conn, DEFAULT_EFFORT, effort.as_ref())?;
             load(conn)
         })?;
-        info!(
+        debug!(
             provider = prefs
                 .default_model
                 .as_ref()
                 .map(|model| model.provider.as_str()),
-            "default model set"
+            "settings.model.default_stored"
         );
         Ok(prefs)
     }
@@ -156,7 +156,7 @@ impl ModelPrefService for SqliteSettingsStore {
             )?;
             load(conn)
         })?;
-        info!(backend = backend.label(), "engine provider set");
+        debug!(backend = backend.label(), "settings.engine.provider_stored");
         Ok(prefs)
     }
 
@@ -165,9 +165,9 @@ impl ModelPrefService for SqliteSettingsStore {
             put(conn, DEFAULT_AGENT, backend.as_ref())?;
             load(conn)
         })?;
-        info!(
+        debug!(
             backend = backend.map_or("none", BackendKind::label),
-            "default agent set"
+            "settings.agent.default_stored"
         );
         Ok(prefs)
     }
@@ -212,7 +212,7 @@ impl ModelPrefService for SqliteSettingsStore {
             }
             load(conn)
         })?;
-        info!(changed = changes.len(), "context overrides set");
+        debug!(changed = changes.len(), "settings.context.overrides_stored");
         Ok(prefs)
     }
 
@@ -229,9 +229,9 @@ impl ModelPrefService for SqliteSettingsStore {
             put(conn, REVIEW_EFFORT, effort.as_ref())?;
             load(conn)
         })?;
-        info!(
+        debug!(
             provider = prefs.review.model.as_ref().map(|m| m.provider.as_str()),
-            "review model set"
+            "settings.review.model_stored"
         );
         Ok(prefs)
     }
@@ -246,7 +246,7 @@ impl ModelPrefService for SqliteSettingsStore {
             put(conn, key, on.then_some(&true))?;
             load(conn)
         })?;
-        info!(switch = key, on, "review switch set");
+        debug!(switch = key, on, "settings.review.switch_stored");
         Ok(prefs)
     }
 }

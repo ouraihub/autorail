@@ -3,8 +3,8 @@
 
 use std::{fs, path::Path};
 
-use thinkrail_core::{Commit, Error, ErrorKind, Result};
-use tracing::{info, warn};
+use thinkrail_core::{Commit, Error, ErrorCode, ErrorKind, IoContext, Result};
+use tracing::warn;
 
 use crate::git::{LOG_FORMAT, has_head, ok, parse_log, run, run_with_hooks, safe_ref};
 
@@ -80,7 +80,7 @@ pub(crate) fn commit_paths(root: &Path, subject: &str, paths: &[String]) -> Resu
         return Ok(None);
     }
     if !ok(root, &["ls-files", "-u"])?.trim().is_empty() {
-        info!("host commit skipped: unmerged paths");
+        warn!(code = "CONFLICT", "workspace.commit.unmerged");
         return Ok(None);
     }
     let index = index_path(root)?;
@@ -105,9 +105,7 @@ pub(crate) fn commit_paths(root: &Path, subject: &str, paths: &[String]) -> Resu
                 }
             }),
         };
-        if let Err(error) = restored {
-            warn!(%error, "git index restore failed");
-        }
+        restored.context("恢复 Git 索引")
     };
     let before = head(root)?;
     let with_paths = |command: &[&'static str]| -> Vec<&str> {
@@ -118,42 +116,61 @@ pub(crate) fn commit_paths(root: &Path, subject: &str, paths: &[String]) -> Resu
     };
     // A path that vanished meanwhile fails `add`; like the original, that is "nothing committed".
     if let Err(error) = ok(root, &with_paths(&["add", "-A"])) {
-        restore();
+        restore()?;
         if error.kind() == Some(ErrorKind::Timeout) {
             return Err(error);
         }
-        info!(%error, "host commit skipped: staging failed");
+        warn!(code = error.code(), "workspace.commit.staging_refused");
         return Ok(None);
     }
     match run(root, &with_paths(&["diff", "--cached", "--quiet"]), &[1]) {
         Ok(output) if output.success => {
             // Nothing staged for these paths: the delta was undone meanwhile.
-            restore();
+            restore()?;
             return Ok(None);
         }
         Ok(_) => {}
         Err(error) => {
-            restore();
+            restore()?;
             return Err(error);
         }
     }
     let mut args = vec!["commit", "-q", "-m", subject];
     args.extend(with_paths(&[]));
     let committed = run_with_hooks(root, &args, &[]);
-    let after = head(root)?;
+    let after = match head(root) {
+        Ok(after) => after,
+        Err(error) => {
+            restore()?;
+            return Err(error);
+        }
+    };
     if committed.is_ok() {
         return Ok(after);
     }
     if after != before
         && let Some(sha) = &after
-        && is_our_commit(root, sha, before.as_deref(), subject, paths)?
     {
-        return Ok(after);
+        match is_our_commit(root, sha, before.as_deref(), subject, paths) {
+            Ok(true) => return Ok(after),
+            Ok(false) => {}
+            Err(error) => {
+                restore()?;
+                return Err(error);
+            }
+        }
     }
-    if let Err(error) = &committed {
-        info!(%error, "host commit refused");
+    if let Err(error) = &committed
+        && error.kind() != Some(ErrorKind::Timeout)
+    {
+        warn!(code = error.code(), "workspace.commit.refused");
     }
-    restore();
+    restore()?;
+    if let Err(error) = committed
+        && error.kind() == Some(ErrorKind::Timeout)
+    {
+        return Err(error);
+    }
     Ok(None)
 }
 

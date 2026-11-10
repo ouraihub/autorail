@@ -8,7 +8,7 @@ use thinkrail_core::{
     Baseline, Commit, ItemChange, PlanItem, PlanItemId, PlanReviewService, PlanScope, PlanStatus,
     Result,
 };
-use tracing::info;
+use tracing::debug;
 
 use crate::plan_ops;
 
@@ -180,14 +180,14 @@ fn close(
         Ok(())
     })?;
     if found {
-        info!(
+        debug!(
             workspace = %scope.workspace,
             chat = %scope.chat,
             item = %item.id,
             adopted = adopted_count,
             delta = delta_count,
             committed = committed.is_some(),
-            "work window closed"
+            "review.window.closed"
         );
     }
     Ok(())

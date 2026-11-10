@@ -28,6 +28,7 @@ fn input(preset: &ProviderPreset) -> ProviderInput {
 /// a user provider already took is skipped (logged), not renamed.
 pub(crate) fn seed(conn: &Conn) -> Result<usize> {
     let mut seeded = 0;
+    let mut skipped = 0;
     for preset in PROVIDER_PRESETS {
         if conn
             .row("SELECT 1 FROM providers WHERE preset_id = ?1", (preset.id,))?
@@ -39,14 +40,18 @@ pub(crate) fn seed(conn: &Conn) -> Result<usize> {
             .row("SELECT 1 FROM providers WHERE name = ?1", (preset.name,))?
             .is_some()
         {
-            warn!(
-                preset = preset.id,
-                "preset skipped: a provider with its name exists"
-            );
+            skipped += 1;
             continue;
         }
         providers::insert(conn, &validate::provider(input(preset))?, Some(preset.id))?;
         seeded += 1;
+    }
+    if skipped > 0 {
+        warn!(
+            code = "CONFLICT",
+            count = skipped,
+            "settings.presets.skipped"
+        );
     }
     Ok(seeded)
 }

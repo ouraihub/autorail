@@ -147,3 +147,41 @@ fn a_refusing_hook_commits_nothing_and_restores_the_index() {
     assert!(root.join("hook-ran").exists());
     assert_eq!(files_of(root, &sha), ["step.txt"]);
 }
+
+#[test]
+fn git_failure_does_not_expose_stderr_arguments_or_paths() {
+    let temp = repo();
+    let error = git::ok(
+        temp.path(),
+        &["rev-parse", "--verify", "private-input-sentinel"],
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), Some(thinkrail_core::ErrorKind::External));
+    let message = error.to_string();
+    assert!(!message.contains("private-input-sentinel"));
+    assert!(!message.contains(temp.path().to_str().unwrap()));
+}
+
+#[test]
+fn a_failed_index_restore_is_not_reported_as_a_skipped_commit() {
+    let temp = repo();
+    let root = temp.path();
+    fs::write(root.join("base.txt"), "base").unwrap();
+    commit_all(root, "base");
+    let hooks = root.join(".git/hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("pre-commit");
+    fs::write(
+        &hook,
+        "#!/bin/sh\nrm -f .git/index\nmkdir .git/index\nexit 1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(root.join("step.txt"), "step").unwrap();
+    let error = window::commit_paths(root, "Step", &["step.txt".into()]).unwrap_err();
+    assert!(matches!(error, thinkrail_core::Error::Io { .. }));
+}

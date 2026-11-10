@@ -210,7 +210,7 @@ impl ChatPanel {
         let services = self.services(cx);
         let id = event.chat().clone();
         let Some(chat) = self.chats.get_mut(&id) else {
-            debug!(chat = %id, "event for an unknown chat");
+            debug!(chat_id = %id, "chat.event.unknown_chat");
             return;
         };
         let previous_phase = chat.phase();

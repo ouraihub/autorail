@@ -180,16 +180,22 @@ impl TerminalService for PtyTerminalService {
         if tabs.len() != before {
             locked.save(&tabs)?;
         }
-        info!(workspace = %workspace, "terminal tab closed");
+        info!(workspace = %workspace, "terminal.tab.closed");
         Ok(())
     }
 
     fn shutdown(&self) {
         let runtimes: Vec<_> = self.runtimes.lock().drain().map(|(_, r)| r).collect();
+        let mut failed = 0;
+        let mut code = None;
         for runtime in runtimes {
             if let Err(error) = runtime.shutdown() {
-                warn!(runtime = %runtime.id, code = error.code(), "terminal shutdown failed");
+                failed += 1;
+                code.get_or_insert(error.code());
             }
+        }
+        if failed > 0 {
+            warn!(count = failed, code, "terminal.runtimes.shutdown_failed");
         }
     }
 }

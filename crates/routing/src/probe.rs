@@ -16,7 +16,6 @@ use crate::{runtime, url};
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-const SNIPPET: usize = 200;
 
 /// Probes provider endpoints with explicit keys; does not touch key rotation.
 pub struct Probe {
@@ -52,42 +51,11 @@ fn classify(error: &reqwest::Error) -> Error {
     }
 }
 
-fn snippet(body: &str, target: &ProbeTarget) -> String {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| {
-            let error = v.get("error")?;
-            error
-                .get("message")
-                .and_then(Value::as_str)
-                .or_else(|| error.as_str())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| body.to_owned());
-    let mut message = message;
-    for secret in target
-        .key
-        .iter()
-        .map(|key| key.expose())
-        .chain(target.headers.iter().map(|header| header.value.as_str()))
-    {
-        if !secret.is_empty() {
-            message = message.replace(secret, "***");
-        }
-    }
-    message.trim().chars().take(SNIPPET).collect()
-}
-
-fn status_error(reply: &Reply, target: &ProbeTarget) -> Error {
+fn status_error(reply: &Reply) -> Error {
     if reply.status == 401 || reply.status == 403 {
         return rejected();
     }
-    let detail = snippet(&reply.body, target);
-    if detail.is_empty() {
-        Error::external(format!("服务器返回 HTTP {}。", reply.status))
-    } else {
-        Error::external(format!("服务器返回 HTTP {}。{detail}", reply.status))
-    }
+    Error::external(format!("服务器返回 HTTP {}。", reply.status))
 }
 
 fn parse_models(body: &str) -> Result<Vec<DiscoveredModel>> {
@@ -174,7 +142,7 @@ impl ProviderProbe for Probe {
     fn list_models(&self, target: &ProbeTarget) -> Result<Vec<DiscoveredModel>> {
         let reply = self.send(target, url::models_path(target.endpoint.protocol), None)?;
         if !(200..300).contains(&reply.status) {
-            return Err(status_error(&reply, target));
+            return Err(status_error(&reply));
         }
         parse_models(&reply.body)
     }
@@ -197,7 +165,7 @@ impl ProviderProbe for Probe {
         let started = Instant::now();
         let reply = self.send(target, path, Some(body))?;
         if !(200..300).contains(&reply.status) {
-            return Err(status_error(&reply, target));
+            return Err(status_error(&reply));
         }
         Ok(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
     }
@@ -212,6 +180,8 @@ impl ProviderProbe for Probe {
             .find(|e| e.protocol == protocol)
             .ok_or_else(|| Error::invalid("这条线路没有 API 地址。"))?;
         let mut out = Vec::new();
+        let mut failed = 0usize;
+        let mut failure_code = None;
         for summary in provider.keys.iter().filter(|k| k.enabled) {
             let target = ProbeTarget {
                 endpoint: endpoint.clone(),
@@ -221,6 +191,10 @@ impl ProviderProbe for Probe {
             let started = Instant::now();
             let result = self.list_models(&target);
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if let Err(error) = &result {
+                failed += 1;
+                failure_code.get_or_insert(thinkrail_core::ErrorCode::code(error));
+            }
             out.push(match result {
                 Ok(models) => KeyCheck {
                     key: summary.id.clone(),
@@ -235,6 +209,9 @@ impl ProviderProbe for Probe {
                     error: Some(error.to_string()),
                 },
             });
+        }
+        if failed > 0 {
+            tracing::warn!(provider = %provider.id, count = failed, code = failure_code, "routing.keys.check_failed");
         }
         Ok(out)
     }

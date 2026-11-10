@@ -24,11 +24,11 @@ fn create() -> std::result::Result<Runtime, String> {
         .thread_name("thinkrail-routing")
         .enable_all()
         .build()
-        .map_err(|e| format!("无法创建网络运行时：{e}"))?;
+        .map_err(|_| "无法创建网络运行时".to_owned())?;
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("无法创建 HTTP 客户端：{e}"))?;
+        .map_err(|_| "无法创建 HTTP 客户端".to_owned())?;
     Ok(Runtime { tokio, client })
 }
 

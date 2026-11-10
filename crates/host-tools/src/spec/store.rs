@@ -32,28 +32,29 @@ pub(super) struct SpecFile {
 /// subdirectories sorted together by name, symlinks never followed.
 // ponytail: fresh scan + parse per tool call, O(markdown files) each time; add a per-root
 // (mtime, size) parse cache like the original `SpecIndex` if large repos make calls slow.
-pub(super) fn scan(root: &Path) -> Vec<SpecFile> {
+pub(super) fn scan(root: &Path) -> Result<Vec<SpecFile>, String> {
     let mut out = Vec::new();
-    walk(root, "", &mut out);
-    out
+    walk(root, "", &mut out)?;
+    Ok(out)
 }
 
-fn walk(dir: &Path, prefix: &str, out: &mut Vec<SpecFile>) {
-    let Ok(read) = fs::read_dir(dir) else { return };
-    let mut candidates: Vec<(String, bool)> = read
-        .flatten()
-        .filter_map(|entry| {
-            let kind = entry.file_type().ok()?;
-            let name = entry.file_name().into_string().ok()?;
-            if kind.is_dir() && !IGNORED_DIRS.contains(&name.as_str()) {
-                Some((name, true))
-            } else if kind.is_file() && name.ends_with(EXTENSION) {
-                Some((name, false))
-            } else {
-                None
-            }
-        })
-        .collect();
+fn walk(dir: &Path, prefix: &str, out: &mut Vec<SpecFile>) -> Result<(), String> {
+    let read = fs::read_dir(dir).map_err(|_| "Cannot enumerate spec directory.".to_owned())?;
+    let mut candidates = Vec::new();
+    for entry in read {
+        let entry = entry.map_err(|_| "Cannot enumerate spec directory entry.".to_owned())?;
+        let kind = entry
+            .file_type()
+            .map_err(|_| "Cannot inspect spec directory entry.".to_owned())?;
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if kind.is_dir() && !IGNORED_DIRS.contains(&name.as_str()) {
+            candidates.push((name, true));
+        } else if kind.is_file() && name.ends_with(EXTENSION) {
+            candidates.push((name, false));
+        }
+    }
     // ponytail: byte-order name sort; the original compares NFC-normalized names first, which only
     // differs for canonically-equivalent spellings. Add NFC keys if such names ever matter.
     candidates.sort();
@@ -65,10 +66,13 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<SpecFile>) {
             format!("{prefix}/{name}")
         };
         if directory {
-            walk(&abs, &rel, out);
-        } else if let Ok(content) = fs::read_to_string(&abs)
-            && let Some(fm) = parse_frontmatter(&content).filter(is_spec)
-        {
+            walk(&abs, &rel, out)?;
+        } else {
+            let content = fs::read_to_string(&abs)
+                .map_err(|_| "Cannot read a Markdown file while indexing specs.".to_owned())?;
+            let Some(fm) = parse_frontmatter(&content).filter(is_spec) else {
+                continue;
+            };
             out.push(SpecFile {
                 rel,
                 abs,
@@ -77,6 +81,7 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<SpecFile>) {
             });
         }
     }
+    Ok(())
 }
 
 fn fold(name: &str) -> String {
@@ -165,10 +170,13 @@ pub(super) fn resolve_spec_path(root: &Path, path: &str) -> Result<(String, Path
                     "Path passes through a directory the index cannot list: {path}"
                 ));
             };
-            entries = read
-                .flatten()
-                .filter_map(|e| e.file_name().into_string().ok())
-                .collect();
+            for entry in read {
+                let entry =
+                    entry.map_err(|_| "Cannot enumerate spec path directory.".to_owned())?;
+                if let Ok(name) = entry.file_name().into_string() {
+                    entries.push(name);
+                }
+            }
         }
         let exists = walked_exists && fs::symlink_metadata(walked.join(segment)).is_ok();
         let name = resolve_segment(&entries, segment, exists)

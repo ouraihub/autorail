@@ -1,18 +1,16 @@
 //! Loopback gateway: engines send same-protocol requests with a per-chat token; the gateway swaps
 //! in the real key, provider headers and upstream address and streams the response back
 //! (agent-settings 04 §5.2).
+mod forward;
 
-use std::{
-    collections::HashMap, convert::Infallible, io, net::SocketAddr, sync::Arc, time::Instant,
-};
+use std::{collections::HashMap, convert::Infallible, io, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
-use futures_util::TryStreamExt;
-use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
+use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::{
     Request, Response, StatusCode,
-    body::{Frame, Incoming},
-    header::{self, HeaderMap, HeaderName, HeaderValue},
+    body::Incoming,
+    header::{self, HeaderMap, HeaderValue},
     service::service_fn,
 };
 use hyper_util::{
@@ -23,33 +21,20 @@ use parking_lot::Mutex;
 use thinkrail_core::{
     ChatId, Error, ErrorKind, Protocol, Provider, ProviderService, Result, Secret,
 };
-use tracing::{info, warn};
+use tracing::{Instrument, info, warn};
 
 use crate::{
     router::{GatewayRoutes, protocol_suffix, short_id},
-    runtime, url,
+    runtime,
 };
 
 type Body = BoxBody<Bytes, io::Error>;
 
-/// Headers never forwarded in either direction (RFC 9110 §7.6.1).
-const HOP_BY_HOP: [&str; 8] = [
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-];
-/// Request headers the gateway owns.
-const MANAGED: [&str; 4] = ["authorization", "x-api-key", "host", "content-length"];
-
 struct Shared {
     providers: Arc<dyn ProviderService>,
-    /// token → chat. Tokens live only in memory.
-    sessions: Mutex<HashMap<String, ChatId>>,
+    /// Token → chat and registration span. This is session/setup context, not the current turn;
+    /// engines do not send a trusted per-turn trace identity. Tokens live only in memory.
+    sessions: Mutex<HashMap<String, (ChatId, tracing::Span)>>,
 }
 
 /// The host's loopback gateway; listens on `127.0.0.1:<random>` from the first `base_url` call.
@@ -84,12 +69,8 @@ impl Gateway {
             return Ok(addr);
         }
         let runtime = runtime::get()?;
-        let unavailable = |e: io::Error| {
-            Error::new(
-                ErrorKind::BackendUnavailable,
-                format!("无法在 127.0.0.1 上启动网关：{e}"),
-            )
-        };
+        let unavailable =
+            |_: io::Error| Error::new(ErrorKind::BackendUnavailable, "无法在本机启动网关");
         let std_listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(unavailable)?;
         std_listener.set_nonblocking(true).map_err(unavailable)?;
         let addr = std_listener.local_addr().map_err(unavailable)?;
@@ -98,8 +79,10 @@ impl Gateway {
             tokio::net::TcpListener::from_std(std_listener).map_err(unavailable)?
         };
         let shared = Arc::clone(&self.shared);
-        runtime.tokio.spawn(serve(listener, shared));
-        info!(%addr, "网关已启动");
+        runtime
+            .tokio
+            .spawn(serve(listener, shared).in_current_span());
+        info!(port = addr.port(), "routing.gateway.started");
         *slot = Some(addr);
         Ok(addr)
     }
@@ -126,22 +109,40 @@ impl GatewayRoutes for Gateway {
             uuid::Uuid::new_v4().simple()
         );
         let mut sessions = self.shared.sessions.lock();
-        sessions.retain(|_, owner| owner != chat);
-        sessions.insert(token.clone(), chat.clone());
+        sessions.retain(|_, (owner, _)| owner != chat);
+        sessions.insert(token.clone(), (chat.clone(), tracing::Span::current()));
         Secret::new(token)
     }
 
     fn release(&self, chat: &ChatId) {
-        self.shared.sessions.lock().retain(|_, owner| owner != chat);
+        self.shared
+            .sessions
+            .lock()
+            .retain(|_, (owner, _)| owner != chat);
     }
 }
 
 async fn serve(listener: tokio::net::TcpListener, shared: Arc<Shared>) {
+    let mut accept_failures = 0u64;
     loop {
         let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
+            Ok((stream, _)) => {
+                if accept_failures > 0 {
+                    warn!(
+                        code = "IO",
+                        count = accept_failures,
+                        "routing.gateway.accept_recovered"
+                    );
+                    accept_failures = 0;
+                }
+                stream
+            }
             Err(error) => {
-                warn!(%error, "网关接受连接失败");
+                accept_failures = accept_failures.saturating_add(1);
+                if accept_failures == 1 {
+                    warn!(code = "IO", io_kind = ?error.kind(), "routing.gateway.accept_failed");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 continue;
             }
         };
@@ -149,15 +150,17 @@ async fn serve(listener: tokio::net::TcpListener, shared: Arc<Shared>) {
         tokio::spawn(async move {
             let service = service_fn(move |request| {
                 let shared = Arc::clone(&shared);
-                async move { Ok::<_, Infallible>(handle(&shared, request).await) }
+                let span = token(request.headers()).and_then(|token| shared.sessions.lock().get(token).map(|(_, span)| span.clone())).unwrap_or_else(tracing::Span::current);
+                async move { Ok::<_, Infallible>(handle(&shared, request).instrument(span).await) }
             });
-            if let Err(error) = auto::Builder::new(TokioExecutor::new())
+            if auto::Builder::new(TokioExecutor::new())
                 .serve_connection(TokioIo::new(stream), service)
                 .await
+                .is_err()
             {
-                info!(%error, "网关连接结束");
+                warn!(code = "PROTOCOL", "routing.gateway.connection_failed");
             }
-        });
+        }.in_current_span());
     }
 }
 
@@ -216,23 +219,18 @@ fn parse_route(route: &str) -> Option<(&str, Protocol)> {
     Some((short, protocol_of(suffix)?))
 }
 
-/// Upstream failures without URL or secrets.
-fn describe(error: &reqwest::Error) -> &'static str {
-    if error.is_timeout() {
-        "连接超时"
-    } else if error.is_connect() {
-        "无法连接到服务器"
-    } else {
-        "请求失败"
-    }
-}
-
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
-    tokio::task::spawn_blocking(work)
+    let span = tracing::Span::current();
+    tokio::task::spawn_blocking(move || span.in_scope(work))
         .await
-        .map_err(|_| Error::external("网关后台任务异常结束"))?
+        .unwrap_or_else(|error| {
+            if error.is_panic() {
+                std::panic::resume_unwind(error.into_panic());
+            }
+            Err(Error::external("网关后台任务异常结束"))
+        })
 }
 
 async fn handle(shared: &Arc<Shared>, request: Request<Incoming>) -> Response<Body> {
@@ -267,7 +265,10 @@ async fn handle(shared: &Arc<Shared>, request: Request<Incoming>) -> Response<Bo
     .await
     {
         Ok(found) => found,
-        Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error.to_string()),
+        Err(error) => {
+            warn!(code = %thinkrail_core::ErrorCode::code(&error), "routing.gateway.provider_lookup_failed");
+            return error_response(StatusCode::BAD_GATEWAY, "无法读取网关提供方配置");
+        }
     };
     let Some((provider, endpoint)) = provider.as_ref().and_then(|p| {
         p.input
@@ -276,139 +277,16 @@ async fn handle(shared: &Arc<Shared>, request: Request<Incoming>) -> Response<Bo
             .find(|e| e.protocol == protocol)
             .map(|e| (p, e))
     }) else {
+        warn!(code = "NOT_FOUND", "routing.gateway.route_unavailable");
         return error_response(StatusCode::NOT_FOUND, "unknown ThinkRail gateway route");
     };
-    forward(
-        shared,
+    forward::forward(
+        &shared.providers,
         provider,
         &endpoint.base_url,
         protocol,
-        &route,
         rest,
         request,
     )
     .await
-}
-
-async fn forward(
-    shared: &Arc<Shared>,
-    provider: &Provider,
-    endpoint: &str,
-    protocol: Protocol,
-    route: &str,
-    rest: &str,
-    request: Request<Incoming>,
-) -> Response<Body> {
-    let started = Instant::now();
-    // 3. Upstream address.
-    let base = url::base_url(endpoint, protocol);
-    let tail = match protocol {
-        Protocol::OpenaiChat | Protocol::OpenaiResponses => {
-            rest.strip_prefix("v1/").unwrap_or(rest)
-        }
-        Protocol::AnthropicMessages => rest,
-    };
-    let mut target = format!("{base}/{tail}");
-    if let Some(query) = request.uri().query() {
-        target.push('?');
-        target.push_str(query);
-    }
-    // 4. Key: one rotation per request.
-    let key = if provider.keys.is_empty() {
-        None
-    } else {
-        let providers = Arc::clone(&shared.providers);
-        let id = provider.id.clone();
-        match blocking(move || providers.next_key(&id)).await {
-            Ok(Some(key)) => Some(key),
-            Ok(None) => {
-                return error_response(
-                    StatusCode::BAD_GATEWAY,
-                    "提供方没有启用的 API 密钥，请在设置中启用一个",
-                );
-            }
-            Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error.to_string()),
-        }
-    };
-    // 5. Headers.
-    let (parts, body) = request.into_parts();
-    let mut headers = HeaderMap::new();
-    for (name, value) in &parts.headers {
-        let lower = name.as_str();
-        if !HOP_BY_HOP.contains(&lower) && !MANAGED.contains(&lower) {
-            headers.append(name.clone(), value.clone());
-        }
-    }
-    if let Some(key) = &key {
-        let Ok(bearer) = HeaderValue::from_str(&format!("Bearer {}", key.value.expose())) else {
-            return error_response(StatusCode::BAD_GATEWAY, "API 密钥包含不能放进请求头的字符");
-        };
-        headers.insert(header::AUTHORIZATION, bearer);
-        if protocol == Protocol::AnthropicMessages {
-            let Ok(raw) = HeaderValue::from_str(key.value.expose()) else {
-                return error_response(StatusCode::BAD_GATEWAY, "API 密钥包含不能放进请求头的字符");
-            };
-            headers.insert("x-api-key", raw);
-        }
-    }
-    for extra in &provider.input.headers {
-        let (Ok(name), Ok(value)) = (
-            HeaderName::from_bytes(extra.name.as_bytes()),
-            HeaderValue::from_str(&extra.value),
-        ) else {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                &format!("提供方请求头 {} 无效", extra.name),
-            );
-        };
-        headers.insert(name, value);
-    }
-    // 6. Body as is; response streamed back.
-    let body = match body.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(_) => return error_response(StatusCode::BAD_REQUEST, "无法读取请求体"),
-    };
-    let key_label = key
-        .as_ref()
-        .map(|k| k.label.clone().unwrap_or_else(|| k.id.to_string()));
-    let Ok(runtime) = runtime::get() else {
-        return error_response(StatusCode::BAD_GATEWAY, "网络运行时不可用");
-    };
-    let upstream = runtime
-        .client
-        .request(parts.method, &target)
-        .headers(headers)
-        .body(body)
-        .send()
-        .await;
-    let upstream = match upstream {
-        Ok(upstream) => upstream,
-        Err(error) => {
-            let reason = describe(&error);
-            warn!(route, key = key_label.as_deref(), reason, "网关上游不可达");
-            return error_response(StatusCode::BAD_GATEWAY, &format!("上游不可达：{reason}"));
-        }
-    };
-    let status = upstream.status();
-    let mut response_headers = HeaderMap::new();
-    for (name, value) in upstream.headers() {
-        if !HOP_BY_HOP.contains(&name.as_str()) && name != header::CONTENT_LENGTH {
-            response_headers.append(name.clone(), value.clone());
-        }
-    }
-    // 7. Log without values.
-    info!(
-        route,
-        key = key_label.as_deref(),
-        status = status.as_u16(),
-        elapsed_ms = started.elapsed().as_millis() as u64
-    );
-    let stream = upstream
-        .bytes_stream()
-        .map_ok(Frame::data)
-        .map_err(io::Error::other);
-    let mut response = Response::new(BodyExt::boxed(StreamBody::new(stream)));
-    *response.status_mut() = status;
-    *response.headers_mut() = response_headers;
-    response
 }

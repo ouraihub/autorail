@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use thinkrail_core::{
     Error, ErrorKind, Interaction, InteractionAnswer, InteractionKind, InteractionOption, Result,
 };
-use tracing::debug;
+use tracing::warn;
 
 use super::str_of;
 use crate::session::Live;
@@ -194,10 +194,12 @@ impl Dialogs {
     pub(crate) fn cancel_all(&self, live: &Live) {
         self.deadlines.lock().clear();
         let open = live.state.lock().take_interactions();
-        for interaction in open {
-            if let Err(error) = live.process.send(&cancel(&interaction.request_id)) {
-                debug!(%error, "cannot cancel dialog during dispose");
-            }
+        let failed = open
+            .into_iter()
+            .filter(|interaction| live.process.send(&cancel(&interaction.request_id)).is_err())
+            .count();
+        if failed != 0 {
+            warn!(failed_count = failed, "agent.dialog.cancel_cleanup_failed");
         }
     }
 }
@@ -218,7 +220,7 @@ fn expire_later(live: &Arc<Live>, id: String, timeout: Duration) {
             }
         });
     if let Err(error) = spawned {
-        debug!(%error, "cannot schedule dialog expiry; the card stays until answered");
+        warn!(error_kind = ?error.kind(), "agent.dialog.expiry_unavailable");
     }
 }
 

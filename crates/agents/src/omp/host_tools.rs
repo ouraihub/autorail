@@ -34,28 +34,31 @@ impl OmpSession {
         let spawned = thread::Builder::new()
             .name("omp-host-tool".into())
             .spawn(move || {
+                let _session = trace.enter("agent.host_tool.call");
                 let operation = trace.operation("agent.host_tool.call", "service");
-                let reply = match handler.call(&scope, options, &name, arguments) {
-                    Ok(result) => {
-                        if cancelled.lock().remove(&id) {
-                            operation.cancel("engine_withdrew");
-                            debug!(tool = %name, "host tool result dropped: call was cancelled");
-                            return;
-                        }
-                        if result.is_error {
-                            operation.fail("HOST_TOOL_ERROR");
-                        } else {
-                            operation.finish("SUCCESS");
-                        }
-                        tool_result(&id, &result.text, result.is_error)
-                    }
-                    Err(error) => {
-                        operation.fail(error.code());
-                        tool_result(&id, &error.to_string(), true)
-                    }
+                let _entered = trace.enter_operation(&operation);
+                let result = handler.call(&scope, options, &name, arguments);
+                if cancelled.lock().remove(&id) {
+                    operation.cancel("engine_withdrew");
+                    debug!("agent.host_tool.result_withdrawn");
+                    return;
+                }
+                let (reply, failure) = match result {
+                    Ok(result) => (
+                        tool_result(&id, &result.text, result.is_error),
+                        result.is_error.then_some("HOST_TOOL_ERROR"),
+                    ),
+                    Err(error) => (
+                        tool_result(&id, &error.to_string(), true),
+                        Some(error.code()),
+                    ),
                 };
                 if let Err(error) = process.send(&reply) {
-                    debug!(code = error.code(), "host tool result not delivered");
+                    operation.fail(error.code());
+                } else if let Some(code) = failure {
+                    operation.fail(code);
+                } else {
+                    operation.finish("SUCCESS");
                 }
             });
         spawned

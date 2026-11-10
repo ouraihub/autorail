@@ -14,8 +14,30 @@ impl PendingReview {
 impl Drop for PendingReview {
     fn drop(&mut self) {
         if let Some(root) = self.0.take() {
-            root.fail("REVIEW_WORKER_START_FAILED");
+            root.cancel("WORKER_NOT_STARTED");
         }
+    }
+}
+
+/// Always releases the worker slot; a panicking worker must not leave waiters blocked forever.
+struct WorkerRegistration<'a> {
+    runner: &'a AppReviewRunner,
+    key: &'a (String, String, PlanItemId),
+    handle: &'a ReviewHandle,
+}
+
+impl Drop for WorkerRegistration<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.handle.finish(AppReviewRunner::failure(
+                "评审任务异常结束，请使用诊断 ID 排查",
+            ));
+        }
+        self.runner
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(self.key);
     }
 }
 
@@ -44,8 +66,7 @@ impl ReviewRunner for AppReviewRunner {
         }
         let runner = self
             .self_ref
-            .get()
-            .and_then(Weak::upgrade)
+            .upgrade()
             .ok_or_else(|| thinkrail_core::Error::external("review runner unavailable"))?;
         let (_trace, root) = thinkrail_observability::TraceContext::root("review.run", "review");
         let span = tracing::info_span!(parent: root.span(), "review", chat_id = %scope.chat,
@@ -69,14 +90,25 @@ impl ReviewRunner for AppReviewRunner {
                     return;
                 };
                 let _entered = span.enter();
+                let _registration = WorkerRegistration {
+                    runner: &runner,
+                    key: &worker_key,
+                    handle: &worker_handle,
+                };
                 tracing::info!("review.started");
-                let _ = runner.events.send_blocking((
-                    span.clone(),
-                    ReviewEvent::Started {
-                        scope: worker_scope.clone(),
-                        item: worker_item.clone(),
-                    },
-                ));
+                if runner
+                    .events
+                    .send_blocking((
+                        span.clone(),
+                        ReviewEvent::Started {
+                            scope: worker_scope.clone(),
+                            item: worker_item.clone(),
+                        },
+                    ))
+                    .is_err()
+                {
+                    tracing::debug!("review.started_delivery_closed");
+                }
                 let result = runner.run(&worker_scope, &worker_item, &cancelled);
                 if cancelled.load(Ordering::Acquire) {
                     root.cancel("user");
@@ -89,29 +121,29 @@ impl ReviewRunner for AppReviewRunner {
                         | ReviewOutcome::ChangesStop => root.finish("SUCCESS"),
                     }
                 }
-                tracing::info!(
+                tracing::debug!(
                     cancelled = cancelled.load(Ordering::Acquire),
                     failed = matches!(result.outcome, ReviewOutcome::Failed { .. }),
                     "review.finished"
                 );
                 worker_handle.finish(result.clone());
-                if !matches!(origin, ReviewOrigin::Tool { waits: true }) {
-                    let _ = runner.events.send_blocking((
-                        span.clone(),
-                        ReviewEvent::Finished {
-                            scope: worker_scope,
-                            item: worker_item,
-                            result,
-                        },
-                    ));
+                if !matches!(origin, ReviewOrigin::Tool { waits: true })
+                    && runner
+                        .events
+                        .send_blocking((
+                            span.clone(),
+                            ReviewEvent::Finished {
+                                scope: worker_scope,
+                                item: worker_item,
+                                result,
+                            },
+                        ))
+                        .is_err()
+                {
+                    tracing::debug!("review.finished_delivery_closed");
                 }
-                runner
-                    .running
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .remove(&worker_key);
             })
-            .map_err(|error| thinkrail_core::Error::external(error.to_string()))?;
+            .map_err(|_| thinkrail_core::Error::external("无法启动评审工作线程"))?;
         running.insert(key, active);
         Ok(thinkrail_core::StartedReview {
             handle,

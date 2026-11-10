@@ -26,6 +26,7 @@ Service crates never depend on each other, except `host-tools` → `plan-review`
 ## Rust module and test organization
 
 [`docs/AI工程规范.md`](docs/AI工程规范.md) is the baseline for every change. The rules below only extend it for this repository; where a rule here is stricter, the stricter rule applies. They apply to new code and to every production file substantially modified.
+日志与异常的具体开发合同以 [`日志与异常规范.md`](docs/日志与异常规范.md) 为准；新功能必须明确最终错误记录者和跨线程 span 所有者，并读回真实输出验证级别、终态与脱敏，不能只确认存在日志宏。
 
 ### File responsibility and size
 

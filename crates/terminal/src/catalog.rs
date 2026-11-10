@@ -76,8 +76,14 @@ impl Catalog {
             .open(&path)
             .context("打开终端配置锁")?;
         fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
-            tracing::debug!(%error, "terminal catalog lock contended");
-            Error::busy("终端配置正被其他进程占用，请稍后重试")
+            if error.kind() == io::ErrorKind::WouldBlock {
+                Error::busy("终端配置正被其他进程占用，请稍后重试")
+            } else {
+                Error::Io {
+                    context: "锁定终端配置".into(),
+                    source: error,
+                }
+            }
         })?;
         safe_metadata(&path)?;
         Ok(Locked {
@@ -104,8 +110,8 @@ impl Locked<'_> {
         if bytes.len() as u64 > MAX_BYTES {
             return Err(Error::corrupt("终端配置超过 1 MiB"));
         }
-        let file: CatalogFile = serde_json::from_slice(&bytes)
-            .map_err(|error| Error::corrupt(format!("终端配置无法解析：{error}")))?;
+        let file: CatalogFile =
+            serde_json::from_slice(&bytes).map_err(|_| Error::corrupt("终端配置无法解析"))?;
         if file.schema_version != SCHEMA_VERSION {
             return Err(Error::corrupt(format!(
                 "终端配置版本 {} 不受支持",
@@ -131,8 +137,8 @@ impl Locked<'_> {
             schema_version: SCHEMA_VERSION,
             tabs: tabs.to_vec(),
         };
-        let bytes = serde_json::to_vec_pretty(&file)
-            .map_err(|error| Error::invalid(format!("终端配置无法序列化：{error}")))?;
+        let bytes =
+            serde_json::to_vec_pretty(&file).map_err(|_| Error::invalid("终端配置无法序列化"))?;
         if bytes.len() as u64 > MAX_BYTES {
             return Err(Error::invalid("终端标签过多，配置将超过 1 MiB"));
         }
@@ -146,8 +152,9 @@ impl Locked<'_> {
             .context("保存终端配置");
         if result.is_err()
             && let Err(error) = fs::remove_file(&temporary)
+            && error.kind() != io::ErrorKind::NotFound
         {
-            tracing::debug!(%error, "terminal catalog temporary cleanup failed");
+            tracing::warn!(code = "IO", io_kind = ?error.kind(), "terminal.catalog.cleanup_failed");
         }
         result?;
         #[cfg(unix)]

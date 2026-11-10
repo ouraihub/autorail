@@ -176,10 +176,15 @@ impl KeysDialog {
                         if this.generation == generation {
                             this.editing = None;
                             let (label, value) = (this.label.clone(), this.value.clone());
-                            let _ = handle.update(cx, |_, window, cx| {
-                                label.update(cx, |i, cx| i.set_value("", window, cx));
-                                value.update(cx, |i, cx| i.set_value("", window, cx));
-                            });
+                            if handle
+                                .update(cx, |_, window, cx| {
+                                    label.update(cx, |i, cx| i.set_value("", window, cx));
+                                    value.update(cx, |i, cx| i.set_value("", window, cx));
+                                })
+                                .is_err()
+                            {
+                                tracing::debug!("providers.keys.window_closed");
+                            }
                         }
                     }
                     Err(error) => {

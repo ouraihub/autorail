@@ -3,15 +3,14 @@
 
 use gpui_kit::{Context, EventEmitter};
 use thinkrail_core::{Error, ErrorCode, Project, ProjectId, Result, Workspace, WorkspaceId};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::services::Services;
 
 /// Runs blocking service work on the background executor and hands the result back to the view.
-/// Each call is one `ui.background` root: ENTRY when issued, one terminal after the view applied
-/// the result (EXIT, or ERROR with the stable code). The job and the completion run inside the
-/// root span, so their lines carry the same TraceId; `at` keeps the caller location. While `done`
-/// runs, [`AppState::report`] attaches that TraceId to the notice it shows.
+/// Each call is one `ui.background` root: ENTRY when issued and one job terminal after the
+/// completion runs. A closed view cancels delivery. The job and completion share the root span;
+/// [`AppState::report`] attaches that TraceId to any notice it shows. Panics propagate unchanged.
 #[track_caller]
 pub fn run<V: 'static, T: Send + 'static>(
     cx: &mut Context<V>,
@@ -21,6 +20,7 @@ pub fn run<V: 'static, T: Send + 'static>(
     let caller = std::panic::Location::caller();
     let (trace, root) = thinkrail_observability::TraceContext::root("ui.background", "ui");
     let span = root.span().clone();
+    span.in_scope(|| debug!(at = %caller, "ui.background.issued"));
     let job_span = span.clone();
     let task = cx
         .background_executor()
@@ -30,12 +30,14 @@ pub fn run<V: 'static, T: Send + 'static>(
         let _entered = span.enter();
         let code = result.as_ref().err().map(ErrorCode::code);
         let _current = CurrentTrace::set(trace.trace_id());
-        if this.update(cx, |view, cx| done(view, result, cx)).is_err() {
-            debug!(at = %caller, "view closed before background job finished");
+        let applied = this.update(cx, |view, cx| done(view, result, cx)).is_ok();
+        if !applied {
+            debug!(at = %caller, "ui.background.view_closed");
         }
         match code {
-            None => root.finish("SUCCESS"),
             Some(code) => root.fail(code),
+            None if !applied => root.cancel("VIEW_CLOSED"),
+            None => root.finish("SUCCESS"),
         }
     })
     .detach();
@@ -149,10 +151,17 @@ impl AppState {
             .filter(move |w| &w.project_id == project)
     }
 
-    /// Shows a failure in the notice bar and logs its code (never its message text).
+    /// Shows a failure; the background root owns its log, or a direct report creates one.
     pub fn report(&mut self, error: &Error, cx: &mut Context<Self>) {
-        warn!(code = error.code(), "operation failed");
-        self.notice = Some(Notice::from_error(error));
+        self.notice = Some(if CurrentTrace::get().is_some() {
+            Notice::from_error(error)
+        } else {
+            let (trace, root) = thinkrail_observability::TraceContext::root("ui.notice", "ui");
+            let _current = CurrentTrace::set(trace.trace_id());
+            let notice = Notice::from_error(error);
+            root.fail(error.code());
+            notice
+        });
         cx.notify();
     }
 

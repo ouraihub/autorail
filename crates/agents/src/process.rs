@@ -13,7 +13,7 @@ use std::{
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
 use thinkrail_core::{EngineRouting, Error, ErrorCode as _, ErrorKind, Launch, Result};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 mod redaction;
 mod streams;
@@ -242,21 +242,18 @@ impl Process {
 
     pub(crate) fn send(&self, frame: &Value) -> Result<()> {
         let _entered = self.trace.enter("agent.protocol.send");
-        info!(
-            request_kind = frame["type"]
-                .as_str()
-                .filter(|kind| kind.len() <= 64)
-                .or(frame["method"].as_str().filter(|kind| kind.len() <= 64))
-                .unwrap_or("reply"),
-            request_id = frame["id"].as_str().filter(|id| id.len() <= 128),
-            "agent.protocol.send"
-        );
         let mut bytes = serde_json::to_vec(frame)
             .map_err(|e| Error::protocol(format!("无法编码发送帧：{e}")))?;
         bytes.push(b'\n');
         if bytes.len() > self.frame_limit {
             return Err(Error::invalid("发送给 Agent 的内容超过协议单帧上限"));
         }
+        debug!(
+            frame_bytes = bytes.len(),
+            is_rpc = frame.get("jsonrpc").is_some(),
+            has_id = frame.get("id").is_some(),
+            "agent.protocol.send"
+        );
         let stdin = self.stdin.lock();
         let closed = || Error::new(ErrorKind::SessionClosed, "Agent 进程的输入已关闭");
         stdin
@@ -362,7 +359,7 @@ fn terminate(pid: u32) {
             code = status.code(),
             "agent process tree termination failed"
         ),
-        Err(error) => warn!(pid, %error, "cannot run process tree termination"),
+        Err(error) => warn!(pid, error_kind = ?error.kind(), "agent.process.termination_failed"),
     }
 }
 

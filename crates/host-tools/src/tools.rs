@@ -48,7 +48,13 @@ static REVIEW_SPECS: LazyLock<Vec<HostToolSpec>> =
 
 fn bundled(what: &str, json: &str) -> Vec<HostToolSpec> {
     serde_json::from_str(json).unwrap_or_else(|error| {
-        tracing::error!(%error, "bundled {what} tool specs are invalid");
+        tracing::error!(
+            code = "BUNDLED_TOOL_SPECS_INVALID",
+            spec_kind = what,
+            line = error.line(),
+            column = error.column(),
+            "host_tool.specs.invalid"
+        );
         Vec::new()
     })
 }

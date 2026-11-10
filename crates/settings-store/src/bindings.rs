@@ -16,7 +16,7 @@ impl ChatBindingService for SqliteSettingsStore {
                 (binding.chat_id.as_str(), binding.workspace_id.as_str(), backend.as_str(), binding.native_session_key.as_str(), db::now()),
             )
         })?;
-        debug!(chat = %binding.chat_id, backend = binding.backend.label(), "chat bound");
+        debug!(chat = %binding.chat_id, backend = binding.backend.label(), "settings.chat.bound");
         Ok(())
     }
 

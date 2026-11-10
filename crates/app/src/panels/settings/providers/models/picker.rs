@@ -21,7 +21,7 @@ use thinkrail_core::{
     DiscoveredModel, ModelType, Protocol, ProviderModel, merge_picked, model_hints, model_type,
 };
 use thinkrail_ui::{
-    components::{IconButton, label},
+    components::label,
     metrics::{space, text},
 };
 
@@ -54,6 +54,7 @@ struct ModelPicker {
 
 pub(super) fn open_picker(
     page: Entity<ProvidersPage>,
+    provider: thinkrail_core::ProviderId,
     found: Vec<DiscoveredModel>,
     draft: Vec<ProviderModel>,
     line: Protocol,
@@ -76,9 +77,6 @@ pub(super) fn open_picker(
         })
         .collect();
     let total = found.len();
-    let Some(provider) = page.read(cx).selected.clone() else {
-        return;
-    };
     let picker = cx.new(|cx| {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder(s::SEARCH_MODELS));
         let subscription = cx.subscribe(&query, |_, _, event: &InputEvent, cx| {
@@ -378,27 +376,32 @@ impl ModelPicker {
                         .text_color(r.feedback_success),
                 )
                 .into_any_element(),
-            IconButton::new(
-                format!("pick-{id}"),
-                if picked {
+            Button::new(format!("pick-{id}"))
+                .small()
+                .ghost()
+                .icon(if picked {
                     IconName::Minus
                 } else {
                     IconName::Plus
-                },
-            )
-            .tooltip(if picked {
-                s::REMOVE_MODEL
-            } else {
-                s::ADD_MODEL
-            })
-            .disabled(self.saving)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !this.picked.remove(&id) {
-                    this.picked.insert(id.clone());
-                }
-                this.apply(cx);
-            }))
-            .into_any_element(),
+                })
+                .accessibility_label(if picked {
+                    s::REMOVE_MODEL
+                } else {
+                    s::ADD_MODEL
+                })
+                .tooltip(if picked {
+                    s::REMOVE_MODEL
+                } else {
+                    s::ADD_MODEL
+                })
+                .disabled(self.saving)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !this.picked.remove(&id) {
+                        this.picked.insert(id.clone());
+                    }
+                    this.apply(cx);
+                }))
+                .into_any_element(),
             picked,
             &r,
         )

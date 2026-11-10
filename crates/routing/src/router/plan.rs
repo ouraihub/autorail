@@ -4,7 +4,7 @@ use thinkrail_core::{
     Access, BackendKind, DefaultModel, EngineProvider, Error, ModelPrefs, ModelRef, ProjectedModel,
     Protocol, Provider, ProviderModel, Result, ThinkingLevel, clamp_effort,
 };
-use tracing::info;
+use tracing::warn;
 
 use super::route_name;
 
@@ -204,9 +204,10 @@ pub(super) fn session_model(
     };
     let found = resolve_model(routes, providers, wanted, effort);
     if found.is_none() {
-        info!(
+        warn!(
             provider = wanted.provider.as_str(),
-            "默认模型不可用，引擎使用自己的默认模型"
+            code = "NOT_FOUND",
+            "routing.model.default_unavailable"
         );
     }
     Ok(found)

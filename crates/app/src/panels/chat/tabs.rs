@@ -144,20 +144,32 @@ impl ChatPanel {
             cx,
             move || prefs.prefs(),
             move |this, result, cx| {
-                let Some(backend) = result.ok().and_then(|prefs| prefs.default_agent) else {
-                    return;
+                let backend = match result {
+                    Ok(prefs) => match prefs.default_agent {
+                        Some(backend) => backend,
+                        None => return,
+                    },
+                    Err(error) => {
+                        this.report(&error, cx);
+                        return;
+                    }
                 };
                 let draft = thinkrail_agents::skill_command(backend, SETUP_SKILL);
                 let composer = this.composer.clone();
-                let _ = handle.update(cx, |_, window, cx| {
-                    composer.update(cx, |input, cx| {
-                        let end = draft.len();
-                        input.set_value(draft, window, cx);
-                        // The user types the project idea after the command.
-                        input.set_selected_range(end..end, cx);
-                        input.focus(window, cx);
+                if handle
+                    .update(cx, |_, window, cx| {
+                        composer.update(cx, |input, cx| {
+                            let end = draft.len();
+                            input.set_value(draft, window, cx);
+                            // The user types the project idea after the command.
+                            input.set_selected_range(end..end, cx);
+                            input.focus(window, cx);
+                        })
                     })
-                });
+                    .is_err()
+                {
+                    tracing::debug!("chat.setup.window_closed");
+                }
             },
         );
     }
@@ -213,7 +225,7 @@ impl ChatPanel {
                 chat.starting = false;
                 match result {
                     Ok(Ok(started)) => {
-                        info!(chat = %id, backend = started.binding.backend.label(), "chat engine started");
+                        info!(chat_id = %id, backend = started.binding.backend.label(), "chat.engine.started");
                         chat.snapshot = Some(started.session.snapshot());
                         chat.session = Some(started.session);
                         chat.binding = Some(started.binding);

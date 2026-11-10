@@ -2,7 +2,7 @@
 //!
 //! The session is a correlation context that lives until dispose, not one bounded operation, so
 //! its root is closed as `REGISTERED` right away; boundaries below run inside its span and carry
-//! the same TraceId. Per-boundary ENTRY/EXIT lifecycles are task L9.
+//! the same TraceId. Bounded process, turn, request and tool operations run beneath that context.
 
 use thinkrail_core::StartSession;
 use thinkrail_observability::{OperationGuard, TraceContext, operation};

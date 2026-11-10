@@ -111,10 +111,15 @@ impl AppearancePage {
             {
                 let page = cx.entity().downgrade();
                 move |_, cx| {
-                    let _ = page.update(cx, |page, cx| {
-                        page.themes_open = !page.themes_open;
-                        cx.notify();
-                    });
+                    if page
+                        .update(cx, |page, cx| {
+                            page.themes_open = !page.themes_open;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("appearance.theme.view_closed");
+                    }
                 }
             },
         )];
@@ -193,10 +198,15 @@ impl AppearancePage {
             disclosure("theme-pair-toggle", s::THEME_PAIR, summary, open, r, {
                 let page = cx.entity().downgrade();
                 move |_, cx| {
-                    let _ = page.update(cx, |page, cx| {
-                        page.themes_open = !page.themes_open;
-                        cx.notify();
-                    });
+                    if page
+                        .update(cx, |page, cx| {
+                            page.themes_open = !page.themes_open;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        tracing::debug!("appearance.theme.view_closed");
+                    }
                 }
             }),
         ];

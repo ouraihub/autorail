@@ -5,7 +5,23 @@ use thinkrail_core::SessionError;
 use super::Projection;
 
 impl Projection {
+    /// Async engine errors have no Result consumer; duplicate frames share one failed turn.
+    pub(super) fn log_error_boundary(&self, error: &SessionError) {
+        if !self.running || self.turn_started.is_some() {
+            let _entered = self
+                .trace
+                .as_ref()
+                .map(|trace| trace.enter("agent.session.error"));
+            tracing::error!(chat_id = %self.snapshot.id, code = %error.code,
+                "agent.session.failed");
+        }
+    }
+
     pub(crate) fn set_running(&mut self, running: bool) {
+        let _entered = self
+            .trace
+            .as_ref()
+            .map(|trace| trace.enter("agent.turn.state"));
         if self.running == running {
             return;
         }
@@ -36,22 +52,18 @@ impl Projection {
         if self.closed {
             return;
         }
+        if let Some(error) = error {
+            self.error(error);
+        }
         self.closed = true;
         self.running = false;
         if self.turn_started.take().is_some()
             && let Some(operation) = self.turn_operation.take()
         {
-            if error.is_some() {
-                operation.fail("SESSION_CLOSED");
-            } else {
-                operation.cancel("session_closed");
-            }
-            tracing::warn!(chat_id = %self.snapshot.id, "agent.turn.interrupted");
+            operation.cancel("session_closed");
+            tracing::debug!(chat_id = %self.snapshot.id, "agent.turn.interrupted");
         }
         self.snapshot.interactions.clear();
-        if let Some(error) = error {
-            self.error(error);
-        }
         self.publish();
     }
 }

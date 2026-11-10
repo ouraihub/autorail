@@ -242,7 +242,7 @@ impl DshSession {
                         .process
                         .send(&json!({"jsonrpc": "2.0", "id": id, "error": error}))?;
                 }
-                debug!(method, "unhandled ACP method");
+                debug!("agent.protocol.unhandled_method");
             }
         }
         Ok(())
@@ -343,12 +343,12 @@ impl AgentSession for DshSession {
         if self.live.state.lock().is_running()
             && let Err(error) = self.notify("session/cancel", json!({"sessionId": key}))
         {
-            debug!(code = error.code(), "cannot cancel prompt during dispose");
+            tracing::warn!(code = error.code(), "agent.session.cancel_cleanup_failed");
         }
         let id = new_id();
         let close = json!({"jsonrpc": "2.0", "id": id, "method": "session/close", "params": {"sessionId": key}});
         if let Err(error) = self.live.request(id, &close, CLOSE) {
-            debug!(code = error.code(), "session/close did not complete");
+            tracing::warn!(code = error.code(), "agent.session.close_cleanup_failed");
         }
         self.live.shutdown();
         Ok(())

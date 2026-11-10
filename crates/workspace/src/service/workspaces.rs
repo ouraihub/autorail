@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use thinkrail_core::{
     Error, IoContext, NewWorkspace, ProjectId, Result, Workspace, WorkspaceId, WorkspaceKind,
 };
-use tracing::info;
+use tracing::debug;
 
 use super::{GitWorkspaceService, display_name, now, same_path, slug};
 use crate::{git, paths::reject_links, registry::Ownership};
@@ -126,7 +126,7 @@ impl GitWorkspaceService {
         });
         match saved {
             Ok(workspace) => {
-                info!(workspace = %workspace.id, "managed workspace created");
+                debug!(workspace = %workspace.id, "workspace.managed.created");
                 Ok(workspace)
             }
             Err(error) => {
@@ -134,7 +134,7 @@ impl GitWorkspaceService {
                 if let Err(cleanup) =
                     git::ok(&project_path, &["worktree", "remove", "--", &path_arg])
                 {
-                    tracing::warn!(code = %thinkrail_core::ErrorCode::code(&cleanup), "orphan worktree left after failed save");
+                    tracing::warn!(workspace = %workspace.id, code = %thinkrail_core::ErrorCode::code(&cleanup), "workspace.managed.cleanup_failed");
                 }
                 Err(error)
             }
@@ -195,7 +195,7 @@ impl GitWorkspaceService {
             registry.managed.remove(id);
             Ok(())
         })?;
-        info!(workspace = %id, "managed workspace removed");
+        debug!(workspace = %id, "workspace.managed.removed");
         Ok(())
     }
 }

@@ -130,9 +130,12 @@ impl Store {
             }
         }
         let bytes = bounded_read(File::open(&path).context("读取工作区注册表")?, MAX_BYTES)
-            .map_err(|_| Error::corrupt("工作区注册表超过 16 MiB"))?;
-        let registry: Registry = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::corrupt(format!("工作区注册表无法解析：{e}")))?;
+            .map_err(|error| match error {
+                error @ Error::Io { .. } => error,
+                Error::Domain { .. } => Error::corrupt("工作区注册表超过 16 MiB"),
+            })?;
+        let registry: Registry =
+            serde_json::from_slice(&bytes).map_err(|_| Error::corrupt("工作区注册表无法解析"))?;
         registry.validate()?;
         Ok(registry)
     }
@@ -152,8 +155,8 @@ impl Store {
 
     pub fn write(&self, _lock: &Locked, registry: &Registry) -> Result<()> {
         registry.validate()?;
-        let bytes = serde_json::to_vec_pretty(registry)
-            .map_err(|e| Error::invalid(format!("无法序列化注册表：{e}")))?;
+        let bytes =
+            serde_json::to_vec_pretty(registry).map_err(|_| Error::invalid("无法序列化注册表"))?;
         let target = self.dir.join(FILE_NAME);
         let temporary = self
             .dir
@@ -171,8 +174,9 @@ impl Store {
         .context("保存工作区注册表");
         if result.is_err()
             && let Err(error) = fs::remove_file(&temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            tracing::debug!(%error, "registry temporary cleanup failed");
+            tracing::warn!(code = "IO", io_kind = ?error.kind(), "workspace.registry.cleanup_failed");
         }
         result
     }

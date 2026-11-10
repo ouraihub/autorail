@@ -100,38 +100,47 @@ impl ToolBridge {
         let tokens: Tokens = Arc::new(Mutex::new(HashMap::new()));
         let accept_tokens = tokens.clone();
         let live = Arc::new(AtomicUsize::new(0));
+        let accept_span = tracing::Span::current();
+        let accept_dispatch = tracing::dispatcher::get_default(Clone::clone);
         thread::Builder::new()
             .name("host-tools-accept".into())
             .spawn(move || {
+                let _dispatch = tracing::dispatcher::set_default(&accept_dispatch);
+                let _entered = accept_span.enter();
                 for connection in listener.incoming() {
                     let stream = match connection {
                         Ok(stream) => stream,
                         Err(error) => {
-                            warn!(%error, "host tool connection failed");
+                            warn!(error_kind = ?error.kind(), "host_bridge.connection.accept_failed");
                             continue;
                         }
                     };
                     if live.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
                         live.fetch_sub(1, Ordering::AcqRel);
-                        warn!("host tool connection refused: too many connections");
+                        warn!(limit = MAX_CONNECTIONS, "host_bridge.connection.limit_reached");
                         continue;
                     }
-                    let (tokens, handler, live) =
+                    let (tokens, handler, connection_live) =
                         (accept_tokens.clone(), handler.clone(), live.clone());
+                    let connection_span = tracing::Span::current();
+                    let connection_dispatch = tracing::dispatcher::get_default(Clone::clone);
                     let spawned =
                         thread::Builder::new()
                             .name("host-tools-conn".into())
                             .spawn(move || {
+                                let _dispatch = tracing::dispatcher::set_default(&connection_dispatch);
+                                let _entered = connection_span.enter();
                                 serve(stream, &tokens, handler.as_ref());
-                                live.fetch_sub(1, Ordering::AcqRel);
+                                connection_live.fetch_sub(1, Ordering::AcqRel);
                             });
                     if let Err(error) = spawned {
-                        warn!(%error, "cannot start host tool connection thread");
+                        live.fetch_sub(1, Ordering::AcqRel);
+                        warn!(error_kind = ?error.kind(), "host_bridge.connection.spawn_failed");
                     }
                 }
             })
             .map_err(|e| bridge_error("无法启动宿主工具线程", e))?;
-        info!("host tool bridge started");
+        info!("host_bridge.started");
         Ok(Self { pipe, tokens })
     }
 
@@ -191,7 +200,7 @@ fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
             Ok(Some(line)) => line,
             Ok(None) => break,
             Err(error) => {
-                warn!(%error, "host tool connection closed");
+                warn!(error_kind = ?error.kind(), "host_bridge.connection.read_failed");
                 break;
             }
         };
@@ -203,17 +212,21 @@ fn serve(stream: Stream, tokens: &Tokens, handler: &dyn HostToolHandler) {
         {
             break;
         }
-        let _request = session.span.enter();
         let operation = operation(&session.trace, "host_bridge.request", "host_tools");
+        let operation_span = operation.span().clone();
+        let _request = operation_span.enter();
         let reply = handle(&line, scope, options, handler);
+        if let Err(error) = write_line(&mut writer, &reply) {
+            operation.fail("BRIDGE_WRITE_FAILED");
+            debug!(error_kind = ?error.kind(), "host_bridge.reply.not_delivered");
+            break;
+        }
         if reply.get("error").is_some() {
             operation.fail(reply["error"]["code"].as_str().unwrap_or("PROTOCOL"));
+        } else if reply["result"]["isError"] == true {
+            operation.fail("HOST_TOOL_ERROR");
         } else {
             operation.finish("SUCCESS");
-        }
-        if let Err(error) = write_line(&mut writer, &reply) {
-            debug!(%error, "host tool client went away");
-            break;
         }
     }
 }

@@ -4,11 +4,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use gpui_kit::Context;
 use lumakit_usage_status::{ContextStatus, StatusState};
-use thinkrail_core::{ChatId, ErrorCode as _, SessionPhase, SessionUsage};
-use tracing::debug;
 
 use super::{Chat, ChatPanel};
 use crate::state::run;
+use thinkrail_core::{ChatId, SessionPhase, SessionUsage};
 
 #[derive(Default)]
 pub(super) struct Usage {
@@ -99,13 +98,8 @@ impl ChatPanel {
                     && chat.phase() == SessionPhase::Idle
                     && !chat.closing
                     && chat.snapshot.as_ref().and_then(|s| s.model.as_ref()) == model.as_ref();
-                let usage = match result {
-                    Ok(usage) => usage,
-                    Err(error) => {
-                        debug!(chat = %id, code = error.code(), "chat usage query unavailable");
-                        None
-                    }
-                };
+                // The background root records a failed query; the view displays unknown usage.
+                let usage = result.unwrap_or(None);
                 let pending = chat.usage.finish(generation, current, usage);
                 if pending {
                     this.refresh_usage(&id, cx);

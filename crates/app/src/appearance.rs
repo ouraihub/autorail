@@ -128,10 +128,7 @@ impl AppearanceState {
         let prefs = match service.app_prefs() {
             Ok(stored) => stored.appearance,
             Err(error) => {
-                warn!(
-                    code = error.code(),
-                    "appearance not read; defaults are used"
-                );
+                warn!(code = error.code(), "appearance.preferences.fallback");
                 AppearancePrefs::default()
             }
         };
@@ -139,14 +136,17 @@ impl AppearanceState {
         let fonts_dir = data_dir.join("fonts");
         for dir in [&themes_dir, &fonts_dir] {
             if let Err(error) = std::fs::create_dir_all(dir) {
-                warn!(%error, "appearance folder not created");
+                warn!(code = "APPEARANCE_DIRECTORY_UNAVAILABLE", kind = ?error.kind(), "appearance.directory.failed");
             }
         }
         let catalog = match ThemeCatalog::bundled() {
             Ok(catalog) => catalog.clone(),
-            Err(error) => {
+            Err(_) => {
                 // The bundled manifests are compiled in and pinned by tests.
-                warn!(error, "bundled themes unavailable");
+                warn!(
+                    code = "BUNDLED_THEMES_UNAVAILABLE",
+                    "appearance.themes.fallback"
+                );
                 return;
             }
         };
@@ -175,7 +175,10 @@ impl AppearanceState {
     pub(crate) fn absorb(&mut self, scan: Scan, cx: &mut App) {
         match ThemeCatalog::bundled() {
             Ok(bundled) => self.catalog = bundled.with_user_themes(scan.themes),
-            Err(error) => warn!(error, "bundled themes unavailable"),
+            Err(_) => warn!(
+                code = "BUNDLED_THEMES_UNAVAILABLE",
+                "appearance.themes.fallback"
+            ),
         }
         self.fonts = scan
             .fonts
@@ -278,19 +281,30 @@ impl AppearanceState {
             Arc::clone(&state.service)
         };
         Self::apply(cx);
+        let (trace, root) = thinkrail_observability::TraceContext::root("appearance.save", "ui");
+        let span = root.span().clone();
+        let job_span = span.clone();
         let job = cx
             .background_executor()
-            .spawn(async move { service.set_appearance(&next) });
+            .spawn(async move { job_span.in_scope(|| service.set_appearance(&next)) });
         cx.spawn(async move |cx| {
             let result: Result<_, Error> = job.await;
+            let _entered = span.enter();
             cx.update(|cx| {
                 let state = cx.global_mut::<Self>();
                 match result {
-                    Ok(stored) => state.stored = stored.appearance,
+                    Ok(stored) => {
+                        state.stored = stored.appearance;
+                        root.finish("SUCCESS");
+                    }
                     Err(error) => {
-                        warn!(code = error.code(), "appearance not stored");
+                        root.fail(error.code());
                         state.prefs = state.stored.clone();
                         state.error = Some(message);
+                        tracing::debug!(
+                            diagnostic_id = trace.trace_id(),
+                            "appearance.preferences.restored"
+                        );
                     }
                 }
                 Self::apply(cx);
@@ -303,38 +317,56 @@ impl AppearanceState {
     pub fn add_fonts(paths: Vec<PathBuf>, cx: &mut App) {
         let state = cx.global::<Self>();
         let (themes_dir, fonts_dir) = (state.themes_dir.clone(), state.fonts_dir.clone());
+        let (_trace, root) =
+            thinkrail_observability::TraceContext::root("appearance.fonts.add", "ui");
+        let span = root.span().clone();
+        let job_span = span.clone();
         let job = cx.background_executor().spawn(async move {
-            let added: Vec<Added> = paths
-                .iter()
-                .map(|path| {
-                    let outcome = files::copy_font(path, &fonts_dir, |bytes| {
-                        fonts::inspect(bytes)
-                            .map(drop)
-                            .map_err(|e| format!("{e:?}"))
+            job_span.in_scope(|| {
+                let added: Vec<Added> = paths
+                    .iter()
+                    .map(|path| {
+                        let outcome = files::copy_font(path, &fonts_dir, |bytes| {
+                            fonts::inspect(bytes)
+                                .map(drop)
+                                .map_err(|e| format!("{e:?}"))
+                        })
+                        .map_err(|problem| match problem {
+                            files::CopyProblem::File(problem) => FontProblem::File(problem),
+                            files::CopyProblem::Invalid(detail) => FontProblem::Invalid(detail),
+                        });
+                        Added {
+                            file_name: path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                            outcome,
+                        }
                     })
-                    .map_err(|problem| match problem {
-                        files::CopyProblem::File(problem) => FontProblem::File(problem),
-                        files::CopyProblem::Invalid(detail) => FontProblem::Invalid(detail),
-                    });
-                    Added {
-                        file_name: path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                        outcome,
-                    }
-                })
-                .collect();
-            (added, scan(&themes_dir, &fonts_dir))
+                    .collect();
+                (added, scan(&themes_dir, &fonts_dir))
+            })
         });
         cx.spawn(async move |cx| {
             let (added, scan) = job.await;
+            let _entered = span.enter();
+            let failed = added.iter().filter(|font| font.outcome.is_err()).count();
+            tracing::debug!(
+                count = added.len(),
+                failed_count = failed,
+                "appearance.fonts.completed"
+            );
             cx.update(|cx| {
                 cx.update_global::<Self, _>(|state, cx| {
                     state.absorb(scan, cx);
                     state.added = added;
                 });
                 Self::apply(cx);
+                if failed == 0 {
+                    root.finish("SUCCESS");
+                } else {
+                    root.fail("FONT_IMPORT_FAILED");
+                }
             });
         })
         .detach();
@@ -347,7 +379,7 @@ impl AppearanceState {
             return;
         }
         state.system = appearance;
-        debug!(?appearance, "system appearance changed");
+        debug!(?appearance, "appearance.system.changed");
         Self::apply(cx);
     }
 }

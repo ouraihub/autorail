@@ -8,7 +8,7 @@ use std::{
 
 use serde_yaml_ng::Value as Yaml;
 use thinkrail_core::{CommandScope, CommandSource, SlashCommand};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Skill commands for a chat in `cwd`, roots in DSH's priority order: the project's
 /// `.dsh/skills` and `.agents/skills`, the host-staged bundled skills, `<DSH home>/skills`,
@@ -38,16 +38,30 @@ fn scan(roots: &[(PathBuf, CommandScope)]) -> Vec<SlashCommand> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for (root, scope) in roots {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            continue;
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warn!(error_kind = ?error.kind(), "agent.skills.scan_unavailable");
+                continue;
+            }
         };
+        let mut unreadable = 0usize;
         let mut files: Vec<PathBuf> = entries
-            .flatten()
-            .filter_map(|entry| skill_file(&entry.path()))
+            .filter_map(|entry| match entry {
+                Ok(entry) => skill_file(&entry.path()),
+                Err(_) => {
+                    unreadable += 1;
+                    None
+                }
+            })
             .collect();
+        let mut unreadable_files = 0usize;
+        let mut skipped = 0usize;
         files.sort();
         for file in files {
-            let Some((name, description)) = read_skill(&file) else {
+            let Some((name, description)) = read_skill(&file, &mut unreadable_files) else {
+                skipped += 1;
                 continue;
             };
             if seen.insert(name.clone()) {
@@ -60,6 +74,18 @@ fn scan(roots: &[(PathBuf, CommandScope)]) -> Vec<SlashCommand> {
                 });
             }
         }
+        if unreadable != 0 || unreadable_files != 0 {
+            warn!(
+                failed_entries = unreadable,
+                failed_files = unreadable_files,
+                "agent.skills.scan_incomplete"
+            );
+        }
+        debug!(
+            command_count = out.len(),
+            skipped_count = skipped,
+            "agent.skills.scanned"
+        );
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
@@ -75,32 +101,22 @@ fn skill_file(path: &Path) -> Option<PathBuf> {
 }
 
 /// `(name, description)` of a user-invocable skill with valid frontmatter.
-fn read_skill(file: &Path) -> Option<(String, String)> {
+fn read_skill(file: &Path, unreadable: &mut usize) -> Option<(String, String)> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
-        Err(error) => {
-            debug!(path = %file.display(), kind = ?error.kind(), "skill file unreadable");
-            return None;
-        }
-    };
-    let Some(front) = frontmatter(&text) else {
-        debug!(path = %file.display(), "skill file without frontmatter skipped");
-        return None;
-    };
-    let yaml: Yaml = match serde_yaml_ng::from_str(front) {
-        Ok(yaml) => yaml,
         Err(_) => {
-            debug!(path = %file.display(), "skill frontmatter is not YAML");
+            *unreadable += 1;
             return None;
         }
     };
+    let front = frontmatter(&text)?;
+    let yaml: Yaml = serde_yaml_ng::from_str(front).ok()?;
     if yaml.get("user-invocable").and_then(Yaml::as_bool) == Some(false) {
         return None;
     }
     let name = yaml.get("name").and_then(Yaml::as_str)?.trim();
     let description = yaml.get("description").and_then(Yaml::as_str)?.trim();
     if !valid_name(name) || description.is_empty() {
-        debug!(path = %file.display(), "skill with an invalid name or description skipped");
         return None;
     }
     Some((name.to_owned(), description.to_owned()))

@@ -230,9 +230,14 @@ impl ProvidersPage {
                             && this.key_generation == generation
                         {
                             let input = this.key_input.clone();
-                            let _ = handle.update(cx, |_, window, cx| {
-                                input.update(cx, |input, cx| input.set_value("", window, cx))
-                            });
+                            if handle
+                                .update(cx, |_, window, cx| {
+                                    input.update(cx, |input, cx| input.set_value("", window, cx))
+                                })
+                                .is_err()
+                            {
+                                tracing::debug!("providers.key.window_closed");
+                            }
                         }
                         this.stored(provider, cx);
                     }

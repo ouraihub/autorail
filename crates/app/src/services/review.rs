@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     fs,
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex, OnceLock, Weak},
+    sync::{Arc, Condvar, Mutex, Weak},
     thread,
     time::{Duration, Instant},
 };
@@ -65,7 +65,7 @@ pub struct AppReviewRunner {
     runtimes: [Arc<dyn AgentRuntime>; 3],
     support_dir: PathBuf,
     events: async_channel::Sender<(tracing::Span, ReviewEvent)>,
-    self_ref: OnceLock<Weak<AppReviewRunner>>,
+    self_ref: Weak<AppReviewRunner>,
     running: Mutex<HashMap<(String, String, PlanItemId), Running>>,
 }
 
@@ -75,7 +75,7 @@ impl AppReviewRunner {
         support_dir: PathBuf,
         events: async_channel::Sender<(tracing::Span, ReviewEvent)>,
     ) -> Arc<Self> {
-        let runner = Arc::new(Self {
+        Arc::new_cyclic(|weak| Self {
             plans: services.plans.clone(),
             bindings: services.bindings.clone(),
             workspace: services.workspace.clone(),
@@ -89,11 +89,9 @@ impl AppReviewRunner {
             ],
             support_dir,
             events,
-            self_ref: OnceLock::new(),
+            self_ref: weak.clone(),
             running: Mutex::new(HashMap::new()),
-        });
-        let _ = runner.self_ref.set(Arc::downgrade(&runner));
-        runner
+        })
     }
 
     fn runtime(&self, backend: BackendKind) -> Arc<dyn AgentRuntime> {
@@ -143,16 +141,13 @@ impl AppReviewRunner {
             Err(error) => return Self::failure(error.to_string()),
         };
         let project = match self.workspace.projects().and_then(|projects| {
-            projects
-                .into_iter()
-                .find(|project| {
-                    self.workspace
-                        .workspaces(&project.id)
-                        .ok()
-                        .is_some_and(|items| items.iter().any(|item| item.id == scope.workspace))
-                })
-                .map(|project| project.id)
-                .ok_or_else(|| thinkrail_core::Error::not_found("工作区项目"))
+            for project in projects {
+                let items = self.workspace.workspaces(&project.id)?;
+                if items.iter().any(|item| item.id == scope.workspace) {
+                    return Ok(project.id);
+                }
+            }
+            Err(thinkrail_core::Error::not_found("工作区项目"))
         }) {
             Ok(project) => project,
             Err(error) => return Self::failure(error.to_string()),
@@ -175,16 +170,19 @@ impl AppReviewRunner {
             Ok(routing) => routing,
             Err(error) => return Self::failure(error.to_string()),
         };
+        let resources = ReviewResources {
+            router: self.router.as_ref(),
+            chat: &reviewer_chat,
+            support: self.support_dir.join(reviewer_chat.as_str()),
+        };
         let cwd = match self.workspace.workspace_root(&scope.workspace) {
             Ok(path) => path,
             Err(error) => {
-                self.router.release(&reviewer_chat);
                 return Self::failure(error.to_string());
             }
         };
-        let support = self.support_dir.join(reviewer_chat.as_str());
-        if let Err(error) = fs::create_dir_all(&support) {
-            self.router.release(&reviewer_chat);
+        let support = &resources.support;
+        if let Err(error) = fs::create_dir_all(support) {
             return Self::failure(error.to_string());
         }
         let system_prompt = review::REVIEWER_SYSTEM.to_owned();
@@ -211,7 +209,7 @@ impl AppReviewRunner {
             resume: None,
             host_tools: None,
             routing,
-            support_dir: support.clone(),
+            support_dir: resources.support.clone(),
             role: SessionRole::Reviewer {
                 system_prompt: format!("{system_prompt}\n\n{package}"),
             },
@@ -222,8 +220,6 @@ impl AppReviewRunner {
         {
             Ok(session) => session,
             Err(error) => {
-                self.router.release(&reviewer_chat);
-                let _ = fs::remove_dir_all(support);
                 return Self::failure(error.to_string());
             }
         };
@@ -304,26 +300,42 @@ impl AppReviewRunner {
                 _ => Self::failure("review result was not applied"),
             }
         } else {
-            let _ = self.plans.update_reviews(scope, &mut |_, steps| {
+            match self.plans.update_reviews(scope, &mut |_, steps| {
                 verdict::fail(steps, item_id);
                 Ok(())
-            });
-            Self::failure("reviewer produced no valid verdict")
+            }) {
+                Ok(_) => Self::failure("reviewer produced no valid verdict"),
+                Err(error) => Self::failure(error.to_string()),
+            }
         };
         match session.dispose() {
-            Ok(()) => tracing::info!("review.session_disposed"),
+            Ok(()) => tracing::debug!("review.session_disposed"),
             Err(error) => tracing::warn!(
                 code = thinkrail_core::ErrorCode::code(&error),
                 "review.dispose_failed"
             ),
         }
-        self.router.release(&reviewer_chat);
-        match fs::remove_dir_all(support) {
-            Ok(()) => tracing::info!("review.cleanup_finished"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => tracing::warn!("review.cleanup_failed"),
-        }
         result
+    }
+}
+
+/// Owns routing and generated support files across every early-return path.
+struct ReviewResources<'a> {
+    router: &'a dyn ModelRouter,
+    chat: &'a ChatId,
+    support: PathBuf,
+}
+
+impl Drop for ReviewResources<'_> {
+    fn drop(&mut self) {
+        self.router.release(self.chat);
+        match fs::remove_dir_all(&self.support) {
+            Ok(()) => tracing::debug!("review.cleanup_finished"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(code = "REVIEW_CLEANUP_FAILED", kind = ?error.kind(), "review.cleanup_failed")
+            }
+        }
     }
 }
 

@@ -7,7 +7,7 @@ use thinkrail_core::{
     EffectiveMcpServer, Error, McpOrigin, McpScope, McpServer, McpServerId, McpServerInput,
     McpService, ProjectId, Result,
 };
-use tracing::info;
+use tracing::debug;
 use turso::Row;
 
 use crate::{
@@ -157,7 +157,7 @@ impl McpService for SqliteSettingsStore {
             )?;
             load(conn, &id)
         })?;
-        info!(server = %server.id, "mcp server created");
+        debug!(server = %server.id, "settings.mcp.created");
         Ok(server)
     }
 
@@ -191,7 +191,7 @@ impl McpService for SqliteSettingsStore {
             }
             load(conn, id)
         })?;
-        info!(server = %id, revision = server.revision, "mcp server updated");
+        debug!(server = %id, revision = server.revision, "settings.mcp.updated");
         Ok(server)
     }
 
@@ -204,7 +204,7 @@ impl McpService for SqliteSettingsStore {
             conn.execute("DELETE FROM mcp_servers WHERE id = ?1", (id.as_str(),))?;
             Ok(())
         })?;
-        info!(server = %id, "mcp server deleted");
+        debug!(server = %id, "settings.mcp.deleted");
         Ok(())
     }
 
@@ -231,7 +231,7 @@ impl McpService for SqliteSettingsStore {
             }
             Ok(())
         })?;
-        info!(server = %server, "mcp project override set");
+        debug!(server = %server, "settings.mcp.override_stored");
         Ok(())
     }
 }

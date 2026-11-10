@@ -41,6 +41,11 @@ fn initialized_subscriber_correlates_threads_and_lifecycle_fields() {
     second_root.finish("SUCCESS");
     handle.set_level(LogLevel::Info).unwrap();
     tracing::debug!(target: "thinkrail_test", "hidden at info");
+    let (info_trace, info_root) = TraceContext::root("test.info_failure", "ui");
+    info_root.span().in_scope(|| {
+        operation(&info_trace, "test.hidden_child", "service").finish("SUCCESS");
+    });
+    info_root.fail("TEST_FINAL_FAILURE");
     let dir = handle.dir().to_owned();
     drop(handle);
 
@@ -97,4 +102,18 @@ fn initialized_subscriber_correlates_threads_and_lifecycle_fields() {
             .iter()
             .any(|entry| entry.message == "hidden at info")
     );
+    let info_entries = of(&info_trace);
+    assert_eq!(
+        lifecycle(&info_entries, "test.info_failure"),
+        ["ENTRY", "ERROR"]
+    );
+    assert!(lifecycle(&info_entries, "test.hidden_child").is_empty());
+    assert_eq!(
+        info_entries
+            .iter()
+            .filter(|entry| entry.level == "ERROR")
+            .count(),
+        1
+    );
+    assert_eq!(info_entries[0].level, "INFO");
 }

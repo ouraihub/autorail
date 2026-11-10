@@ -160,15 +160,21 @@ impl TerminalPanel {
                     &[run],
                     None,
                 );
-                if let Err(error) = line.paint(
-                    origin,
-                    px(self.line_height),
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                ) {
-                    debug!(%error, "terminal cell paint failed");
+                if line
+                    .paint(
+                        origin,
+                        px(self.line_height),
+                        TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .is_err()
+                {
+                    debug!(
+                        code = "TERMINAL_CELL_PAINT_FAILED",
+                        "terminal.cell.paint_failed"
+                    );
                 }
             }
         }
@@ -209,15 +215,21 @@ impl TerminalPanel {
                 &[run],
                 None,
             );
-            if let Err(error) = line.paint(
-                cursor.origin,
-                px(self.line_height),
-                TextAlign::Left,
-                None,
-                window,
-                cx,
-            ) {
-                debug!(%error, "terminal composition paint failed");
+            if line
+                .paint(
+                    cursor.origin,
+                    px(self.line_height),
+                    TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                )
+                .is_err()
+            {
+                debug!(
+                    code = "TERMINAL_COMPOSITION_PAINT_FAILED",
+                    "terminal.composition.paint_failed"
+                );
             }
         }
     }

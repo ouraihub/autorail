@@ -1170,7 +1170,6 @@ fn newer_schema_is_corrupt_and_left_untouched() {
     let before = snapshot(&data);
     let error = SqliteSettingsStore::open(&data.join(DB)).unwrap_err();
     assert_eq!(error.kind(), Some(ErrorKind::Corrupt), "{error}");
-    assert!(error.to_string().contains("更新版本"), "{error}");
     assert_eq!(snapshot(&data), before, "file bytes unchanged");
 }
 
@@ -1181,5 +1180,48 @@ fn unwritable_location_is_invalid() {
     fs::write(&blocker, b"not a directory").unwrap();
     let error = SqliteSettingsStore::open(&blocker.join(DB)).unwrap_err();
     assert_eq!(error.kind(), Some(ErrorKind::Invalid), "{error}");
-    assert!(error.to_string().contains("--data-dir"), "{error}");
+    assert!(
+        !error.to_string().contains(blocker.to_str().unwrap()),
+        "{error}"
+    );
+}
+
+#[test]
+fn transaction_commit_failure_is_returned_and_does_not_persist_writes() {
+    let directory = TempDir::new().unwrap();
+    let store = open(&directory);
+    let result = store.write(|conn| {
+        conn.execute(
+            "INSERT INTO app_prefs (key, value) VALUES ('commit-test', 'true')",
+            (),
+        )?;
+        conn.execute("ROLLBACK", ())?;
+        Ok(())
+    });
+    kind(result, ErrorKind::External);
+    assert_eq!(
+        store
+            .read(|conn| conn.int(
+                "SELECT COUNT(*) FROM app_prefs WHERE key = 'commit-test'",
+                ()
+            ))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn database_failure_does_not_expose_sql_or_user_paths() {
+    let directory = TempDir::new().unwrap();
+    let store = open(&directory);
+    let error = store
+        .read(|conn| conn.execute("SELECT * FROM private_table_sentinel", ()))
+        .unwrap_err();
+    assert_eq!(error.kind(), Some(ErrorKind::External));
+    assert!(!error.to_string().contains("private_table_sentinel"));
+    let blocker = directory.path().join("private_directory_sentinel");
+    fs::write(&blocker, b"not a directory").unwrap();
+    let error = SqliteSettingsStore::open(&blocker.join(DB)).unwrap_err();
+    assert_eq!(error.kind(), Some(ErrorKind::Invalid));
+    assert!(!error.to_string().contains("private_directory_sentinel"));
 }

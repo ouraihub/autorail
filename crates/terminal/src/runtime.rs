@@ -16,7 +16,7 @@ use thinkrail_core::{
     Attached, Error, ErrorKind, GridSize, Result, Shell, TerminalEvent, TerminalRuntimeId,
     TerminalSink, WorkspaceId,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{decode::decode_utf8, shell};
 
@@ -100,8 +100,8 @@ fn pty_size(size: GridSize) -> PtySize {
     }
 }
 
-fn pty_error(what: &str, error: impl std::fmt::Display) -> Error {
-    Error::external(format!("{what}：{error}"))
+fn pty_error(what: &str, _error: impl std::fmt::Display) -> Error {
+    Error::external(what)
 }
 
 /// The worktree as a shell expects it: Windows verbatim prefixes (`\\?\`) stripped, else shells
@@ -137,7 +137,7 @@ impl Runtime {
         let mut child = pair
             .slave
             .spawn_command(command)
-            .map_err(|e| pty_error(&format!("无法启动终端 shell {program}"), e))?;
+            .map_err(|e| pty_error("无法启动终端 shell", e))?;
         drop(pair.slave);
         let killer = child.clone_killer();
         let id = TerminalRuntimeId::generate();
@@ -151,7 +151,9 @@ impl Runtime {
         });
         let waiter = {
             let shared = shared.clone();
+            let span = tracing::Span::current();
             thread::spawn(move || {
+                let _guard = span.enter();
                 let status = child.wait();
                 let code = status
                     .as_ref()
@@ -162,24 +164,31 @@ impl Runtime {
                 // Closing the master is what ends the reader on Windows ConPTY.
                 drop(shared.master.lock().take());
                 match status {
-                    Ok(_) => info!(runtime = %shared.id, exit_code = ?code, "terminal exited"),
-                    Err(error) => warn!(runtime = %shared.id, %error, "terminal wait failed"),
+                    Ok(_) => {
+                        info!(runtime = %shared.id, exit_code = ?code, "terminal.runtime.exited")
+                    }
+                    Err(_) => {
+                        warn!(runtime = %shared.id, code = "EXTERNAL", "terminal.runtime.wait_failed")
+                    }
                 }
             })
         };
         let (tx, rx) = mpsc::sync_channel::<TerminalEvent>(QUEUE_CHUNKS);
         let sink = request.sink;
         // Detached: a sink that never returns must not be able to stall shutdown.
+        let span = tracing::Span::current();
         thread::spawn(move || {
+            let _guard = span.enter();
             for event in rx {
                 sink.publish(event);
             }
         });
         let reader = {
             let shared = shared.clone();
-            thread::spawn(move || read_loop(reader, &shared, &tx))
+            let span = tracing::Span::current();
+            thread::spawn(move || span.in_scope(|| read_loop(reader, &shared, &tx)))
         };
-        info!(runtime = %id, workspace = %request.workspace, shell = ?request.shell, "terminal started");
+        info!(runtime = %id, workspace = %request.workspace, shell = ?request.shell, "terminal.runtime.started");
         Ok(Self {
             id,
             workspace: request.workspace,
@@ -261,9 +270,12 @@ impl Runtime {
                 None => Error::timeout("终端进程未在 5 秒内退出"),
             });
         }
-        join(&self.waiter, "waiter");
+        join(&self.waiter);
         drop(self.shared.master.lock().take());
-        join(&self.reader, "reader");
+        join(&self.reader);
+        if self.shared.exit_code.lock().is_none() {
+            return Err(Error::external("无法确认终端进程退出状态"));
+        }
         Ok(())
     }
 }
@@ -271,7 +283,7 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         if let Err(error) = self.shutdown() {
-            warn!(runtime = %self.id, code = %thinkrail_core::ErrorCode::code(&error), "terminal shutdown on drop failed");
+            warn!(runtime = %self.id, code = %thinkrail_core::ErrorCode::code(&error), "terminal.runtime.drop_cleanup_failed");
         }
     }
 }
@@ -280,11 +292,11 @@ fn closed() -> Error {
     Error::new(ErrorKind::SessionClosed, "终端已退出，请重新连接")
 }
 
-fn join(handle: &Mutex<Option<JoinHandle<()>>>, name: &str) {
+fn join(handle: &Mutex<Option<JoinHandle<()>>>) {
     if let Some(handle) = handle.lock().take()
-        && handle.join().is_err()
+        && let Err(payload) = handle.join()
     {
-        warn!(thread = name, "terminal thread panicked");
+        std::panic::resume_unwind(payload);
     }
 }
 
@@ -297,7 +309,10 @@ fn read_loop(mut reader: Box<dyn Read + Send>, shared: &Shared, tx: &SyncSender<
             Ok(count) => (count, false),
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                debug!(runtime = %shared.id, %error, "terminal read ended");
+                if !shared.exited.load(Ordering::Acquire) && !shared.stopped.load(Ordering::Acquire)
+                {
+                    warn!(runtime = %shared.id, code = "IO", io_kind = ?error.kind(), "terminal.runtime.read_failed");
+                }
                 (0, true)
             }
         };
@@ -333,6 +348,9 @@ fn read_loop(mut reader: Box<dyn Read + Send>, shared: &Shared, tx: &SyncSender<
         && Instant::now() < deadline
     {
         thread::sleep(POLL);
+    }
+    if !shared.exited.load(Ordering::Acquire) && !shared.stopped.load(Ordering::Acquire) {
+        warn!(runtime = %shared.id, code = "TIMEOUT", limit_ms = EXIT_TIMEOUT.as_millis() as u64, "terminal.runtime.exit_unconfirmed");
     }
     let exit_code = *shared.exit_code.lock();
     send(

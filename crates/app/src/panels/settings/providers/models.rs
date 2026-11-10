@@ -29,6 +29,8 @@ use super::{ProvidersPage, avatar, error_text};
 use crate::strings::settings_providers as s;
 
 mod discovery;
+#[cfg(test)]
+mod discovery_tests;
 mod editor;
 mod picker;
 

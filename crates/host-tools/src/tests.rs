@@ -417,6 +417,52 @@ fn a_cancelled_call_is_withdrawn_and_gets_no_reply() {
 }
 
 #[test]
+fn mcp_worker_reply_write_failure_reaches_the_stdio_owner() {
+    struct BrokenOutput;
+    impl std::io::Write for BrokenOutput {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let frame = json!({"jsonrpc":"2.0", "id":1, "method":"tools/call",
+        "params":{"name":"t", "arguments":{}}});
+    let error = mcp::serve(
+        &mut Cursor::new(frame.to_string()),
+        BrokenOutput,
+        Arc::new(Fake::default()),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn mcp_worker_panic_is_not_converted_to_a_successful_close() {
+    struct PanickingBackend;
+    impl mcp::Backend for PanickingBackend {
+        fn list(&self) -> std::result::Result<Vec<HostToolSpec>, String> {
+            Ok(Vec::new())
+        }
+        fn call(&self, _: &str, _: Value) -> std::result::Result<HostToolResult, String> {
+            panic!("worker invariant failed")
+        }
+        fn cancel(&self) {}
+    }
+    let frame = json!({"jsonrpc":"2.0", "id":1, "method":"tools/call",
+        "params":{"name":"t", "arguments":{}}});
+    let result = std::panic::catch_unwind(|| {
+        mcp::serve(
+            &mut Cursor::new(frame.to_string()),
+            Shared::default(),
+            Arc::new(PanickingBackend),
+        )
+    });
+    assert!(result.is_err());
+}
+
+#[test]
 fn pipe_bridge_scopes_calls_by_token_and_rejects_strangers() {
     let f = fixture();
     let handler: Arc<dyn HostToolHandler> = Arc::new(f.tools.clone());

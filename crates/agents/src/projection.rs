@@ -167,6 +167,7 @@ impl Projection {
             .trace
             .as_ref()
             .map(|trace| trace.context.trace_id().to_owned());
+        self.log_error_boundary(&error);
         self.finish_turn_error(&error.code);
         self.snapshot.last_error = Some(error.clone());
         let revision = self.bump();
@@ -178,6 +179,10 @@ impl Projection {
     }
 
     pub(crate) fn cancel_turn(&mut self, reason: &'static str) {
+        let _entered = self
+            .trace
+            .as_ref()
+            .map(|trace| trace.enter("agent.turn.cancel"));
         if !self.running {
             return;
         }
@@ -188,6 +193,10 @@ impl Projection {
         tracing::info!(chat_id = %self.snapshot.id, reason, "agent.turn.cancelled");
     }
     pub(crate) fn finish_turn_error(&mut self, code: &str) {
+        let _entered = self
+            .trace
+            .as_ref()
+            .map(|trace| trace.enter("agent.turn.fail"));
         if !self.running {
             return;
         }
@@ -195,7 +204,7 @@ impl Projection {
         if let Some(operation) = self.turn_operation.take() {
             operation.fail(code);
         }
-        tracing::warn!(chat_id = %self.snapshot.id, error_code = code, "agent.turn.failed");
+        tracing::debug!(chat_id = %self.snapshot.id, error_code = code, "agent.turn.failed");
     }
 
     pub(crate) fn contains(&self, id: &str) -> bool {

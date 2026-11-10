@@ -130,9 +130,19 @@ impl AppearancePage {
                     multiple: true,
                     prompt: None,
                 });
-                cx.spawn(async move |cx| {
-                    if let Ok(Ok(Some(paths))) = picked.await {
-                        cx.update(|cx| AppearanceState::add_fonts(paths, cx));
+                cx.spawn(async move |cx| match picked.await {
+                    Ok(Ok(Some(paths))) => cx.update(|cx| AppearanceState::add_fonts(paths, cx)),
+                    Ok(Ok(None)) => {}
+                    Ok(Err(_)) | Err(_) => {
+                        tracing::error!(
+                            code = "FONT_PICKER_FAILED",
+                            "appearance.fonts.picker_failed"
+                        );
+                        cx.update(|cx| {
+                            cx.global_mut::<AppearanceState>().error =
+                                Some("字体选择失败 [FONT_PICKER_FAILED]");
+                            cx.refresh_windows();
+                        });
                     }
                 })
                 .detach();

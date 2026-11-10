@@ -63,15 +63,44 @@ fn font_kind(name: &str) -> Option<FontKind> {
 
 /// Visible entry names in `dir` that `keep` accepts, sorted; a missing folder is empty.
 fn names(dir: &Path, keep: impl Fn(&str) -> bool) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(code = "APPEARANCE_SCAN_FAILED", kind = ?error.kind(), "appearance.directory.scan_failed");
+            return Vec::new();
+        }
     };
-    let mut names: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| !name.starts_with('.') && keep(name))
-        .collect();
+    let mut failures = 0usize;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                failures += 1;
+                continue;
+            }
+        };
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => {
+                if let Ok(name) = entry.file_name().into_string()
+                    && !name.starts_with('.')
+                    && keep(&name)
+                {
+                    names.push(name);
+                }
+            }
+            Ok(_) => {}
+            Err(_) => failures += 1,
+        }
+    }
+    if failures > 0 {
+        tracing::warn!(
+            code = "APPEARANCE_SCAN_PARTIAL",
+            count = failures,
+            "appearance.directory.scan_partial"
+        );
+    }
     names.sort();
     names
 }
@@ -205,8 +234,11 @@ pub fn copy_font(
             }
             fs::rename(&temp, dir.join(&file_name)).map_err(|e| CopyProblem::File(unreadable(&e)))
         });
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
+    if result.is_err()
+        && let Err(error) = fs::remove_file(&temp)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(code = "FONT_TEMP_CLEANUP_FAILED", kind = ?error.kind(), "appearance.font.cleanup_failed");
     }
     result.map(|()| file_name)
 }

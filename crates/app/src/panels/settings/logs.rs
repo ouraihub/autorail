@@ -29,7 +29,6 @@ use thinkrail_ui::{
     components::{Segment, label},
     metrics::{radius, space, text},
 };
-use tracing::warn;
 
 use crate::{
     state::{AppState, run},
@@ -135,7 +134,12 @@ impl LogsPage {
                 self.entries = entries;
                 self.read_error = None;
             }
-            Err(error) => self.read_error = Some(error.to_string()),
+            Err(error) => {
+                if self.read_error.is_none() {
+                    tracing::error!(code = "LOG_READ_FAILED", kind = ?error.kind(), "app.logs.read_failed");
+                }
+                self.read_error = Some("日志读取失败 [LOG_READ_FAILED]".into());
+            }
         }
         cx.notify();
     }
@@ -167,9 +171,10 @@ impl LogsPage {
             cx,
             move || {
                 let prefs = services.app_prefs.set_log_level(level)?;
-                if let Err(error) = services.log.set_level(level) {
-                    warn!(error = %format!("{error:#}"), "log level not switched");
-                }
+                services
+                    .log
+                    .set_level(level)
+                    .map_err(|_| Error::external("日志级别切换失败 [LOG_LEVEL_APPLY_FAILED]"))?;
                 Ok(prefs)
             },
             |this, result, cx| match result {

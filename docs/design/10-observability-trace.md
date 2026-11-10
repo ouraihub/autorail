@@ -1,10 +1,10 @@
 # Native 可检索日志与 TraceContext 设计
 
-状态：Native 追踪入口、Agent/HostTool 边界、ReviewRunner 与日志页实施中；运行证据见本文末尾。
+当前实现合同与新增功能要求见[日志与异常规范](../日志与异常规范.md)，历史调研不代表已验收范围。root/child API 已按 LumaKit 当前 operation guard 切换；整改与实测结果记录在构建文档。
 
 ## 1. 问题
 
-Native 当前有全局 `tracing` subscriber 和 `observability::op()`，但 `op()` 主要包住 UI 发起的单个后台任务。日志能看到 `op{id, at}`，却不能稳定回答：
+初期 Native 使用 `observability::op()` 包住单个 UI 后台任务；现已移除该 API，以下问题解释本设计的动机，不能作为继续使用旧 API 的理由：
 
 - 哪个用户动作触发了这次 host tool 调用？
 - 同一个操作经过了哪个 app service、router、workspace、engine？
@@ -51,7 +51,7 @@ MES.Backend 的目标是 Controller → Service → Repository 全链路同一 T
 | HTTP request | UI action、host tool call、engine turn、review run |
 | `TraceMiddleware` | `TraceContext::root()` / `observability::operation()` |
 | `Activity.Current` | 当前线程/任务显式持有的 `TraceContext` + tracing span |
-| `ILogger.BeginScope` | tracing span fields；跨线程通过 `TraceContext::enter()` 恢复 |
+| `ILogger.BeginScope` | tracing span fields；跨线程在实际执行片段进入 `OperationGuard::span()` |
 | Controller | ChatPanel handler、HostToolHandler、bridge request handler |
 | Service | app service、ReviewRunner、routing、workspace operation |
 | Repository | settings-store、plan-review store、git operation |
@@ -65,23 +65,12 @@ MES 当前的价值在于统一字段和跨层传播；Native 不照搬 C# Dispa
 `crates/observability` 复用固定 Git revision 的 `lumakit-observability`，不复制第二套 ID/operation 实现：
 
 ```rust
-impl TraceContext {
-    pub fn root(operation: &'static str) -> Result<(Self, tracing::Span), String>;
-    pub fn child(&self, operation: &'static str) -> tracing::Span;
-    pub fn trace_id(&self) -> &str;
-}
+let (trace, root) = TraceContext::root("ui.background", "ui");
+let child = operation(&trace, "provider.models.list", "external");
+// 工作在 child.span() 内执行；完成后根据真实结果 finish/fail/cancel/timeout。
 ```
 
-随机源失败只记录追踪不可用，不重试生成、不伪造 ID，也不让日志故障阻断业务。跨线程持有并重新进入真实 span；子 span 的可见级别不得使 INFO 事件失去根关联。
-
-实现约定：
-
-- `trace_id` 使用 32 个小写十六进制字符；
-- root trace id 由 `uuid` 或随机源生成，不使用自增数字作为对外诊断 id；
-- span id 由 tracing subscriber 生成；若底层 subscriber 没有 span id，也必须保留 trace id；
-- `TraceContext` 可安全 clone，禁止全局可变“当前 trace id”；
-- `TraceGuard` 只负责进入/退出 span，不负责业务状态；
-- `operation()` 是现有 `op()` 的兼容替代或扩展，不能同时产生两个互相独立的根 id。
+TraceId 为 32 位小写十六进制；创建不返回 Result，没有随机源降级分支。SpanId 由 tracing 分配。root 保持独立，子操作继承同一 TraceId，不存在 `child()` 旧 API 或兼容别名。跨线程必须捕获 span，在消费者执行处进入；纯函数不机械增加 span。
 
 建议日志字段：
 
@@ -100,7 +89,7 @@ error_code
 duration_ms
 ```
 
-字段名使用 snake_case，便于 text/json sink 和 grep 查询。
+业务字段使用 snake_case；`GrepFormat` 统一映射保留字段为 TraceId/SpanId/ParentSpanId/Layer/ME/EV/RT/Result/Error/Reason/Limit/SourceFile/SourceLine，业务日志不能伪装生命周期。
 
 ## 5. 顶层 Trace 根
 
@@ -120,7 +109,7 @@ request_kind=<caller operation>
 - completion callback；
 - 成功、失败或 view 已关闭终态。
 
-现有 `op{id, at}` 字段保留一段迁移期，但新增 `trace_id` 后不再把自增 op id 当作全链路主键。
+旧 `op{id, at}` 已删除，没有迁移兼容分支；源码定位由 SourceFile/SourceLine 保留。
 
 ### 5.2 Host tool call
 
@@ -232,27 +221,25 @@ CANCEL level=info operation/component + reason
 
 参数摘要必须脱敏：
 
-- API key/token/password/secret → 不记录；
-- prompt → 只记录长度和 hash（如确有需要）；
-- 文件内容 → 只记录路径、大小、hash；
-- 大型 JSON → 只记录字段名/计数/稳定摘要；
-- 用户输入 → 默认不记录全文。
+- API key/token/password/secret、prompt、文件内容、原始响应、SQL、用户绝对路径 → 所有级别禁止；
+- 文件/模型/工具上下文优先内部 ID、计数与协议枚举；
+- 用户正文不以 hash 作为通用日志替代；只有明确诊断用途才可关联有限摘要；
+- panic payload 不输出原文，保留安全分类、位置、关联哈希和调用栈。
 
 Rust 代码优先使用结构化字段：
 
 ```rust
-tracing::info!(
-    trace_id = %trace.trace_id,
-    operation = "workspace.git_commit",
+tracing::debug!(
     workspace_id = %workspace,
     duration_ms,
-    "operation completed"
+    code = "GIT_COMMAND_FAILED",
+    "workspace.git.completed"
 );
 ```
 
 ## 9. 实施顺序
 
-1. 在 observability 增加 `TraceContext`、root/child span 和稳定字段格式；
+1. 在 observability 复用 `TraceContext` / `operation`、生命周期 guard 与 GrepFormat/SpanFields；
 2. 改造 `state::run()`，让 context 跨 background job 和 completion callback 传播；
 3. 改造 HostToolHandler、bridge、MCP、OMP worker，给每次 tool call 建立/继承 trace；
 4. 改造 agent process/session 边界，记录 start/request/reply/exit/cleanup；
@@ -260,7 +247,7 @@ tracing::info!(
 6. 改造 workspace/routing/plan-review/settings-store 的跨边界操作日志；
 7. 日志 tail parser 增加 trace/span/operation 字段；
 8. 日志页增加 trace filter/copy；
-9. 为每个公共边界增加一条 trace propagation 测试；
+9. 为真实行为边界验证传播、失败、取消、超时和脱敏，不测试转发/源码字符串；
 10. 最后删除或降级旧 `op{id}` 专用解析逻辑。
 
 ## 10. 验收

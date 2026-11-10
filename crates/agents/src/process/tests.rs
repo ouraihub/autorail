@@ -93,3 +93,18 @@ fn routing_env_is_applied_as_launch_variables() {
         assert!(envs.contains(&(name.clone().into(), Some(value))), "{name}");
     }
 }
+
+#[test]
+fn stderr_read_failure_marks_capture_closed_without_discarding_the_tail() {
+    struct FailedReader;
+    impl std::io::Read for FailedReader {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        }
+    }
+    let tail = Mutex::new(b"existing diagnostics".to_vec());
+    let life = (Mutex::new(Life::default()), Condvar::new());
+    streams::read_stderr(FailedReader, &tail, &life);
+    assert!(life.0.lock().stderr_closed);
+    assert_eq!(&*tail.lock(), b"existing diagnostics");
+}

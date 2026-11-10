@@ -5,7 +5,7 @@ use thinkrail_core::{
     ContentBlock, Error, Interaction, InteractionAnswer, InteractionKind, InteractionOption,
     Result, SessionSnapshot,
 };
-use tracing::debug;
+use tracing::warn;
 
 use super::{DshSession, str_of};
 use crate::session::new_id;
@@ -78,10 +78,16 @@ impl DshSession {
     pub(super) fn cancel_permissions(&self) {
         let open: Vec<Value> = self.permissions.lock().drain().map(|(_, id)| id).collect();
         let had = !self.live.state.lock().take_interactions().is_empty();
-        for rpc_id in open {
-            if let Err(error) = self.reply_permission(rpc_id, json!({"outcome": "cancelled"})) {
-                debug!(%error, "cannot cancel permission request");
-            }
+        let failed = open
+            .into_iter()
+            .map(|rpc_id| self.reply_permission(rpc_id, json!({"outcome": "cancelled"})))
+            .filter(Result::is_err)
+            .count();
+        if failed != 0 {
+            warn!(
+                failed_count = failed,
+                "agent.permission.cancel_cleanup_failed"
+            );
         }
         if had {
             self.live.state.lock().publish();

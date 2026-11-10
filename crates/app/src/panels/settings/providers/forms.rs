@@ -88,7 +88,12 @@ pub(super) fn save<V: Render>(
                         page.select(id, cx);
                     }
                 });
-                let _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
+                if handle
+                    .update(cx, |_, window, cx| window.close_dialog(cx))
+                    .is_err()
+                {
+                    tracing::debug!("providers.form.window_closed");
+                }
             }
             Err(error) => {
                 failed(view, error.to_string());

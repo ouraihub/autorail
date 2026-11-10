@@ -1250,10 +1250,7 @@ fn probe_classifies_failures() {
         )),
         ErrorKind::External,
     );
-    assert!(
-        message.contains("服务器拒绝了该 API 密钥。") && !message.contains("sk-test"),
-        "{message}"
-    );
+    assert!(!message.contains("sk-test"), "{message}");
 
     let failing = upstream(Reply::Json(
         500,
@@ -1267,9 +1264,7 @@ fn probe_classifies_failures() {
         ErrorKind::External,
     );
     assert!(
-        message.contains("服务器返回 HTTP 500。")
-            && message.contains("boom")
-            && !message.contains("sk-test"),
+        !message.contains("boom") && !message.contains("sk-test"),
         "{message}"
     );
 
@@ -1283,38 +1278,32 @@ fn probe_classifies_failures() {
         value: "sensitive-deployment-header".into(),
     });
     let message = kind(probe(&fx).check(&with_header, "m"), ErrorKind::External);
-    assert!(!message.contains("sensitive-deployment-header"));
+    assert!(!message.contains("echo") && !message.contains("sensitive-deployment-header"));
 
     let html = upstream(Reply::Json(200, "<html>nope</html>"));
     let message = kind(
         probe(&fx).list_models(&target(Protocol::OpenaiChat, html.url(""), None)),
         ErrorKind::Protocol,
     );
-    assert!(
-        message.contains("这不是兼容 OpenAI 或 Anthropic 的模型列表响应。"),
-        "{message}"
-    );
+    assert!(!message.contains("<html>"), "{message}");
 
     let empty = upstream(Reply::Json(200, r#"{"data":[]}"#));
-    let message = kind(
+    kind(
         probe(&fx).list_models(&target(Protocol::OpenaiChat, empty.url(""), None)),
         ErrorKind::External,
     );
-    assert!(message.contains("服务器未返回任何模型。"), "{message}");
 
     let slow = upstream(Reply::Delay(Duration::from_secs(2)));
     let quick = Probe::with_timeout(fx.store.clone(), Duration::from_millis(200));
-    let message = kind(
+    kind(
         quick.list_models(&target(Protocol::OpenaiChat, slow.url(""), None)),
         ErrorKind::Timeout,
     );
-    assert!(message.contains("服务器未及时响应。"), "{message}");
 
-    let message = kind(
+    kind(
         probe(&fx).list_models(&target(Protocol::OpenaiChat, closed_port(), None)),
         ErrorKind::External,
     );
-    assert!(message.contains("无法连接到服务器。"), "{message}");
     kind(
         probe(&fx).list_models(&target(Protocol::OpenaiChat, "not a url".into(), None)),
         ErrorKind::Invalid,

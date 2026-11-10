@@ -171,10 +171,7 @@ impl TerminalPanel {
                     return;
                 }
                 if byte_offset > *offset {
-                    debug!(
-                        gap = byte_offset - *offset,
-                        "terminal output gap; reattaching for replay"
-                    );
+                    debug!(gap = byte_offset - *offset, "terminal.output.gap");
                     if let Some(key) = self.selected.clone() {
                         self.attach(key, cx);
                     }

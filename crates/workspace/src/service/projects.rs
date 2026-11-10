@@ -2,8 +2,11 @@
 
 use std::{fs, path::Path};
 
-use thinkrail_core::{Error, Project, ProjectId, Result, Workspace, WorkspaceId, WorkspaceKind};
-use tracing::info;
+use thinkrail_core::{
+    Error, ErrorCode, ErrorKind, IoContext, Project, ProjectId, Result, Workspace, WorkspaceId,
+    WorkspaceKind,
+};
+use tracing::{debug, warn};
 
 use super::{GitWorkspaceService, display_name, now, same_path, slug};
 use crate::{git, registry::StoredProject};
@@ -23,15 +26,26 @@ impl GitWorkspaceService {
     }
 
     pub(super) fn is_repository(&self, path: &Path) -> bool {
-        git::toplevel(path).is_ok()
+        match git::toplevel(path) {
+            Ok(_) => true,
+            Err(error) if error.kind() == Some(ErrorKind::Invalid) => false,
+            Err(error) => {
+                warn!(code = error.code(), "workspace.repository.probe_failed");
+                false
+            }
+        }
     }
 
     pub(super) fn init_project(&self, path: &Path) -> Result<Project> {
         let requested = fs::canonicalize(path).map_err(|_| Error::not_found("文件夹"))?;
         // Already inside a repository: open it rather than nest a second one.
-        if git::toplevel(&requested).is_err() {
-            git::bootstrap(&requested)?;
-            info!(path = %requested.display(), "git repository initialized");
+        match git::toplevel(&requested) {
+            Ok(_) => {}
+            Err(error) if error.kind() == Some(ErrorKind::Invalid) => {
+                git::bootstrap(&requested)?;
+                debug!("workspace.repository.initialized");
+            }
+            Err(error) => return Err(error),
         }
         self.open_project(&requested)
     }
@@ -39,32 +53,32 @@ impl GitWorkspaceService {
     pub(super) fn create_project(&self, parent: &Path, name: &str) -> Result<Project> {
         let name = name.trim();
         if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0', ':']) {
-            return Err(Error::invalid(format!("项目文件夹名不合法：{name}")));
+            return Err(Error::invalid("项目文件夹名不合法"));
         }
-        fs::create_dir_all(parent)
-            .map_err(|e| Error::invalid(format!("无法创建位置 {}：{e}", parent.display())))?;
+        fs::create_dir_all(parent).context("创建项目位置")?;
         let path = parent.join(name);
         let created = match fs::read_dir(&path) {
             Ok(mut entries) => {
                 if entries.next().is_some() {
-                    return Err(Error::conflict(format!(
-                        "文件夹已存在且不为空：{}",
-                        path.display()
-                    )));
+                    return Err(Error::conflict("文件夹已存在且不为空"));
                 }
                 false
             }
-            Err(_) => {
-                fs::create_dir(&path)
-                    .map_err(|e| Error::invalid(format!("无法创建 {}：{e}", path.display())))?;
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&path).context("创建项目文件夹")?;
                 true
             }
+            Err(error) => return Err(error).context("读取项目文件夹"),
         };
         let opened = git::bootstrap(&path).and_then(|()| self.open_project(&path));
         if opened.is_err() {
-            let _ = fs::remove_dir_all(path.join(".git"));
-            if created {
-                let _ = fs::remove_dir(&path);
+            if let Err(error) = fs::remove_dir_all(path.join(".git"))
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!(code = "IO", io_kind = ?error.kind(), "workspace.project.repository_cleanup_failed");
+            }
+            if created && let Err(error) = fs::remove_dir(&path) {
+                warn!(code = "IO", io_kind = ?error.kind(), "workspace.project.directory_cleanup_failed");
             }
         }
         opened
@@ -122,7 +136,7 @@ impl GitWorkspaceService {
             });
             Ok(project)
         })?;
-        info!(project = %project.id, "project opened");
+        debug!(project = %project.id, "workspace.project.opened");
         Ok(project)
     }
 

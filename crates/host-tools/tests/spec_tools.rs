@@ -103,6 +103,26 @@ impl Fixture {
     }
 }
 
+#[test]
+fn incomplete_index_refuses_reads_and_mutations_instead_of_using_partial_specs() {
+    let f = fixture();
+    f.create("a.md", "a", json!({}));
+    fs::write(f.root.join("unreadable.md"), [0xff, 0xfe]).unwrap();
+    assert!(f.call("spec_validate", json!({})).is_error);
+    assert!(f.call("spec_get", json!({"id": "a"})).is_error);
+    assert!(f.call("spec_delete", json!({"id": "a"})).is_error);
+    assert!(f.root.join("a.md").is_file());
+    assert!(
+        f.call(
+            "spec_create",
+            json!({"path": "b.md", "id": "b",
+        "type": "module-design", "title": "B"})
+        )
+        .is_error
+    );
+    assert!(!f.root.join("b.md").exists());
+}
+
 fn spec(id: &str, extra: &str) -> String {
     format!("---\nid: {id}\ntype: module-design\ntitle: {id}\n{extra}---\n")
 }

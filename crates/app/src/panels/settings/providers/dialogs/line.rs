@@ -79,7 +79,7 @@ impl LineForm {
 }
 
 impl Render for LineForm {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = theme::roles(cx);
         let protocol = protocol_menu(
             "line-protocol",
@@ -89,7 +89,6 @@ impl Render for LineForm {
             |form: &mut LineForm, p| form.protocol = p,
         );
         let url = self.url.read(cx).value().trim().to_owned();
-        let _ = window;
         ui::form_fields([])
             .child(ui::field(s::PROTOCOL, protocol, &r))
             .child(ui::field(s::BASE_URL, Input::new(&self.url), &r))

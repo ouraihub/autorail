@@ -23,7 +23,7 @@ use thinkrail_routing::{Gateway, Probe, Router};
 use thinkrail_settings_store::SqliteSettingsStore;
 use thinkrail_terminal::PtyTerminalService;
 use thinkrail_workspace::GitWorkspaceService;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, warn};
 mod review;
 
 /// PTY output waits here when the UI falls behind (backpressure on the reader thread).
@@ -138,7 +138,7 @@ impl Services {
     pub fn support_dir(&self, chat: &ChatId) -> thinkrail_core::Result<PathBuf> {
         let path = self.engine_support_dir.join(chat.as_str());
         std::fs::create_dir_all(&path).map_err(|source| Error::Io {
-            context: format!("无法创建 Agent 辅助目录 {}", path.display()),
+            context: "无法创建 Agent 辅助目录".into(),
             source,
         })?;
         Ok(path)
@@ -151,7 +151,7 @@ impl Services {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(source) => Err(Error::Io {
-                context: format!("无法删除 Agent 辅助目录 {}", path.display()),
+                context: "无法删除 Agent 辅助目录".into(),
                 source,
             }),
         }
@@ -159,17 +159,17 @@ impl Services {
 }
 
 pub struct Channels {
-    pub sessions: async_channel::Receiver<SessionEvent>,
+    pub sessions: async_channel::Receiver<(tracing::Span, SessionEvent)>,
     pub reviews: async_channel::Receiver<(tracing::Span, ReviewEvent)>,
     pub session_sink: Arc<dyn SessionSink>,
-    pub terminals: async_channel::Receiver<TerminalEvent>,
-    pub plans: async_channel::Receiver<PlanScope>,
+    pub terminals: async_channel::Receiver<(tracing::Span, TerminalEvent)>,
+    pub plans: async_channel::Receiver<(tracing::Span, PlanScope)>,
 }
 
 /// Tells the UI which chat's plan to re-read after every host tool call.
 struct NotifyingTools {
     inner: HostTools,
-    changed: async_channel::Sender<PlanScope>,
+    changed: async_channel::Sender<(tracing::Span, PlanScope)>,
 }
 
 impl HostToolHandler for NotifyingTools {
@@ -184,28 +184,28 @@ impl HostToolHandler for NotifyingTools {
         arguments: Value,
     ) -> thinkrail_core::Result<HostToolResult> {
         let started = std::time::Instant::now();
-        let (_trace, root) =
-            thinkrail_observability::TraceContext::root("host_tool.call", "host_tool");
-        let call_span = tracing::info_span!(parent: root.span(), "host_tool", chat_id = %scope.chat,
-            workspace_id = %scope.workspace, tool = name);
+        // The engine/bridge owns the operation; retain its trace across this final boundary.
+        let call_span = tracing::debug_span!("host_tool", chat_id = %scope.chat,
+            workspace_id = %scope.workspace);
         let _entered = call_span.enter();
         let result = self.inner.call(scope, options, name, arguments);
         let ms = started.elapsed().as_millis();
         match &result {
-            Ok(reply) => {
-                if reply.is_error {
-                    root.fail("host_tool_error");
-                } else {
-                    root.finish("SUCCESS");
-                }
-                info!(ms, is_error = reply.is_error, "host_tool.called");
+            Ok(reply) if reply.is_error => {
+                error!(ms, code = "HOST_TOOL_FAILED", "host_tool.failed");
             }
+            Ok(_) => debug!(ms, "host_tool.finished"),
             Err(error) => {
-                root.fail(error.code());
-                warn!(ms, code = error.code(), "host_tool.failed");
+                error!(ms, code = error.code(), "host_tool.failed");
             }
         }
-        let _ = self.changed.try_send(scope.clone());
+        if self
+            .changed
+            .try_send((tracing::Span::current(), scope.clone()))
+            .is_err()
+        {
+            debug!("host_tool.notification_closed");
+        }
         result
     }
     fn cancel(&self, scope: &PlanScope) {
@@ -213,22 +213,26 @@ impl HostToolHandler for NotifyingTools {
     }
 }
 
-struct SessionChannel(async_channel::Sender<SessionEvent>);
+struct SessionChannel(async_channel::Sender<(tracing::Span, SessionEvent)>);
 
 impl SessionSink for SessionChannel {
     fn publish(&self, event: SessionEvent) {
-        if self.0.try_send(event).is_err() {
-            debug!("session event dropped: UI is gone");
+        if self.0.try_send((tracing::Span::current(), event)).is_err() {
+            debug!("app.session.delivery_closed");
         }
     }
 }
 
-struct TerminalChannel(async_channel::Sender<TerminalEvent>);
+struct TerminalChannel(async_channel::Sender<(tracing::Span, TerminalEvent)>);
 
 impl TerminalSink for TerminalChannel {
     fn publish(&self, event: TerminalEvent) {
-        if self.0.send_blocking(event).is_err() {
-            debug!("terminal event dropped: UI is gone");
+        if self
+            .0
+            .send_blocking((tracing::Span::current(), event))
+            .is_err()
+        {
+            debug!("app.terminal.delivery_closed");
         }
     }
 }
@@ -256,14 +260,11 @@ pub fn build(
     // Logging started at `info` before the database existed; now apply the stored level.
     match app_prefs.app_prefs() {
         Ok(stored) => {
-            if let Err(error) = log.set_level(stored.log_level) {
-                warn!(error = %format!("{error:#}"), "stored log level not applied");
+            if log.set_level(stored.log_level).is_err() {
+                warn!(code = "LOG_LEVEL_APPLY_FAILED", "app.logs.level_fallback");
             }
         }
-        Err(error) => warn!(
-            code = error.code(),
-            "app preferences not read; logging stays at info"
-        ),
+        Err(error) => warn!(code = error.code(), "app.preferences.fallback"),
     }
     let gateway = Gateway::new(providers.clone());
     let router: Arc<dyn ModelRouter> = Arc::new(Router::new(
@@ -327,12 +328,12 @@ fn start_host_tools(
     workspace: Arc<dyn WorkspaceService>,
     prefs: Arc<dyn ModelPrefService>,
     runner: Arc<dyn thinkrail_core::ReviewRunner>,
-    changed: async_channel::Sender<PlanScope>,
+    changed: async_channel::Sender<(tracing::Span, PlanScope)>,
 ) -> Option<Arc<HostToolsHub>> {
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            warn!(%error, "host tools disabled: own executable path unknown");
+            warn!(code = "EXECUTABLE_UNAVAILABLE", kind = ?error.kind(), "host_tools.disabled");
             return None;
         }
     };
@@ -349,7 +350,7 @@ fn start_host_tools(
             executable,
         })),
         Err(error) => {
-            warn!(%error, "host tools disabled: bridge did not start");
+            warn!(code = error.code(), "host_tools.disabled");
             None
         }
     }

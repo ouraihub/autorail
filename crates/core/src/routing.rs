@@ -213,8 +213,8 @@ pub struct DiscoveredModel {
     pub context_window: Option<u32>,
 }
 
-/// One key's "检测" result on one line. `error` is a redacted Chinese description: status code
-/// + first 200 chars of upstream message.
+/// One key's "检测" result on one line. `error` is a safe Chinese failure category, with the
+/// HTTP status when available; never upstream response text or credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyCheck {
