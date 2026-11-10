@@ -2,11 +2,12 @@
 
 use std::{
     sync::{atomic::Ordering, mpsc},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use serde_json::Value;
-use thinkrail_core::{Error, Result};
+use thinkrail_core::{Error, ErrorCode as _, Result};
+use thinkrail_observability::OperationGuard;
 use tracing::debug;
 
 use super::{Live, closed};
@@ -16,30 +17,37 @@ type Callback = Box<dyn FnOnce(Result<Value>) + Send>;
 pub(super) struct Waiter {
     callback: Callback,
     trace: std::sync::Arc<crate::trace::SessionTrace>,
-    span: tracing::Span,
-    started: Instant,
+    operation: OperationGuard,
 }
 
 impl Waiter {
     pub(super) fn complete(self, result: Result<Value>) {
-        let _session = self.trace.enter("agent.request.reply");
-        let _entered = self.span.enter();
-        tracing::info!(
-            duration_ms = self.started.elapsed().as_millis() as u64,
-            is_error = result.is_err(),
-            "agent.request.replied"
-        );
+        let _entered = self.trace.enter_operation(&self.operation);
+        let is_error = result.is_err();
+        if let Err(error) = &result {
+            self.operation.fail(error.code());
+        } else {
+            self.operation.finish("SUCCESS");
+        }
+        tracing::info!(is_error, "agent.request.replied");
         (self.callback)(result);
     }
 
     pub(super) fn close(self) {
-        let _session = self.trace.enter("agent.request.close");
-        let _entered = self.span.enter();
-        tracing::info!(
-            duration_ms = self.started.elapsed().as_millis() as u64,
-            "agent.request.closed"
-        );
+        let _entered = self.trace.enter_operation(&self.operation);
+        self.operation.fail("SESSION_CLOSED");
+        tracing::info!("agent.request.closed");
         (self.callback)(Err(closed()));
+    }
+
+    pub(super) fn cancel(self, reason: &'static str) {
+        let _entered = self.trace.enter_operation(&self.operation);
+        self.operation.cancel(reason);
+    }
+
+    pub(super) fn timeout(self, limit_ms: u64) {
+        let _entered = self.trace.enter_operation(&self.operation);
+        self.operation.timeout(limit_ms);
     }
 }
 
@@ -52,15 +60,13 @@ impl Live {
             return Err(closed());
         }
         let key = key.into();
-        let parent = self.process.trace.span("agent.request");
-        let span = tracing::info_span!(parent: &parent, "agent.request", request_id = %key);
+        let operation = self.process.trace.operation("agent.request", "external");
         pending.insert(
             key,
             Waiter {
                 callback,
                 trace: self.process.trace.clone(),
-                span,
-                started: Instant::now(),
+                operation,
             },
         );
         Ok(())
@@ -101,11 +107,7 @@ impl Live {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(waiter) = self.pending.lock().remove(key) {
-                    let _entered = waiter.span.enter();
-                    tracing::warn!(
-                        duration_ms = waiter.started.elapsed().as_millis() as u64,
-                        "agent.request.timeout"
-                    );
+                    waiter.timeout(timeout.as_millis().try_into().unwrap_or(u64::MAX));
                 }
                 Err(Error::timeout("Agent 没有在时限内响应"))
             }
@@ -148,7 +150,7 @@ impl Live {
     /// Drops the waiter for `key` (its command never reached the engine).
     pub(crate) fn forget(&self, key: &str) {
         if let Some(waiter) = self.pending.lock().remove(key) {
-            let _entered = waiter.span.enter();
+            waiter.cancel("not_sent");
             debug!("agent.request.not_sent");
         }
     }

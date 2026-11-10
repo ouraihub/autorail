@@ -9,21 +9,24 @@ impl Projection {
         if self.running == running {
             return;
         }
-        let _session = self
-            .trace
-            .as_ref()
-            .map(|trace| trace.enter("agent.turn.transition"));
         self.running = running;
         if running {
-            self.turn_span = self.trace.as_ref().map(|trace| trace.span("agent.turn"));
-            let _entered = self.turn_span.as_ref().map(tracing::Span::enter);
+            if let Some(trace) = &self.trace {
+                self.turn_operation = Some(trace.operation("agent.turn", "service"));
+            }
             tracing::info!(chat_id = %self.snapshot.id, "agent.turn.started");
             self.turn_started = Some(std::time::Instant::now());
         } else if let Some(started) = self.turn_started.take() {
-            let span = self.turn_span.take();
-            let _entered = span.as_ref().map(tracing::Span::enter);
-            tracing::info!(chat_id = %self.snapshot.id,
-                duration_ms = started.elapsed().as_millis() as u64, "agent.turn.settled");
+            let completed = if let Some(operation) = self.turn_operation.take() {
+                operation.finish("SUCCESS");
+                true
+            } else {
+                false
+            };
+            if completed {
+                tracing::info!(chat_id = %self.snapshot.id,
+                    duration_ms = started.elapsed().as_millis() as u64, "agent.turn.settled");
+            }
         }
         self.publish();
     }
@@ -33,17 +36,17 @@ impl Projection {
         if self.closed {
             return;
         }
-        let _session = self
-            .trace
-            .as_ref()
-            .map(|trace| trace.enter("agent.turn.close"));
         self.closed = true;
         self.running = false;
-        if let Some(started) = self.turn_started.take() {
-            let span = self.turn_span.take();
-            let _entered = span.as_ref().map(tracing::Span::enter);
-            tracing::warn!(chat_id = %self.snapshot.id,
-                duration_ms = started.elapsed().as_millis() as u64, "agent.turn.interrupted");
+        if self.turn_started.take().is_some()
+            && let Some(operation) = self.turn_operation.take()
+        {
+            if error.is_some() {
+                operation.fail("SESSION_CLOSED");
+            } else {
+                operation.cancel("session_closed");
+            }
+            tracing::warn!(chat_id = %self.snapshot.id, "agent.turn.interrupted");
         }
         self.snapshot.interactions.clear();
         if let Some(error) = error {

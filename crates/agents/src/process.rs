@@ -12,7 +12,7 @@ use std::{
 
 use parking_lot::{Condvar, Mutex};
 use serde_json::Value;
-use thinkrail_core::{EngineRouting, Error, ErrorKind, Launch, Result};
+use thinkrail_core::{EngineRouting, Error, ErrorCode as _, ErrorKind, Launch, Result};
 use tracing::{info, warn};
 
 mod redaction;
@@ -178,20 +178,24 @@ impl Process {
         frame_limit: usize,
         trace: Arc<SessionTrace>,
     ) -> Result<(Arc<Self>, ChildStdout)> {
-        let _entered = trace.enter("agent.process.start");
-        info!("agent.process.start_requested");
+        let operation = trace.operation("agent.process.start", "external");
         let started = Instant::now();
-        let mut child = command.spawn().map_err(|error| {
-            Error::new(
-                ErrorKind::BackendUnavailable,
-                format!("无法启动进程：{error}"),
-            )
-        })?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                operation.fail("BACKEND_UNAVAILABLE");
+                return Err(Error::new(
+                    ErrorKind::BackendUnavailable,
+                    format!("无法启动进程：{error}"),
+                ));
+            }
+        };
         let pid = child.id();
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
             terminate(pid);
+            operation.fail("BACKEND_UNAVAILABLE");
             return Err(Error::new(
                 ErrorKind::BackendUnavailable,
                 "无法连接进程的标准输入输出",
@@ -218,15 +222,21 @@ impl Process {
         })
         .and_then(|()| {
             let life = process.life.clone();
+            let exit_trace = trace.clone();
             spawn_thread("agent.wait", trace.clone(), move || {
-                wait_child(child, &life, started)
+                wait_child(child, &life, started, exit_trace)
             })
         });
         if let Err(error) = started_threads {
             terminate(pid);
+            operation.fail(error.code());
             return Err(error);
         }
-        info!(pid, "agent process started");
+        {
+            let _entered = trace.enter_operation(&operation);
+            info!(pid, "agent process started");
+        }
+        operation.finish("SUCCESS");
         Ok((process, stdout))
     }
 

@@ -141,3 +141,131 @@ fn real_process_readers_and_reply_callbacks_keep_sessions_isolated_at_info() {
     assert!(!output.contains("secret-prompt-body"), "{output}");
     assert!(!output.contains("secret-stderr-body"), "{output}");
 }
+
+#[test]
+fn turn_failure_and_cancellation_do_not_become_success_or_unlock_before_settle() {
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let writer = Logs(bytes.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let fixture = Fixture::new();
+    let request = fixture.request(BackendKind::Pi, None, false, EngineRouting::default());
+    let trace = Arc::new(SessionTrace::new(&request));
+    let id = trace.context.trace_id().to_owned();
+    let (mut projection, _) = crate::projection::tests::projection();
+    projection.attach_trace(trace);
+    projection.set_running(true);
+    projection.cancel_turn("user_cancelled");
+    assert!(
+        projection.is_running(),
+        "cancel waits for the real engine settlement"
+    );
+    projection.set_running(false);
+    projection.set_running(true);
+    projection.error(thinkrail_core::SessionError {
+        code: "EXTERNAL".into(),
+        message: "private response".into(),
+        trace_id: None,
+    });
+    assert!(
+        projection.is_running(),
+        "error must not bypass settlement ordering"
+    );
+    assert_eq!(
+        projection.snapshot().last_error.and_then(|e| e.trace_id),
+        Some(id.clone())
+    );
+    projection.set_running(false);
+    let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+    let terminals: Vec<_> = output
+        .lines()
+        .filter(|line| {
+            line.contains("operation=\"agent.turn\"")
+                && (line.contains("event=\"CANCEL\"")
+                    || line.contains("event=\"ERROR\"")
+                    || line.contains("event=\"EXIT\""))
+        })
+        .collect();
+    assert_eq!(terminals.len(), 2, "{output}");
+    assert!(terminals.iter().all(|line| line.contains(&id)), "{output}");
+    assert_eq!(
+        terminals
+            .iter()
+            .filter(|line| line.contains("event=\"CANCEL\""))
+            .count(),
+        1
+    );
+    assert_eq!(
+        terminals
+            .iter()
+            .filter(|line| line.contains("event=\"ERROR\""))
+            .count(),
+        1
+    );
+    assert!(!output.contains("private response"));
+}
+
+#[test]
+fn pending_real_process_request_records_timeout_with_configured_limit() {
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let writer = Logs(bytes.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let fixture = Fixture::new();
+    let request = fixture.request(BackendKind::Pi, None, false, EngineRouting::default());
+    let trace = Arc::new(SessionTrace::new(&request));
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "while ($null -ne [Console]::ReadLine()) {}",
+        ]);
+        command
+    };
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = Command::new("sh");
+        command.args(["-c", "while IFS= read -r line; do :; done"]);
+        command
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (process, _stdout) = Process::spawn(command, MAX_FRAME, trace).unwrap();
+    let (_, sink) = crate::projection::tests::projection();
+    let projection = Projection::new(session::identity(&request, Default::default()), sink);
+    let live = Live::new(process, projection, BackendKind::Pi);
+    let error = live
+        .request(
+            "timeout-request".into(),
+            &json!({"type":"get_state"}),
+            Duration::from_millis(20),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), Some(thinkrail_core::ErrorKind::Timeout));
+    live.shutdown();
+    let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+    let terminals: Vec<_> = output
+        .lines()
+        .filter(|line| {
+            line.contains("operation=\"agent.request\"") && line.contains("event=\"TIMEOUT\"")
+        })
+        .collect();
+    assert_eq!(terminals.len(), 1, "{output}");
+    assert!(terminals[0].contains("limit_ms=20"), "{output}");
+    assert!(!output.contains("event=\"UNFINISHED\""), "{output}");
+}

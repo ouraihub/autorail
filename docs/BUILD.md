@@ -87,3 +87,7 @@ git read-tree HEAD; git checkout-index -f -a
 2026-11-07 模型页第一期（agent-settings 08 R1、R2）验证：workspace 293 项通过（16 项 ignored 不变），fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、从本机数据库复制并去掉密钥的副本中，Windows 实窗操作了：会话模型与力度单行选择并重启后保持；可见模型展开；GPT 上下文窗口无合格模型时显示“没有符合条件的模型”，有 Responses 模型时全局选 1M、单个模型自定义 400000（非法值标红不保存）、全局随之显示“按模型分别设置”，均在重启后保持。未发送模型请求。
 
 上下文状态依赖同一 LumaKit 提交中的 `lumakit-usage-status`，位于发送按钮左侧。Pi/OMP 在后台查询原生 `get_state`／`get_session_stats`，不从截断的 UI 文本推算；DSH 无报告时保持未知。Native 没有宿主模型价格字段，因此只显示 token，不套用目录参考价；若未来引擎提供用户配置价格快照，才显示金额。Windows 实窗已用真实 pi、OMP 连接隔离回环 HTTP 验证输入 1000（含缓存读取 200）、输出 50、累计 1050；未连接收费服务。共享系统图标保留 macOS/Linux 映射但未做该平台运行验收。
+
+2026-11-09 日志链路续作：workspace 332 项通过、0失败，16项既有外部依赖 smoke 保持 ignored；fmt、all-targets check 与严格 clippy 通过。使用隔离 data-dir / USERPROFILE、真实已安装 Pi 与本机回环 OpenAI 服务观察成功、HTTP400失败及生成中停止；turn 分别写 EXIT/ERROR/CANCEL，失败/停止不会被后续 settle 改写为 SUCCESS。真实子进程请求20ms超时回归验证 TIMEOUT/Limit。
+
+后台日志支持 EV/Layer 交集筛选；后台任务失败通知和引擎失败均提供复制真实诊断 ID。实窗复制后粘贴筛选，选择「失败 + service」得到对应 turn 的唯一失败行。外网供应商未连接，OMP/DSH本次未做真实发送。完整记录见相邻 LumaKit 的 `docs/Rust-LumaKit-日志-请求-响应-异常封装任务列表.md`。

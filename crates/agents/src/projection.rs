@@ -44,12 +44,12 @@ pub(crate) struct Projection {
     sizes: Vec<usize>,
     total: usize,
     running: bool,
-    /// When the current turn started; `None` while idle.
+    /// When the current turn started; the guard owns its ENTRY and terminal event.
     turn_started: Option<std::time::Instant>,
     closed: bool,
     sink: Arc<dyn SessionSink>,
     trace: Option<Arc<crate::trace::SessionTrace>>,
-    turn_span: Option<tracing::Span>,
+    turn_operation: Option<thinkrail_observability::OperationGuard>,
 }
 
 impl Projection {
@@ -79,7 +79,7 @@ impl Projection {
             closed: false,
             sink,
             trace: None,
-            turn_span: None,
+            turn_operation: None,
         }
     }
 
@@ -162,7 +162,12 @@ impl Projection {
         std::mem::take(&mut self.snapshot.interactions)
     }
 
-    pub(crate) fn error(&mut self, error: SessionError) {
+    pub(crate) fn error(&mut self, mut error: SessionError) {
+        error.trace_id = self
+            .trace
+            .as_ref()
+            .map(|trace| trace.context.trace_id().to_owned());
+        self.finish_turn_error(&error.code);
         self.snapshot.last_error = Some(error.clone());
         let revision = self.bump();
         self.emit(SessionEvent::Error {
@@ -170,6 +175,27 @@ impl Projection {
             revision,
             error,
         });
+    }
+
+    pub(crate) fn cancel_turn(&mut self, reason: &'static str) {
+        if !self.running {
+            return;
+        }
+        self.turn_started.take();
+        if let Some(operation) = self.turn_operation.take() {
+            operation.cancel(reason);
+        }
+        tracing::info!(chat_id = %self.snapshot.id, reason, "agent.turn.cancelled");
+    }
+    pub(crate) fn finish_turn_error(&mut self, code: &str) {
+        if !self.running {
+            return;
+        }
+        self.turn_started.take();
+        if let Some(operation) = self.turn_operation.take() {
+            operation.fail(code);
+        }
+        tracing::warn!(chat_id = %self.snapshot.id, error_code = code, "agent.turn.failed");
     }
 
     pub(crate) fn contains(&self, id: &str) -> bool {

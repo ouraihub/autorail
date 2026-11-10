@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use thinkrail_core::ErrorCode as _;
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, Error, InteractionAnswer,
     NativeSessionKey, Result, SessionRole, SessionSink, SessionSnapshot, StartSession,
@@ -279,6 +280,7 @@ impl AgentSession for PiSession {
             }
             Ok(_) => Ok(()),
             Err(error) => {
+                self.live.state.lock().finish_turn_error(error.code());
                 self.live.state.lock().set_running(false);
                 Err(error)
             }
@@ -289,6 +291,7 @@ impl AgentSession for PiSession {
         self.live.ensure_open()?;
         let _entered = self.live.process.trace.enter("agent.session.stop");
         info!("agent.session.stop_requested");
+        self.live.state.lock().cancel_turn("user_cancelled");
         self.call("abort", json!({}), COMMAND).map(drop)
     }
 

@@ -3,11 +3,12 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, Styled as _, Subscription, Window,
+    AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, Window,
     base::{h_flex, v_flex},
     component::{
-        TitleBar,
+        Sizable as _, TitleBar,
+        button::{Button, ButtonVariants as _},
         resizable::{h_resizable, resizable_panel, v_resizable},
     },
     div,
@@ -267,6 +268,24 @@ impl Workbench {
                     )
                     .text_color(r.text_muted),
                 )
+                .when_some(notice.trace_id, |bar, trace_id| {
+                    let short: String = trace_id.chars().take(8).collect();
+                    bar.child(
+                        label(text::METADATA, format!("{}：{short}", s::TRACE_ID))
+                            .text_color(r.text_muted),
+                    )
+                    .child(
+                        Button::new("notice-copy-trace")
+                            .link()
+                            .xsmall()
+                            .label(s::COPY_TRACE)
+                            .accessibility_label(s::COPY_TRACE)
+                            .tooltip(s::COPY_TRACE_HINT)
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
+                            }),
+                    )
+                })
                 .child(
                     IconButton::new("dismiss-notice", IconName::X)
                         .tooltip(s::DISMISS)

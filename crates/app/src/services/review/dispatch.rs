@@ -4,6 +4,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 
+/// The closure is dropped if spawning fails; a started worker takes sole guard ownership.
+struct PendingReview(Option<thinkrail_observability::OperationGuard>);
+impl PendingReview {
+    fn take(mut self) -> Option<thinkrail_observability::OperationGuard> {
+        self.0.take()
+    }
+}
+impl Drop for PendingReview {
+    fn drop(&mut self) {
+        if let Some(root) = self.0.take() {
+            root.fail("REVIEW_WORKER_START_FAILED");
+        }
+    }
+}
+
 impl ReviewRunner for AppReviewRunner {
     fn start(
         &self,
@@ -46,9 +61,13 @@ impl ReviewRunner for AppReviewRunner {
         let worker_item = item.clone();
         let worker_handle = handle.clone();
         let worker_key = key.clone();
+        let pending = PendingReview(Some(root));
         thread::Builder::new()
             .name("plan-review".into())
             .spawn(move || {
+                let Some(root) = pending.take() else {
+                    return;
+                };
                 let _entered = span.enter();
                 tracing::info!("review.started");
                 let _ = runner.events.send_blocking((

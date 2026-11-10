@@ -177,6 +177,7 @@ impl Live {
                 Some(SessionError {
                     code: ErrorKind::SessionClosed.code().into(),
                     message,
+                    trace_id: None,
                 })
             }
         };
@@ -195,6 +196,7 @@ pub(crate) fn session_error(error: &Error) -> SessionError {
     SessionError {
         code: error.code().into(),
         message: error.to_string(),
+        trace_id: None,
     }
 }
 

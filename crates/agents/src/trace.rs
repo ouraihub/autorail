@@ -5,12 +5,10 @@
 //! the same TraceId. Per-boundary ENTRY/EXIT lifecycles are task L9.
 
 use thinkrail_core::StartSession;
-use thinkrail_observability::TraceContext;
+use thinkrail_observability::{OperationGuard, TraceContext, operation};
 use tracing::Span;
-
 pub(crate) struct SessionTrace {
-    /// Read by the isolation test; production only needs the span it opened.
-    #[cfg(test)]
+    /// The context is explicitly carried to every worker boundary.
     pub(crate) context: TraceContext,
     span: Span,
     dispatch: tracing::Dispatch,
@@ -23,22 +21,28 @@ pub(crate) struct TraceGuard {
 
 impl SessionTrace {
     pub(crate) fn new(request: &StartSession) -> Self {
-        let (_context, root) = TraceContext::root("agent.session", "agents");
+        let (context, root) = TraceContext::root("agent.session", "agents");
         let span = tracing::info_span!(
-        parent: root.span(),
-        "agent.session",
-        component = "agents",
-               chat_id = %request.chat,
-        workspace_id = %request.workspace,
-        backend = request.backend.label(),
-           );
+            parent: root.span(),
+            "agent.session",
+            component = "agents",
+            chat_id = %request.chat,
+            workspace_id = %request.workspace,
+            backend = request.backend.label(),
+        );
         root.finish("REGISTERED");
         Self {
-            #[cfg(test)]
-            context: _context,
+            context,
             span,
             dispatch: tracing::dispatcher::get_default(Clone::clone),
         }
+    }
+
+    /// Starts a bounded lifecycle operation under this session's span.
+    pub(crate) fn operation(&self, name: &'static str, layer: &'static str) -> OperationGuard {
+        let _dispatch = tracing::dispatcher::set_default(&self.dispatch);
+        let _entered = self.span.enter();
+        operation(&self.context, name, layer)
     }
 
     pub(crate) fn span(&self, operation: &'static str) -> Span {
@@ -50,6 +54,15 @@ impl SessionTrace {
         let dispatch = tracing::dispatcher::set_default(&self.dispatch);
         TraceGuard {
             _entered: self.span(operation).entered(),
+            _dispatch: dispatch,
+        }
+    }
+
+    pub(crate) fn enter_operation(&self, operation: &OperationGuard) -> TraceGuard {
+        let dispatch = tracing::dispatcher::set_default(&self.dispatch);
+        let span = operation.span().clone();
+        TraceGuard {
+            _entered: span.entered(),
             _dispatch: dispatch,
         }
     }

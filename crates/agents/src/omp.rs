@@ -12,6 +12,7 @@ use std::{
 
 use parking_lot::Mutex;
 use serde_json::{Value, json};
+use thinkrail_core::ErrorCode as _;
 use thinkrail_core::{
     AgentRuntime, AgentSession, BackendKind, Capabilities, Error, HostToolHandler, HostToolOptions,
     InteractionAnswer, NativeSessionKey, PlanScope, Result, SessionSink, SessionSnapshot,
@@ -342,6 +343,7 @@ impl AgentSession for OmpSession {
         self.withdraw_stopped_request();
         self.live.state.lock().set_running(true);
         if let Err(error) = self.call("prompt", json!({"message": text}), COMMAND) {
+            self.live.state.lock().finish_turn_error(error.code());
             self.live.state.lock().set_running(false);
             return Err(error);
         }
@@ -352,6 +354,7 @@ impl AgentSession for OmpSession {
         self.live.ensure_open()?;
         let _entered = self.live.process.trace.enter("agent.session.stop");
         info!("agent.session.stop_requested");
+        self.live.state.lock().cancel_turn("user_cancelled");
         self.interrupted.store(true, Ordering::Release);
         self.call("abort", json!({}), COMMAND).map(drop)
     }

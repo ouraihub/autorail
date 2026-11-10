@@ -294,6 +294,7 @@ impl AgentSession for DshSession {
         let frame = json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt",
             "params": {"sessionId": key, "prompt": [{"type": "text", "text": text}]}});
         if let Err(error) = self.live.process.send(&frame) {
+            self.live.state.lock().finish_turn_error(error.code());
             self.live.forget(&id);
             self.live.state.lock().set_running(false);
             return Err(error);
@@ -305,6 +306,7 @@ impl AgentSession for DshSession {
         self.live.ensure_open()?;
         let _entered = self.live.process.trace.enter("agent.session.stop");
         info!("agent.session.stop_requested");
+        self.live.state.lock().cancel_turn("user_cancelled");
         self.cancel_permissions();
         self.notify("session/cancel", json!({"sessionId": *self.key.lock()}))
     }

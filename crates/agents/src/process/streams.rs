@@ -11,6 +11,7 @@ use parking_lot::{Condvar, Mutex};
 use tracing::{debug, info, warn};
 
 use super::{Life, STDERR_TAIL};
+use crate::trace::SessionTrace;
 pub(super) fn write_stdin(mut stdin: impl Write, receiver: mpsc::Receiver<Vec<u8>>) {
     info!("agent.stdin.started");
     for bytes in receiver {
@@ -46,23 +47,44 @@ pub(super) fn read_stderr(
     life.1.notify_all();
 }
 
-pub(super) fn wait_child(mut child: Child, life: &(Mutex<Life>, Condvar), started: Instant) {
-    let code = match child.wait() {
-        Ok(status) => status.code(),
+pub(super) fn wait_child(
+    mut child: Child,
+    life: &(Mutex<Life>, Condvar),
+    started: Instant,
+    trace: std::sync::Arc<SessionTrace>,
+) {
+    let operation = trace.operation("agent.process.exit", "external");
+    let (wait_result, code) = match child.wait() {
+        Ok(status) => {
+            let code = status.code();
+            let result = if status.success() {
+                Ok(())
+            } else {
+                Err("PROCESS_EXIT_FAILED")
+            };
+            (result, code)
+        }
         Err(error) => {
             warn!(%error, "cannot wait for agent process");
-            None
+            (Err("PROCESS_WAIT_FAILED"), None)
         }
     };
     let mut state = life.0.lock();
     state.exited = true;
     state.code = code;
     drop(child);
-    info!(
-        code,
-        duration_ms = started.elapsed().as_millis() as u64,
-        "agent process exited"
-    );
+    {
+        let _entered = trace.enter_operation(&operation);
+        info!(
+            code,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "agent process exited"
+        );
+    }
     drop(state);
     life.1.notify_all();
+    match wait_result {
+        Ok(()) => operation.finish("SUCCESS"),
+        Err(code) => operation.fail(code),
+    }
 }

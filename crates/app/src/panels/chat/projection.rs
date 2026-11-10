@@ -195,6 +195,7 @@ mod tests {
         let error = SessionError {
             code: "EXTERNAL".into(),
             message: "boom".into(),
+            trace_id: None,
         };
         assert!(apply(
             &mut current,

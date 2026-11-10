@@ -34,16 +34,26 @@ impl OmpSession {
         let spawned = thread::Builder::new()
             .name("omp-host-tool".into())
             .spawn(move || {
-                let _entered = trace.enter("agent.host_tool.call");
+                let operation = trace.operation("agent.host_tool.call", "service");
                 let reply = match handler.call(&scope, options, &name, arguments) {
-                    Ok(result) => tool_result(&id, &result.text, result.is_error),
-                    // The handler logs the failure with its chat and duration.
-                    Err(error) => tool_result(&id, &error.to_string(), true),
+                    Ok(result) => {
+                        if cancelled.lock().remove(&id) {
+                            operation.cancel("engine_withdrew");
+                            debug!(tool = %name, "host tool result dropped: call was cancelled");
+                            return;
+                        }
+                        if result.is_error {
+                            operation.fail("HOST_TOOL_ERROR");
+                        } else {
+                            operation.finish("SUCCESS");
+                        }
+                        tool_result(&id, &result.text, result.is_error)
+                    }
+                    Err(error) => {
+                        operation.fail(error.code());
+                        tool_result(&id, &error.to_string(), true)
+                    }
                 };
-                if cancelled.lock().remove(&id) {
-                    debug!(tool = %name, "host tool result dropped: call was cancelled");
-                    return;
-                }
                 if let Err(error) = process.send(&reply) {
                     debug!(code = error.code(), "host tool result not delivered");
                 }
