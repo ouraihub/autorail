@@ -3,11 +3,15 @@
 use std::rc::Rc;
 
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    AnyElement, ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, Window,
     assets::IconName,
     base::{h_flex, v_flex},
-    component::input::Textarea,
+    component::{
+        Sizable as _,
+        button::{Button, ButtonVariants as _},
+        input::Textarea,
+    },
     div,
     prelude::FluentBuilder as _,
     px,
@@ -94,6 +98,22 @@ impl ChatPanel {
             })
             .unwrap_or_default();
         let truncated = snapshot.as_ref().is_some_and(|s| s.output_truncated);
+        let diagnostic = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.last_error.as_ref())
+            .and_then(|error| error.trace_id.as_ref())
+            .map(|trace| {
+                let trace = trace.clone();
+                Button::new("chat-copy-error-trace")
+                    .link()
+                    .small()
+                    .label("复制失败诊断 ID")
+                    .accessibility_label(format!("复制失败诊断 ID {trace}"))
+                    .tooltip("到设置 → 后台日志粘贴诊断 ID 查看链路")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(trace.clone()))
+                    })
+            });
         let plan_key = format!("plan/{id}");
         let reviews = &chat.review_cards;
         let plan_strip = chat.plan.as_ref().and_then(|p| {
@@ -140,6 +160,7 @@ impl ChatPanel {
                         d.child(label(text::METADATA, s::TRUNCATED).text_color(r.text_subtle))
                     })
                     .children(messages)
+                    .children(diagnostic)
                     .children(interactions)
                     .when_some(status_line, |d, line| {
                         d.child(label(text::METADATA, line).text_color(r.text_subtle))

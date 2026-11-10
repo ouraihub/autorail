@@ -1,10 +1,10 @@
-//! 同步模型：用首个启用的密钥探测线路模型，再打开挑选对话框（`ModelPicker`）。
+//! Discovered-model selection, Native type metadata and captured-provider writes.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    Render, Styled as _, Subscription, Window,
     assets::IconName,
     base::{h_flex, v_flex},
     component::{
@@ -18,84 +18,29 @@ use gpui_kit::{
     px,
 };
 use thinkrail_core::{
-    DiscoveredModel, ModelType, ProbeTarget, Protocol, ProviderModel, merge_picked, model_hints,
-    model_type,
+    DiscoveredModel, ModelType, Protocol, ProviderModel, merge_picked, model_hints, model_type,
 };
 use thinkrail_ui::{
-    ThinkrailTheme,
     components::{IconButton, label},
-    metrics::{radius, space, text},
+    metrics::{space, text},
 };
 
+use super::super::theme;
 use super::group_name;
 use crate::{
     panels::settings::providers::ProvidersPage, state::run, strings::settings_providers as s,
 };
-
-impl ProvidersPage {
-    /// "同步模型": lists the line's models with the first enabled key, then opens the picker.
-    pub(super) fn sync_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(provider) = self.provider().cloned() else {
-            return;
-        };
-        let Some(endpoint) = provider
-            .input
-            .endpoints
-            .iter()
-            .find(|e| e.protocol == self.line)
-            .cloned()
-        else {
-            return;
-        };
-        self.models.syncing = true;
-        self.models.sync_error = None;
-        let (service, probe) = (self.service(cx), self.state.read(cx).services.probe.clone());
-        let (line, selected) = (self.line, self.selected.clone());
-        let handle = window.window_handle();
-        run(
-            cx,
-            move || {
-                let key = provider
-                    .keys
-                    .iter()
-                    .find(|k| k.enabled)
-                    .map(|k| service.reveal_key(&k.id))
-                    .transpose()?;
-                probe.list_models(&ProbeTarget {
-                    endpoint,
-                    headers: provider.input.headers.clone(),
-                    key,
-                })
-            },
-            move |this, result, cx| {
-                this.models.syncing = false;
-                if this.selected != selected || this.line != line {
-                    return;
-                }
-                match result {
-                    Ok(found) => {
-                        let page = cx.entity();
-                        let draft = this
-                            .draft
-                            .as_ref()
-                            .map(|d| d.models.clone())
-                            .unwrap_or_default();
-                        let _ = handle.update(cx, |_, window, cx| {
-                            open_picker(page, found, draft, line, window, cx)
-                        });
-                    }
-                    Err(error) => this.models.sync_error = Some(error.to_string()),
-                }
-                cx.notify();
-            },
-        );
-    }
-}
+use lumakit_gpui::providers as ui;
 
 /// "同步模型" picker (Aether `ModelPickerDialog`): every + / − saves at once; models the probe
 /// did not list are left alone by `merge_picked`.
 struct ModelPicker {
     page: Entity<ProvidersPage>,
+    provider: thinkrail_core::ProviderId,
+    saving: bool,
+    error: Option<String>,
+    saved_picked: BTreeSet<String>,
+    saved_types: BTreeMap<String, ModelType>,
     line: Protocol,
     found: Vec<DiscoveredModel>,
     picked: BTreeSet<String>,
@@ -107,7 +52,7 @@ struct ModelPicker {
     _subscription: Subscription,
 }
 
-fn open_picker(
+pub(super) fn open_picker(
     page: Entity<ProvidersPage>,
     found: Vec<DiscoveredModel>,
     draft: Vec<ProviderModel>,
@@ -115,12 +60,12 @@ fn open_picker(
     window: &mut Window,
     cx: &mut gpui_kit::App,
 ) {
-    let picked = draft
+    let picked: BTreeSet<String> = draft
         .iter()
         .filter(|m| m.protocols.contains(&line))
         .map(|m| m.model_id.clone())
         .collect();
-    let types = found
+    let types: BTreeMap<String, ModelType> = found
         .iter()
         .map(|f| {
             let kind = draft
@@ -131,6 +76,9 @@ fn open_picker(
         })
         .collect();
     let total = found.len();
+    let Some(provider) = page.read(cx).selected.clone() else {
+        return;
+    };
     let picker = cx.new(|cx| {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder(s::SEARCH_MODELS));
         let subscription = cx.subscribe(&query, |_, _, event: &InputEvent, cx| {
@@ -140,6 +88,11 @@ fn open_picker(
         });
         ModelPicker {
             page,
+            provider,
+            saving: false,
+            error: None,
+            saved_picked: picked.clone(),
+            saved_types: types.clone(),
             line,
             found,
             picked,
@@ -151,44 +104,79 @@ fn open_picker(
         }
     });
     window.open_dialog(cx, move |dialog, _, cx| {
-        let r = ThinkrailTheme::global(cx).roles;
+        let footer = ui::form_footer(
+            None,
+            Button::new("picker-close")
+                .outline()
+                .label(s::CLOSE)
+                .on_click(|_, window, cx| window.close_dialog(cx))
+                .into_any_element(),
+            None,
+        );
         dialog
             .w(px(640.))
             .on_ok(|_, _, _| false)
-            .title(
-                h_flex()
-                    .gap(space::S8)
-                    .child(label(text::TITLE_DIALOG, s::PICKER_TITLE))
-                    .child(
-                        label(text::METADATA, total.to_string())
-                            .px(space::S6)
-                            .rounded(radius::SM)
-                            .bg(r.control_bg),
-                    ),
-            )
-            .child(picker.clone())
+            .child(ui::form_body(
+                format!("{} {total}", s::PICKER_TITLE),
+                picker.clone().into_any_element(),
+                footer.into_any_element(),
+                None,
+                &theme::roles(cx),
+            ))
     });
 }
 
 impl ModelPicker {
-    /// Saves the current selection and types into the page draft.
+    /// Writes the captured provider and rolls visible selection back on failure.
     fn apply(&mut self, cx: &mut Context<Self>) {
-        let (found, picked, types, line) = (
+        if self.saving {
+            return;
+        }
+        self.saving = true;
+        self.error = None;
+        let (found, picked, types, line, id) = (
             self.found.clone(),
             self.picked.clone(),
             self.types.clone(),
             self.line,
+            self.provider.clone(),
         );
-        self.page.update(cx, |page, cx| {
-            page.edit(cx, |d| {
-                d.models = merge_picked(&d.models, &found, &picked, line);
-                for model in d.models.iter_mut().filter(|m| picked.contains(&m.model_id)) {
+        let service = self.page.read(cx).service(cx);
+        run(
+            cx,
+            move || {
+                let provider = service.provider(&id)?;
+                let mut input = provider.input;
+                input.models = merge_picked(&input.models, &found, &picked, line);
+                for model in input
+                    .models
+                    .iter_mut()
+                    .filter(|m| picked.contains(&m.model_id))
+                {
                     if let Some(&kind) = types.get(&model.model_id) {
                         model.model_type = kind;
                     }
                 }
-            })
-        });
+                service.update(&id, provider.revision, input)
+            },
+            |this, result, cx| {
+                this.saving = false;
+                match result {
+                    Ok(provider) => {
+                        this.saved_picked = this.picked.clone();
+                        this.saved_types = this.types.clone();
+                        this.page.update(cx, |page, cx| page.stored(provider, cx));
+                    }
+                    Err(error) => {
+                        this.picked = this.saved_picked.clone();
+                        this.types = this.saved_types.clone();
+                        this.error = Some(error.to_string());
+                        this.page.update(cx, |page, cx| page.report(&error, cx));
+                    }
+                }
+                cx.notify();
+            },
+        );
         cx.notify();
     }
 
@@ -199,7 +187,7 @@ impl ModelPicker {
 
 impl Render for ModelPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let query = self.query.read(cx).value().trim().to_lowercase();
         let searched: Vec<DiscoveredModel> = self
             .found
@@ -245,42 +233,47 @@ impl Render for ModelPicker {
                 let folded = !searching && self.folded.contains(&group);
                 let toggle = group.clone();
                 v_flex()
-                    .child(
-                        h_flex()
-                            .id(format!("picker-group-{group}"))
-                            .h(px(32.))
-                            .px(space::S8)
-                            .gap(space::S8)
-                            .rounded(radius::MD)
-                            .bg(r.container_elevated_bg)
-                            .cursor_pointer()
+                    .child(ui::model_group(
+                        Button::new(format!("picker-group-{group}"))
+                            .ghost()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap(space::S8)
+                                    .child(
+                                        Icon::new(if folded {
+                                            IconName::ChevronRight
+                                        } else {
+                                            IconName::ChevronDown
+                                        })
+                                        .small(),
+                                    )
+                                    .child(label(text::UI, group.clone()).truncate())
+                                    .child(
+                                        label(text::METADATA, models.len().to_string())
+                                            .text_color(r.text_subtle),
+                                    ),
+                            )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if !this.folded.remove(&toggle) {
                                     this.folded.insert(toggle.clone());
                                 }
                                 cx.notify();
                             }))
-                            .child(
-                                Icon::new(if folded {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .small(),
-                            )
-                            .child(label(text::UI, group.clone()))
-                            .child(
-                                label(text::METADATA, models.len().to_string())
-                                    .text_color(r.text_subtle),
-                            ),
-                    )
+                            .into_any_element(),
+                        gpui_kit::div().into_any_element(),
+                        true,
+                        &r,
+                    ))
                     .when(!folded, |d| {
                         d.children(models.into_iter().map(|model| self.render_pick(model, cx)))
                     })
             })
             .collect::<Vec<_>>();
-        v_flex()
-            .gap(space::S8)
+        ui::form_fields([])
+            .children(super::super::error_text(self.error.clone(), cx))
             .child(label(text::METADATA, s::PICKER_HINT).text_color(r.text_subtle))
             .child(
                 h_flex()
@@ -298,7 +291,7 @@ impl Render for ModelPicker {
                             } else {
                                 s::ADD_ALL
                             })
-                            .disabled(ids.is_empty())
+                            .disabled(ids.is_empty() || self.saving)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 for id in &ids {
                                     if all_picked {
@@ -332,7 +325,7 @@ impl ModelPicker {
         model: DiscoveredModel,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let id = model.id.clone();
         let kind = self.kind(&id);
         let picked = self.picked.contains(&id);
@@ -344,6 +337,7 @@ impl ModelPicker {
             .small()
             .label(s::model_type(kind))
             .icon(IconName::ChevronDown)
+            .disabled(self.saving)
             .dropdown_menu(move |menu, _, _| {
                 ModelType::ALL.into_iter().fold(menu, |menu, value| {
                     let (entity, id) = (entity.clone(), menu_id.clone());
@@ -363,48 +357,50 @@ impl ModelPicker {
                     )
                 })
             });
-        h_flex()
-            .h(px(36.))
-            .pl(space::S16)
-            .pr(space::S4)
-            .gap(space::S8)
-            .rounded(radius::MD)
-            .hover(|s| s.bg(r.control_bg_hovered))
-            .child(
-                label(text::CODE_TEXT, id.clone())
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate(),
-            )
-            .child(type_menu)
-            .children(
-                vision.then(|| label(text::METADATA, s::CAN_VISION).text_color(r.text_subtle)),
-            )
-            .child(
-                label(text::METADATA, if picked { s::PICKED } else { "" })
-                    .w(px(32.))
-                    .text_color(r.feedback_success),
-            )
-            .child(
-                IconButton::new(
-                    format!("pick-{id}"),
-                    if picked {
-                        IconName::Minus
-                    } else {
-                        IconName::Plus
-                    },
+        ui::picker_row(
+            h_flex()
+                .flex_1()
+                .min_w(px(0.))
+                .gap(space::S8)
+                .child(
+                    label(text::CODE_TEXT, id.clone())
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate(),
                 )
-                .tooltip(if picked {
-                    s::REMOVE_MODEL
+                .child(type_menu)
+                .children(
+                    vision.then(|| label(text::METADATA, s::CAN_VISION).text_color(r.text_subtle)),
+                )
+                .child(
+                    label(text::METADATA, if picked { s::PICKED } else { "" })
+                        .w(px(32.))
+                        .text_color(r.feedback_success),
+                )
+                .into_any_element(),
+            IconButton::new(
+                format!("pick-{id}"),
+                if picked {
+                    IconName::Minus
                 } else {
-                    s::ADD_MODEL
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if !this.picked.remove(&id) {
-                        this.picked.insert(id.clone());
-                    }
-                    this.apply(cx);
-                })),
+                    IconName::Plus
+                },
             )
+            .tooltip(if picked {
+                s::REMOVE_MODEL
+            } else {
+                s::ADD_MODEL
+            })
+            .disabled(self.saving)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.picked.remove(&id) {
+                    this.picked.insert(id.clone());
+                }
+                this.apply(cx);
+            }))
+            .into_any_element(),
+            picked,
+            &r,
+        )
     }
 }

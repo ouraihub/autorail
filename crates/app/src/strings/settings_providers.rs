@@ -39,11 +39,6 @@ pub const SAVE_FAILED: &str = "保存失败，修改已保留。";
 pub const API_KEY: &str = "API 密钥";
 pub const GET_KEY: &str = "获取密钥";
 pub const KEY_PLACEHOLDER: &str = "输入新的 API 密钥（留空不修改）";
-pub const KEY_SHOW: &str = "显示密钥";
-pub const KEY_HIDE: &str = "隐藏密钥";
-pub const KEY_COPY: &str = "复制密钥";
-pub const KEY_EDIT: &str = "编辑密钥";
-pub const KEY_DELETE: &str = "删除密钥";
 pub const KEYS_MANAGE: &str = "API 密钥管理";
 pub const KEYS_DESC: &str = "管理当前服务商的多个 API 密钥，按顺序轮流使用。";
 pub const KEYS_ADD: &str = "添加 API 密钥";
@@ -51,7 +46,6 @@ pub const KEYS_EMPTY: &str = "暂无 API 密钥";
 pub const KEYS_LABEL: &str = "标签";
 pub const KEYS_KEEP: &str = "编辑密钥：输入新值后保存；留空则不修改原密钥。";
 pub const KEY_DEFAULT_LABEL: &str = "API Key";
-pub const KEY_STRATEGY: &str = "密钥使用方式";
 pub const KEY_STRATEGY_ROUND_ROBIN: &str = "轮流使用";
 pub const KEY_STRATEGY_ROUND_ROBIN_DESC: &str = "每次请求从下一个密钥开始，把限流分摊到各个密钥";
 pub const KEY_EMPTY: &str = "API 密钥不能为空";
@@ -79,7 +73,6 @@ pub const HEADER_INVALID: &str = "请求头名称和取值不能为空。";
 pub const HEADERS_SHARED: &str = "请求头对该服务商的所有线路生效。";
 
 // 模型
-pub const MODELS: &str = "模型";
 pub const NO_MODELS: &str = "未选择模型";
 pub const NO_MODEL_MATCHES: &str = "没有匹配的模型";
 pub const MODEL_SEARCH: &str = "搜索模型…";
@@ -159,9 +152,6 @@ pub fn request_post(url: &str) -> String {
 }
 pub fn keys_enabled(enabled: usize, total: usize) -> String {
     format!("{enabled} / {total} 已启用")
-}
-pub fn more_keys(extra: usize) -> String {
-    format!("+{extra}")
 }
 pub fn check_ok(count: usize) -> String {
     format!("连接正常 · 可用 {count} 个模型")

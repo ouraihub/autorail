@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod appearance;
+mod dialog_keys;
 mod panels;
 mod services;
 mod state;
@@ -106,6 +107,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(move |cx| {
             gpui_kit::init(cx);
+            dialog_keys::init(cx);
             if let Err(error) = fonts::register_bundled(cx) {
                 error!(error = %error, "bundled fonts not registered; system fonts are used");
             }

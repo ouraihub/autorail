@@ -87,3 +87,35 @@ git read-tree HEAD; git checkout-index -f -a
 2026-11-07 模型页第一期（agent-settings 08 R1、R2）验证：workspace 293 项通过（16 项 ignored 不变），fmt 与严格 clippy 通过。隔离 `--data-dir` 和 `USERPROFILE`、从本机数据库复制并去掉密钥的副本中，Windows 实窗操作了：会话模型与力度单行选择并重启后保持；可见模型展开；GPT 上下文窗口无合格模型时显示“没有符合条件的模型”，有 Responses 模型时全局选 1M、单个模型自定义 400000（非法值标红不保存）、全局随之显示“按模型分别设置”，均在重启后保持。未发送模型请求。
 
 上下文状态依赖同一 LumaKit 提交中的 `lumakit-usage-status`，位于发送按钮左侧。Pi/OMP 在后台查询原生 `get_state`／`get_session_stats`，不从截断的 UI 文本推算；DSH 无报告时保持未知。Native 没有宿主模型价格字段，因此只显示 token，不套用目录参考价；若未来引擎提供用户配置价格快照，才显示金额。Windows 实窗已用真实 pi、OMP 连接隔离回环 HTTP 验证输入 1000（含缓存读取 200）、输出 50、累计 1050；未连接收费服务。共享系统图标保留 macOS/Linux 映射但未做该平台运行验收。
+
+2026-11-09 日志链路续作：workspace 332 项通过、0失败，16项既有外部依赖 smoke 保持 ignored；fmt、all-targets check 与严格 clippy 通过。使用隔离 data-dir / USERPROFILE、真实已安装 Pi 与本机回环 OpenAI 服务观察成功、HTTP400失败及生成中停止；turn 分别写 EXIT/ERROR/CANCEL，失败/停止不会被后续 settle 改写为 SUCCESS。真实子进程请求20ms超时回归验证 TIMEOUT/Limit。
+
+后台日志支持 EV/Layer 交集筛选；后台任务失败通知和引擎失败均提供复制真实诊断 ID。实窗复制后粘贴筛选，选择「失败 + service」得到对应 turn 的唯一失败行。外网供应商未连接，OMP/DSH本次未做真实发送。完整记录见相邻 LumaKit 的 `docs/Rust-LumaKit-日志-请求-响应-异常封装任务列表.md`。
+
+## 2026-11-10 共享密钥管理联调
+
+Native 密钥管理使用共享 `key_entry` 的标签／密钥／提交行和内容自适应的 `compact_form_body`，宽度取 `size::SETTINGS_DIALOG`；已保存行直接使用共享 `KeyRow::label`，不再嵌套另一套标签容器。标签可省略，编辑时留空密钥只修改标签；异步写入成功后才清空，失败保留输入与编辑目标。
+
+本轮通过便携 MSVC wrapper、外部临时 `--config C:\Users\Administrator\AppData\Local\Temp\shared-provider-ui-cda1gesx\native-patch.toml` 联调未发布的 LumaKit；仓库不加入本地 path patch。定向验证：
+
+```powershell
+scripts\msvc\cargo-msvc.bat test -p thinkrail-native panels::settings::providers --config <临时配置> -- --test-threads=1
+scripts\msvc\cargo-msvc.bat test -p thinkrail-native --test providers --config <临时配置>
+scripts\msvc\cargo-msvc.bat clippy -p thinkrail-native --all-targets --config <临时配置> -- -D warnings
+scripts\msvc\cargo-msvc.bat build -p thinkrail-native --config <临时配置>
+```
+
+结果：提供方 UI 单元回归 5 项通过（包含本轮新增的成功后清空、无标签添加、仅改标签不改密钥、失败保留输入及编辑目标），公开服务集成测试 1 项通过，严格 clippy 与 debug build 通过。未以本轮定向验证替代整个 workspace 验证。
+
+实窗使用新的 `C:\Users\Administrator\AppData\Local\Temp\native-keys-finish-l9kw_acv\data` 和同级 `profile`，以 `--data-dir`／`USERPROFILE` 隔离；仅创建假密钥与 `http://127.0.0.1:1/v1` 自定义提供方，不访问外部服务、不读取运行中数据库。通过 UI 添加带标签密钥、仅改标签、替换密钥，关闭并重启后重新打开提供方确认标签和替换值保留。主行悬停显示复制／编辑／眼睛，无删除；管理行显示标签／掩码／复制／编辑／删除／启用，无眼睛。新建时只填标签提交显示“API 密钥不能为空”且保留标签；真实持久化失败由隔离真实服务回归覆盖，未在实窗注入磁盘故障。
+
+截图根目录：`C:\Users\Administrator\AppData\Local\Temp\native-keys-finish-l9kw_acv\screenshots`。保存／编辑／重启证据为 `manager-saved-wide.png`、`manager-label-only-saved.png`、`manager-replacement-saved.png`、`manager-restarted-persistence.png`、`main-restarted-secret-persistence.png`；主行按钮为 `main-key-actions-final.png`；校验失败为 `key-manager-validation-failure-320.png`。各宽度原始截图为 `settings-provider-{320,375,414,768}.png` 与 `key-manager-{320,375,414,768}.png`，均为真实窗口尺寸，不是截图缩放。
+
+首轮窄屏观察：320／375／414 的设置导航换行、内容可滚动；768 导航保持侧栏、提供方列表与详情上下堆叠。管理输入与提交按钮在不足宽度时换行，关闭和各操作可达。但首轮 320 的管理行标签挤掉掩码，主行长标签也挤掉掩码，故这些截图不是“窄屏视觉全部通过”的结论。
+
+随后共享 `KeyRow` 保留掩码最小宽度并允许行内动作换行，Native 管理行也允许启用开关换行；再次运行严格 clippy／debug build 通过。修正后重新实窗捕获 `settings-provider-final-{320,375,414,768}.png`、`key-manager-final-{320,375,414,768}.png` 和 `key-manager-final-wide.png`：320 的标签、掩码可见，复制／编辑／删除／启用和关闭均可达；主行的眼睛在短宽度时换到行内第二行，375／414 保持可用，768／宽屏管理输入为一行。截图显示长标签／掩码按可用宽度截断，不承诺完整明文可读；查看／复制仍可用。中间的 `*-corrected-{375,414,768}.png` 被桌面截屏选择浮层遮挡，不作为验收证据，最终使用上述 `*-final-*`。本轮自行启动的调试进程均正常关闭，没有结束其他会话。
+
+
+之后按原始参照将真实 enabled `Switch` 移到共享 `KeyRow::trailing`，使开关与标签／掩码／动作处于同一边框内，删除 Native 外层行包装；原有保存语义保持不变。该调整通过 wrapper `fmt`、定向 `check -p thinkrail-native` 和 debug build。最终实窗证据为同目录 `key-manager-bordered-switch-320.png` 与 `key-manager-bordered-switch-wide.png`：320 内标签／掩码一行，复制／编辑／删除／开关在边框内第二行，宽屏同一边框内单行。实际点击开关关闭／开启，计数分别显示 `0 / 1 已启用`、`1 / 1 已启用`，截图为 `key-manager-bordered-switch-disabled-320.png`、`key-manager-bordered-switch-enabled-320.png`。自启进程 PID 24312 正常退出；最终远程 Git pin 的构建仍由集成验收记录补充。
+
+最终依赖已固定到推送后的 LumaKit `f263608cdc5efcb107ab7d3d060a9caba85d0afa`，所有 LumaKit rev 一致；不需要本地 patch。无临时配置的 all-targets check、fmt、宿主严格 clippy、5项提供方 UI回归通过。临时 patch 阶段 workspace严格clippy和全部测试通过，16项既有下载/引擎/ConPTY测试仍按原约定ignored。锁文件只保留新增共享组件及LumaKit来源变化，不升级无关依赖。

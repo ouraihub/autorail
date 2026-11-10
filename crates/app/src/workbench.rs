@@ -3,11 +3,12 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, Styled as _, Subscription, Window,
+    AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, Window,
     base::{h_flex, v_flex},
     component::{
-        TitleBar,
+        Sizable as _, TitleBar,
+        button::{Button, ButtonVariants as _},
         resizable::{h_resizable, resizable_panel, v_resizable},
     },
     div,
@@ -120,12 +121,14 @@ impl Workbench {
 
     fn pump_reviews(
         chat: &Entity<ChatPanel>,
-        events: async_channel::Receiver<thinkrail_core::ReviewEvent>,
+        events: async_channel::Receiver<(tracing::Span, thinkrail_core::ReviewEvent)>,
         cx: &mut Context<Self>,
     ) {
         let chat = chat.downgrade();
         cx.spawn(async move |_, cx| {
-            while let Ok(event) = events.recv().await {
+            while let Ok((span, event)) = events.recv().await {
+                let _entered = span.enter();
+                tracing::debug!("review.event_received");
                 if chat
                     .update(cx, |chat, cx| chat.on_review_event(event, cx))
                     .is_err()
@@ -265,6 +268,24 @@ impl Workbench {
                     )
                     .text_color(r.text_muted),
                 )
+                .when_some(notice.trace_id, |bar, trace_id| {
+                    let short: String = trace_id.chars().take(8).collect();
+                    bar.child(
+                        label(text::METADATA, format!("{}：{short}", s::TRACE_ID))
+                            .text_color(r.text_muted),
+                    )
+                    .child(
+                        Button::new("notice-copy-trace")
+                            .link()
+                            .xsmall()
+                            .label(s::COPY_TRACE)
+                            .accessibility_label(s::COPY_TRACE)
+                            .tooltip(s::COPY_TRACE_HINT)
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(trace_id.clone()))
+                            }),
+                    )
+                })
                 .child(
                     IconButton::new("dismiss-notice", IconName::X)
                         .tooltip(s::DISMISS)

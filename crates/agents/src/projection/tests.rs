@@ -96,6 +96,7 @@ fn phase_follows_interactions_running_and_close() {
     p.close(Some(SessionError {
         code: "SESSION_CLOSED".into(),
         message: "gone".into(),
+        trace_id: None,
     }));
     let snapshot = p.snapshot();
     assert_eq!(snapshot.phase, SessionPhase::Closed);

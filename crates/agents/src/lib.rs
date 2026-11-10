@@ -21,6 +21,7 @@ mod session;
 mod smoke;
 #[cfg(test)]
 mod testing;
+mod trace;
 mod workflow;
 
 pub use dsh::DshRuntime;

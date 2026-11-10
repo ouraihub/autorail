@@ -20,6 +20,7 @@ const MAX_MESSAGES: usize = 2000;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 mod bound;
+mod lifecycle;
 
 #[cfg(test)]
 use bound::TRUNCATED;
@@ -43,10 +44,12 @@ pub(crate) struct Projection {
     sizes: Vec<usize>,
     total: usize,
     running: bool,
-    /// When the current turn started; `None` while idle.
+    /// When the current turn started; the guard owns its ENTRY and terminal event.
     turn_started: Option<std::time::Instant>,
     closed: bool,
     sink: Arc<dyn SessionSink>,
+    trace: Option<Arc<crate::trace::SessionTrace>>,
+    turn_operation: Option<thinkrail_observability::OperationGuard>,
 }
 
 impl Projection {
@@ -75,7 +78,13 @@ impl Projection {
             turn_started: None,
             closed: false,
             sink,
+            trace: None,
+            turn_operation: None,
         }
+    }
+
+    pub(crate) fn attach_trace(&mut self, trace: Arc<crate::trace::SessionTrace>) {
+        self.trace = Some(trace);
     }
 
     pub(crate) fn snapshot(&self) -> SessionSnapshot {
@@ -127,36 +136,6 @@ impl Projection {
         self.snapshot.capabilities = capabilities;
     }
 
-    pub(crate) fn set_running(&mut self, running: bool) {
-        if self.running != running {
-            self.running = running;
-            if running {
-                tracing::info!(chat = %self.snapshot.id, "agent turn started");
-                self.turn_started = Some(std::time::Instant::now());
-            } else if let Some(started) = self.turn_started.take() {
-                tracing::info!(chat = %self.snapshot.id, ms = started.elapsed().as_millis() as u64, "agent turn ended");
-            }
-            self.publish();
-        }
-    }
-
-    /// Final transition: the engine is gone. Pending interactions die with it.
-    pub(crate) fn close(&mut self, error: Option<SessionError>) {
-        if self.closed {
-            return;
-        }
-        self.closed = true;
-        self.running = false;
-        if let Some(started) = self.turn_started.take() {
-            tracing::warn!(chat = %self.snapshot.id, ms = started.elapsed().as_millis() as u64, "agent turn cut off: engine closed");
-        }
-        self.snapshot.interactions.clear();
-        if let Some(error) = error {
-            self.error(error);
-        }
-        self.publish();
-    }
-
     pub(crate) fn add_interaction(&mut self, interaction: Interaction) {
         self.snapshot
             .interactions
@@ -183,7 +162,12 @@ impl Projection {
         std::mem::take(&mut self.snapshot.interactions)
     }
 
-    pub(crate) fn error(&mut self, error: SessionError) {
+    pub(crate) fn error(&mut self, mut error: SessionError) {
+        error.trace_id = self
+            .trace
+            .as_ref()
+            .map(|trace| trace.context.trace_id().to_owned());
+        self.finish_turn_error(&error.code);
         self.snapshot.last_error = Some(error.clone());
         let revision = self.bump();
         self.emit(SessionEvent::Error {
@@ -191,6 +175,27 @@ impl Projection {
             revision,
             error,
         });
+    }
+
+    pub(crate) fn cancel_turn(&mut self, reason: &'static str) {
+        if !self.running {
+            return;
+        }
+        self.turn_started.take();
+        if let Some(operation) = self.turn_operation.take() {
+            operation.cancel(reason);
+        }
+        tracing::info!(chat_id = %self.snapshot.id, reason, "agent.turn.cancelled");
+    }
+    pub(crate) fn finish_turn_error(&mut self, code: &str) {
+        if !self.running {
+            return;
+        }
+        self.turn_started.take();
+        if let Some(operation) = self.turn_operation.take() {
+            operation.fail(code);
+        }
+        tracing::warn!(chat_id = %self.snapshot.id, error_code = code, "agent.turn.failed");
     }
 
     pub(crate) fn contains(&self, id: &str) -> bool {

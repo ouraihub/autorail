@@ -203,10 +203,12 @@ impl Dialogs {
 }
 
 fn expire_later(live: &Arc<Live>, id: String, timeout: Duration) {
+    let trace = live.process.trace.clone();
     let live = Arc::downgrade(live);
     let spawned = thread::Builder::new()
         .name("agent-dialog-timeout".into())
         .spawn(move || {
+            let _entered = trace.enter("agent.dialog.timeout");
             thread::sleep(timeout);
             if let Some(live) = live.upgrade() {
                 let mut p = live.state.lock();

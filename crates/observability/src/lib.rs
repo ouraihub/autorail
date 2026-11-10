@@ -1,8 +1,8 @@
 //! Logging (native-multi-agent 06): the global subscriber, daily files under `<data>/logs` with
-//! Beijing-time stamps, a runtime-switchable level, the bounded tail the log page reads and the
-//! `op` span that ties one user action's lines together.
+//! Beijing-time stamps, a runtime-switchable level and the bounded tail the log page reads.
+//! Lines use LumaKit's grep contract (`TraceId:…|Layer:…|ME:…|EV:…|RT:…`); one user action is one
+//! `TraceContext::root`, so `grep "TraceId:<id>"` selects its whole chain.
 
-mod op;
 mod tail;
 
 use std::path::{Path, PathBuf};
@@ -16,7 +16,8 @@ use tracing_subscriber::{
     util::SubscriberInitExt as _,
 };
 
-pub use op::{finish, op};
+use lumakit_observability::{GrepFormat, SpanFields};
+pub use lumakit_observability::{OperationGuard, TraceContext, operation};
 pub use tail::{LogEntry, tail};
 
 /// File names are `thinkrail-native.YYYY-MM-DD.log` (the appender's UTC date).
@@ -31,12 +32,14 @@ const BEIJING: UtcOffset = match UtcOffset::from_hms(8, 0, 0) {
     Err(_) => UtcOffset::UTC,
 };
 
-/// `debug` raises only this app's crates (`thinkrail_*`, the `thinkrail-native` binary); the
-/// database and renderer libraries stay at `info`, or their internals would flood the page.
+/// `debug` raises only this app's crates (`thinkrail_*`, the `thinkrail-native` binary) and the
+/// shared lifecycle events (`lumakit_observability`, where `EV:ENTRY`/`EV:EXIT` of inner layers are
+/// written); the database and renderer libraries stay at `info`, or their internals would flood
+/// the page.
 fn filter(level: LogLevel) -> EnvFilter {
     match level {
         LogLevel::Info => EnvFilter::new("info"),
-        LogLevel::Debug => EnvFilter::new("info,thinkrail=debug"),
+        LogLevel::Debug => EnvFilter::new("info,thinkrail=debug,lumakit_observability=debug"),
     }
 }
 
@@ -105,17 +108,19 @@ pub fn init(data_dir: &Path) -> anyhow::Result<LogHandle> {
     let (level_layer, handle) = reload::Layer::new(env.unwrap_or_else(|| filter(LogLevel::Info)));
     let timer = OffsetTime::new(BEIJING, Rfc3339);
     let file = fmt::layer()
+        .event_format(GrepFormat::new(timer.clone()))
         .with_writer(writer)
-        .with_ansi(false)
-        .with_target(true)
-        .with_timer(timer.clone());
-    let registry = tracing_subscriber::registry().with(level_layer).with(file);
+        .with_ansi(false);
+    let registry = tracing_subscriber::registry()
+        .with(level_layer)
+        .with(SpanFields)
+        .with(file);
     #[cfg(debug_assertions)]
     let registry = registry.with(
         fmt::layer()
+            .event_format(GrepFormat::new(timer))
             .with_writer(std::io::stderr)
-            .with_target(true)
-            .with_timer(timer),
+            .with_ansi(false),
     );
     registry.try_init().context("日志已经初始化")?;
     Ok(LogHandle {

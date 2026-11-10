@@ -10,9 +10,9 @@ use std::{
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use thinkrail_core::{
-    AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorKind,
-    InteractionAnswer, Message, NativeSessionKey, Result, Role, SessionRole, SessionSink,
-    SessionSnapshot, StartSession, ThinkingLevel,
+    AgentRuntime, AgentSession, BackendKind, Capabilities, ContentBlock, Error, ErrorCode as _,
+    ErrorKind, InteractionAnswer, Message, NativeSessionKey, Result, Role, SessionRole,
+    SessionSink, SessionSnapshot, StartSession, ThinkingLevel,
 };
 use tracing::{debug, info};
 
@@ -72,10 +72,12 @@ impl AgentRuntime for DshRuntime {
         sink: Arc<dyn SessionSink>,
     ) -> Result<Arc<dyn AgentSession>> {
         session::validate(&request, BackendKind::Dsh)?;
+        let trace = Arc::new(crate::trace::SessionTrace::new(&request));
+        let _entered = trace.enter("agent.session.start");
         let (spec, staged) = launch_spec(&request)?;
         let commands = skills::commands(&request.cwd, &staged, &spec.cwd);
         let command = process::command(&spec)?;
-        let (process, stdout) = Process::spawn(command, MAX_FRAME)?;
+        let (process, stdout) = Process::spawn(command, MAX_FRAME, trace)?;
         let projection = Projection::new(session::identity(&request, CAPABILITIES), sink);
         let live = Live::new(process, projection, BackendKind::Dsh);
         let dsh = Arc::new(DshSession {
@@ -292,6 +294,7 @@ impl AgentSession for DshSession {
         let frame = json!({"jsonrpc": "2.0", "id": id, "method": "session/prompt",
             "params": {"sessionId": key, "prompt": [{"type": "text", "text": text}]}});
         if let Err(error) = self.live.process.send(&frame) {
+            self.live.state.lock().finish_turn_error(error.code());
             self.live.forget(&id);
             self.live.state.lock().set_running(false);
             return Err(error);
@@ -301,6 +304,9 @@ impl AgentSession for DshSession {
 
     fn stop(&self) -> Result<()> {
         self.live.ensure_open()?;
+        let _entered = self.live.process.trace.enter("agent.session.stop");
+        info!("agent.session.stop_requested");
+        self.live.state.lock().cancel_turn("user_cancelled");
         self.cancel_permissions();
         self.notify("session/cancel", json!({"sessionId": *self.key.lock()}))
     }
@@ -328,6 +334,7 @@ impl AgentSession for DshSession {
 
     /// Cancels open questions and the running turn, closes the ACP session (10 s), then stdin.
     fn dispose(&self) -> Result<()> {
+        let _entered = self.live.process.trace.enter("agent.session.dispose");
         if !self.live.begin_dispose() {
             return Ok(());
         }
@@ -336,12 +343,12 @@ impl AgentSession for DshSession {
         if self.live.state.lock().is_running()
             && let Err(error) = self.notify("session/cancel", json!({"sessionId": key}))
         {
-            debug!(%error, "cannot cancel prompt during dispose");
+            debug!(code = error.code(), "cannot cancel prompt during dispose");
         }
         let id = new_id();
         let close = json!({"jsonrpc": "2.0", "id": id, "method": "session/close", "params": {"sessionId": key}});
         if let Err(error) = self.live.request(id, &close, CLOSE) {
-            debug!(%error, "session/close did not complete");
+            debug!(code = error.code(), "session/close did not complete");
         }
         self.live.shutdown();
         Ok(())

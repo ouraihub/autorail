@@ -3,7 +3,7 @@
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
     assets::IconName,
-    base::{h_flex, v_flex},
+    base::h_flex,
     component::{
         Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -19,16 +19,16 @@ use thinkrail_core::{
     DiscoveredModel, ModelType, Protocol, ProviderModel, ThinkingLevel, model_from_discovery,
 };
 use thinkrail_ui::{
-    ThinkrailTheme,
     components::label,
     metrics::{space, text},
 };
 
 use super::Cap;
 use crate::{
-    panels::settings::providers::{ProvidersPage, error_text, field, open_form},
+    panels::settings::providers::{ProvidersPage, error_text, open_form, theme},
     strings::{settings_models::effort_label, settings_providers as s},
 };
+use lumakit_gpui::providers as ui;
 
 const EFFORTS: [ThinkingLevel; 7] = [
     ThinkingLevel::Off,
@@ -42,11 +42,16 @@ const EFFORTS: [ThinkingLevel; 7] = [
 
 struct AddModel {
     id: Entity<InputState>,
+    saving: bool,
+    error: Option<String>,
 }
 
 impl Render for AddModel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        field(s::MODEL_ID, Input::new(&self.id), cx)
+        ui::form_fields([
+            ui::field(s::MODEL_ID, Input::new(&self.id), &theme::roles(cx)).into_any_element(),
+        ])
+        .children(error_text(self.error.clone(), cx))
     }
 }
 
@@ -56,15 +61,21 @@ struct ModelSettings {
     name: Entity<InputState>,
     context_window: Entity<InputState>,
     max_tokens: Entity<InputState>,
-    error: Option<&'static str>,
+    error: Option<String>,
+    saving: bool,
 }
 
 impl ProvidersPage {
     pub(super) fn open_add_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let body = cx.new(|cx| AddModel {
             id: cx.new(|cx| InputState::new(window, cx).placeholder(s::MODEL_ID)),
+            saving: false,
+            error: None,
         });
         let (page, line) = (cx.entity(), self.line);
+        let Some(target) = self.selected.clone() else {
+            return;
+        };
         open_form(
             window,
             cx,
@@ -72,19 +83,29 @@ impl ProvidersPage {
             px(420.),
             body,
             s::CONFIRM,
-            move |body, _, cx| {
+            move |body, window, cx| {
+                if body.saving {
+                    return false;
+                }
                 let id = body.id.read(cx).value().trim().to_owned();
                 if id.is_empty() {
                     return false;
                 }
-                page.update(cx, |this, cx| {
-                    this.edit(cx, |d| {
-                        match d.models.iter_mut().find(|m| m.model_id == id) {
+                let target = target.clone();
+                body.saving = true;
+                crate::panels::settings::providers::forms::save(
+                    page.clone(),
+                    window,
+                    cx,
+                    move |service| {
+                        let provider = service.provider(&target)?;
+                        let mut input = provider.input;
+                        match input.models.iter_mut().find(|m| m.model_id == id) {
                             Some(model) if !model.protocols.contains(&line) => {
                                 model.protocols.push(line)
                             }
                             Some(_) => {}
-                            None => d.models.push(model_from_discovery(
+                            None => input.models.push(model_from_discovery(
                                 &DiscoveredModel {
                                     id,
                                     name: None,
@@ -93,9 +114,15 @@ impl ProvidersPage {
                                 line,
                             )),
                         }
-                    })
-                });
-                true
+                        service.update(&target, provider.revision, input)
+                    },
+                    false,
+                    |body, error| {
+                        body.saving = false;
+                        body.error = Some(error);
+                    },
+                );
+                false
             },
         );
     }
@@ -129,9 +156,13 @@ impl ProvidersPage {
                 model,
                 lines,
                 error: None,
+                saving: false,
             }
         });
         let page = cx.entity();
+        let Some(target) = self.selected.clone() else {
+            return;
+        };
         open_form(
             window,
             cx,
@@ -139,23 +170,44 @@ impl ProvidersPage {
             px(520.),
             body,
             s::SAVE,
-            move |view, _, cx| match view.result(cx) {
-                Ok(model) => {
-                    page.update(cx, |this, cx| {
-                        this.edit(cx, |d| {
-                            if let Some(slot) =
-                                d.models.iter_mut().find(|m| m.model_id == model.model_id)
-                            {
-                                *slot = model;
-                            }
-                        })
-                    });
-                    true
+            move |view, window, cx| {
+                if view.saving {
+                    return false;
                 }
-                Err(error) => {
-                    view.error = Some(error);
-                    cx.notify();
-                    false
+                match view.result(cx) {
+                    Ok(model) => {
+                        let target = target.clone();
+                        view.saving = true;
+                        crate::panels::settings::providers::forms::save(
+                            page.clone(),
+                            window,
+                            cx,
+                            move |service| {
+                                let provider = service.provider(&target)?;
+                                let mut input = provider.input;
+                                let slot = input
+                                    .models
+                                    .iter_mut()
+                                    .find(|m| m.model_id == model.model_id)
+                                    .ok_or_else(|| {
+                                        thinkrail_core::Error::not_found("模型已移除")
+                                    })?;
+                                *slot = model;
+                                service.update(&target, provider.revision, input)
+                            },
+                            false,
+                            |view, error| {
+                                view.saving = false;
+                                view.error = Some(error);
+                            },
+                        );
+                        false
+                    }
+                    Err(error) => {
+                        view.error = Some(error.into());
+                        cx.notify();
+                        false
+                    }
                 }
             },
         );
@@ -199,7 +251,7 @@ impl ModelSettings {
 
 impl Render for ModelSettings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let type_menu = self.type_menu(cx);
         let lines = h_flex()
             .gap(space::S12)
@@ -238,7 +290,7 @@ impl Render for ModelSettings {
                         }))
                 }));
         let efforts = self.model.reasoning.then(|| {
-            field(
+            ui::field(
                 s::EFFORTS,
                 h_flex()
                     .gap(space::S4)
@@ -261,41 +313,40 @@ impl Render for ModelSettings {
                                 cx.notify();
                             }))
                     })),
-                cx,
+                &r,
             )
         });
-        v_flex()
-            .gap(space::S12)
+        ui::form_fields([])
             .child(label(text::CODE_TEXT, self.model.model_id.clone()).text_color(r.text_muted))
             .child(
                 h_flex()
                     .gap(space::S12)
                     .items_end()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(field(s::MODEL_NAME, Input::new(&self.name), cx)),
-                    )
-                    .child(field(s::MODEL_TYPE, type_menu, cx)),
+                    .child(div().flex_1().child(ui::field(
+                        s::MODEL_NAME,
+                        Input::new(&self.name),
+                        &r,
+                    )))
+                    .child(ui::field(s::MODEL_TYPE, type_menu, &r)),
             )
-            .child(field(s::MODEL_PROTOCOLS, lines, cx))
+            .child(ui::field(s::MODEL_PROTOCOLS, lines, &r))
             .child(
                 h_flex()
                     .gap(space::S12)
-                    .child(div().flex_1().child(field(
+                    .child(div().flex_1().child(ui::field(
                         s::CONTEXT_WINDOW,
                         Input::new(&self.context_window),
-                        cx,
+                        &r,
                     )))
-                    .child(div().flex_1().child(field(
+                    .child(div().flex_1().child(ui::field(
                         s::MAX_OUTPUT,
                         Input::new(&self.max_tokens),
-                        cx,
+                        &r,
                     ))),
             )
-            .child(field(s::CAPABILITIES, caps, cx))
+            .child(ui::field(s::CAPABILITIES, caps, &r))
             .children(efforts)
-            .children(error_text(self.error.map(str::to_owned), cx))
+            .children(error_text(self.error.clone(), cx))
             .child(label(text::METADATA, s::APPLIES_NEXT).text_color(r.text_subtle))
     }
 }

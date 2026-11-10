@@ -237,6 +237,19 @@ impl AppearanceState {
         };
         let theme = state.current_theme();
         let typography = typeset::typography(&state.prefs, &state.families);
+        lumakit_design::Typography::set(
+            lumakit_design::Typography {
+                interface_family: typography.interface_family.clone(),
+                interface_fallbacks: typography.interface_fallbacks.clone(),
+                code_family: typography.code_family.clone(),
+                code_fallbacks: typography.code_fallbacks.clone(),
+                code_size: typography.code_size,
+                ligatures: typography.ligatures,
+                weight_offset: typography.weight_offset,
+                scale: 1.0,
+            },
+            cx,
+        );
         thinkrail_ui::Typography::set(typography, cx);
         theme.install(None, cx);
         cx.refresh_windows();

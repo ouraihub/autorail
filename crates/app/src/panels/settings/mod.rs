@@ -113,10 +113,10 @@ impl SettingsDialog {
             }
         });
         // Enter inside a field must not close settings: the dialog has no OK action.
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, window, _| {
             dialog
                 .title(shell::TITLE)
-                .w(px(1040.))
+                .w(px(1040.).min(window.viewport_size().width - space::S32))
                 .on_ok(|_, _, _| false)
                 .child(view.clone())
         });
@@ -172,6 +172,7 @@ impl SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = ThinkrailTheme::global(cx).roles;
+        let narrow = window.viewport_size().width < lumakit_design::metrics::size::NARROW;
         let content = match self.page {
             Page::Models => self.models.clone().into_any_element(),
             Page::Providers => self.providers.clone().into_any_element(),
@@ -182,19 +183,23 @@ impl Render for SettingsView {
         };
         h_flex()
             .id("settings-shell")
+            .w_full()
+            .min_w(px(0.))
+            .when(narrow, |d| d.flex_col())
             .items_start()
             .h(window.viewport_size().height * 0.8 - px(72.))
             .min_h(px(0.))
             .bg(r.container_content_bg)
             .child(
                 v_flex()
-                    .w(px(192.))
-                    .h_full()
+                    .when(narrow, |d| d.w_full().flex_row().flex_wrap())
+                    .when(!narrow, |d| d.w(px(192.)).h_full())
                     .flex_none()
                     .gap(space::S4)
                     .p(space::S12)
                     .bg(r.container_elevated_bg)
-                    .border_r_1()
+                    .when(narrow, |d| d.border_b_1())
+                    .when(!narrow, |d| d.border_r_1())
                     .border_color(r.border_muted)
                     .child(
                         label(text::LABEL_PILL, "AGENT")
@@ -209,7 +214,7 @@ impl Render for SettingsView {
                     .child(
                         label(text::LABEL_PILL, s_appearance::GROUP)
                             .h(px(28.))
-                            .mt(space::S8)
+                            .when(!narrow, |d| d.mt(space::S8))
                             .text_color(r.text_subtle),
                     )
                     .child(self.nav(Page::Appearance, IconName::Palette, s_appearance::TITLE, cx)),
@@ -218,7 +223,8 @@ impl Render for SettingsView {
                 v_flex()
                     .id("settings-content")
                     .flex_1()
-                    .h_full()
+                    .when(!narrow, |d| d.h_full())
+                    .w_full()
                     .min_w(px(0.))
                     .min_h(px(0.))
                     .overflow_y_scrollbar()

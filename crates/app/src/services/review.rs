@@ -19,6 +19,8 @@ use thinkrail_plan_review::{plan_ops, review, verdict};
 
 use super::Services;
 
+mod dispatch;
+
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Default)]
@@ -29,10 +31,13 @@ struct SinkState {
 struct ReviewerSink {
     state: Mutex<SinkState>,
     wake: Condvar,
+    span: tracing::Span,
 }
 
 impl SessionSink for ReviewerSink {
     fn publish(&self, event: SessionEvent) {
+        let _entered = self.span.enter();
+        tracing::debug!("review.session_event");
         if let SessionEvent::Snapshot { snapshot } = event {
             let mut state = self
                 .state
@@ -46,6 +51,8 @@ impl SessionSink for ReviewerSink {
 
 struct Running {
     handle: ReviewHandle,
+    span: tracing::Span,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct AppReviewRunner {
@@ -57,7 +64,7 @@ pub struct AppReviewRunner {
     engines: Arc<dyn EngineSetup>,
     runtimes: [Arc<dyn AgentRuntime>; 3],
     support_dir: PathBuf,
-    events: async_channel::Sender<ReviewEvent>,
+    events: async_channel::Sender<(tracing::Span, ReviewEvent)>,
     self_ref: OnceLock<Weak<AppReviewRunner>>,
     running: Mutex<HashMap<(String, String, PlanItemId), Running>>,
 }
@@ -66,7 +73,7 @@ impl AppReviewRunner {
     pub fn new(
         services: &Services,
         support_dir: PathBuf,
-        events: async_channel::Sender<ReviewEvent>,
+        events: async_channel::Sender<(tracing::Span, ReviewEvent)>,
     ) -> Arc<Self> {
         let runner = Arc::new(Self {
             plans: services.plans.clone(),
@@ -108,7 +115,12 @@ impl AppReviewRunner {
         }
     }
 
-    fn run(&self, scope: &PlanScope, item_id: &PlanItemId) -> ReviewResult {
+    fn run(
+        &self,
+        scope: &PlanScope,
+        item_id: &PlanItemId,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> ReviewResult {
         let binding = match self.bindings.bindings(&scope.workspace) {
             Ok(items) => items.into_iter().find(|item| item.chat_id == scope.chat),
             Err(error) => return Self::failure(error.to_string()),
@@ -146,6 +158,10 @@ impl AppReviewRunner {
             Err(error) => return Self::failure(error.to_string()),
         };
         let reviewer_chat = ChatId::generate();
+        let reviewer_span = tracing::info_span!("review.session", reviewer_chat_id = %reviewer_chat,
+            chat_id = %scope.chat, workspace_id = %scope.workspace, backend = binding.backend.label());
+        let _entered = reviewer_span.enter();
+        tracing::info!("review.session_preparing");
         let wanted_model = prefs.review.model.clone().or(prefs.default_model.clone());
         let request = thinkrail_core::RouteRequest {
             chat: reviewer_chat.clone(),
@@ -178,6 +194,7 @@ impl AppReviewRunner {
         let sink = Arc::new(ReviewerSink {
             state: Mutex::new(SinkState::default()),
             wake: Condvar::new(),
+            span: tracing::Span::current(),
         });
         let launch = match self.engines.status(binding.backend) {
             Ok(Some(install)) => install.launch,
@@ -213,6 +230,9 @@ impl AppReviewRunner {
         let deadline = Instant::now() + TIMEOUT;
         let mut was_running = false;
         let final_text = loop {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                break None;
+            }
             let mut state = sink
                 .state
                 .lock()
@@ -240,9 +260,12 @@ impl AppReviewRunner {
                 }
             }
             if Instant::now() >= deadline {
+                tracing::warn!(timeout_ms = TIMEOUT.as_millis() as u64, "review.timeout");
                 break None;
             }
-            let remain = deadline.saturating_duration_since(Instant::now());
+            let remain = deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(250));
             let (next, _) = sink
                 .wake
                 .wait_timeout(state, remain)
@@ -287,9 +310,19 @@ impl AppReviewRunner {
             });
             Self::failure("reviewer produced no valid verdict")
         };
-        let _ = session.dispose();
+        match session.dispose() {
+            Ok(()) => tracing::info!("review.session_disposed"),
+            Err(error) => tracing::warn!(
+                code = thinkrail_core::ErrorCode::code(&error),
+                "review.dispose_failed"
+            ),
+        }
         self.router.release(&reviewer_chat);
-        let _ = fs::remove_dir_all(support);
+        match fs::remove_dir_all(support) {
+            Ok(()) => tracing::info!("review.cleanup_finished"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => tracing::warn!("review.cleanup_failed"),
+        }
         result
     }
 }
@@ -299,97 +332,4 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
-}
-
-impl ReviewRunner for AppReviewRunner {
-    fn start(
-        &self,
-        scope: &PlanScope,
-        item: &PlanItemId,
-        origin: ReviewOrigin,
-    ) -> thinkrail_core::Result<thinkrail_core::StartedReview> {
-        let key = (
-            scope.workspace.to_string(),
-            scope.chat.to_string(),
-            item.clone(),
-        );
-        if let Some(existing) = self
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&key)
-        {
-            return Ok(thinkrail_core::StartedReview {
-                handle: existing.handle.clone(),
-                joined: true,
-            });
-        }
-        let handle = ReviewHandle::default();
-        self.running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(
-                key.clone(),
-                Running {
-                    handle: handle.clone(),
-                },
-            );
-        let worker_scope = scope.clone();
-        let worker_item = item.clone();
-        let worker_handle = handle.clone();
-        let started_scope = scope.clone();
-        let started_item = item.clone();
-        let runner = self
-            .self_ref
-            .get()
-            .and_then(Weak::upgrade)
-            .ok_or_else(|| thinkrail_core::Error::external("review runner unavailable"))?;
-        let event_tx = self.events.clone();
-        thread::Builder::new()
-            .name("plan-review".into())
-            .spawn(move || {
-                let result = runner.run(&worker_scope, &worker_item);
-                worker_handle.finish(result.clone());
-                if !matches!(origin, ReviewOrigin::Tool { waits: true }) {
-                    let _ = event_tx.send_blocking(ReviewEvent::Finished {
-                        scope: worker_scope.clone(),
-                        item: worker_item.clone(),
-                        result,
-                    });
-                }
-                runner
-                    .running
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .remove(&key);
-            })
-            .map_err(|error| thinkrail_core::Error::external(error.to_string()))?;
-        let _ = self.events.send_blocking(ReviewEvent::Started {
-            scope: started_scope,
-            item: started_item,
-        });
-        Ok(thinkrail_core::StartedReview {
-            handle,
-            joined: false,
-        })
-    }
-
-    fn cancel(&self, scope: &PlanScope) {
-        let mut running = self
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let keys: Vec<_> = running
-            .keys()
-            .filter(|(workspace, chat, _)| {
-                workspace == scope.workspace.as_str() && chat == scope.chat.as_str()
-            })
-            .cloned()
-            .collect();
-        for key in keys {
-            if let Some(review) = running.remove(&key) {
-                review.handle.finish(Self::failure("review cancelled"));
-            }
-        }
-    }
 }
