@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+lumakit-observability.workspace = true
 thinkrail-core.workspace = true
 anyhow.workspace = true
 time.workspace = true

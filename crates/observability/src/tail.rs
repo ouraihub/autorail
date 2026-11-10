@@ -1,5 +1,6 @@
 //! The bounded read-back the log page uses (after AutoNote / Aether `tail`): the last 256 KiB of
-//! the newest `thinkrail-native.*.log`, at most 2000 lines, each parsed into an entry.
+//! the newest `thinkrail-native.*.log`, at most 2000 lines. Each line is parsed with LumaKit's
+//! `parse_line`, the same contract `GrepFormat` writes, so the page never keeps its own parser.
 
 use std::{
     fs::File,
@@ -19,13 +20,41 @@ pub struct LogEntry {
     pub time: String,
     /// `ERROR` | `WARN` | `INFO` | `DEBUG` | `TRACE`.
     pub level: String,
-    /// `op{id=… at=…}` prefixes (outermost first), empty outside an operation.
-    pub spans: String,
-    /// Module path of the event.
-    pub target: String,
-    /// Message followed by its `k=v` fields.
+    /// The `TraceId` segment, when the line was written inside an operation.
+    pub trace_id: Option<String>,
+    /// The `ME` segment: the stable operation name.
+    pub operation: Option<String>,
+    /// The `EV` segment of lifecycle lines: `ENTRY`, `EXIT`, `ERROR`, `CANCEL`, `TIMEOUT`…
+    pub event: Option<String>,
+    /// The `RT` segment: elapsed milliseconds of a finished operation.
+    pub duration_ms: Option<u64>,
+    /// The `Layer` segment: the layer of the operation the line was written in (`ui`, `review`…).
+    pub layer: Option<String>,
+    /// The event's module (`Target`), or the `Layer` of a lifecycle line; empty when neither.
+    pub component: String,
+    /// The `Msg` segment; the whole line when it does not follow the format.
     pub message: String,
     pub raw: String,
+}
+
+fn parse(seq: usize, line: &str) -> LogEntry {
+    let parsed = lumakit_observability::parse_line(line);
+    LogEntry {
+        seq,
+        time: parsed.time,
+        level: parsed.level,
+        trace_id: parsed.trace_id,
+        operation: parsed.operation,
+        event: parsed.event,
+        duration_ms: parsed.duration_ms,
+        component: parsed
+            .target
+            .or_else(|| parsed.layer.clone())
+            .unwrap_or_default(),
+        layer: parsed.layer,
+        message: parsed.message,
+        raw: parsed.raw,
+    }
 }
 
 /// The newest file in `dir` (names sort by date); `None` when there is none.
@@ -42,7 +71,10 @@ fn newest(dir: &Path) -> io::Result<Option<PathBuf>> {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        if name.starts_with(&format!("{}.", crate::FILE_PREFIX))
+        let prefixed = name
+            .strip_prefix(crate::FILE_PREFIX)
+            .is_some_and(|rest| rest.starts_with('.'));
+        if prefixed
             && name.ends_with(".log")
             && newest.as_ref().is_none_or(|current| path > *current)
         {
@@ -78,59 +110,4 @@ pub fn tail(dir: &Path, limit: usize) -> io::Result<Vec<LogEntry>> {
         .enumerate()
         .map(|(seq, line)| parse(seq, line.trim_end_matches('\r')))
         .collect())
-}
-
-/// `<time> <LEVEL> [<span>{fields}:]* <target>: <message>`; anything else is an INFO line with
-/// the whole text as its message.
-fn parse(seq: usize, line: &str) -> LogEntry {
-    parse_fixed(seq, line).unwrap_or_else(|| LogEntry {
-        seq,
-        time: String::new(),
-        level: "INFO".to_owned(),
-        spans: String::new(),
-        target: String::new(),
-        message: line.to_owned(),
-        raw: line.to_owned(),
-    })
-}
-
-fn parse_fixed(seq: usize, line: &str) -> Option<LogEntry> {
-    let (time, rest) = line.split_once(' ')?;
-    if !time.contains('T') {
-        return None;
-    }
-    let (level, rest) = rest.trim_start().split_once(' ')?;
-    if !matches!(level, "ERROR" | "WARN" | "INFO" | "DEBUG" | "TRACE") {
-        return None;
-    }
-    let rest = rest.trim_start();
-    // Spans are `name{fields}:` written back to back; fields may hold spaces, never `}:`.
-    let mut spans_end = 0;
-    while let Some(open) = rest[spans_end..].find('{') {
-        let name = &rest[spans_end..spans_end + open];
-        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            break;
-        }
-        let Some(close) = rest[spans_end + open..].find("}:") else {
-            break;
-        };
-        spans_end += open + close + 2;
-    }
-    let spans = rest[..spans_end].trim_end_matches(':');
-    let rest = rest[spans_end..].trim_start();
-    let (target, message) = rest
-        .split_once(": ")
-        .or_else(|| rest.strip_suffix(':').map(|t| (t, "")))?;
-    if target.contains(' ') {
-        return None;
-    }
-    Some(LogEntry {
-        seq,
-        time: time.to_owned(),
-        level: level.to_owned(),
-        spans: spans.to_owned(),
-        target: target.to_owned(),
-        message: message.to_owned(),
-        raw: line.to_owned(),
-    })
 }

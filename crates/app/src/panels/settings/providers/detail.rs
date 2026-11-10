@@ -1,9 +1,9 @@
-//! 选中服务商的详情：标题行、API 密钥与检测、密钥使用方式、API 地址与线路、模型。
+//! Native detail intents and route data; LumaKit owns their presentation.
 
 use gpui_kit::{
     AnyElement, Context, IntoElement, ParentElement as _, Styled as _,
     assets::IconName,
-    base::{h_flex, v_flex},
+    base::h_flex,
     component::{
         Sizable as _,
         button::{Button, ButtonVariants as _},
@@ -11,40 +11,29 @@ use gpui_kit::{
         menu::{DropdownMenu as _, PopupMenuItem},
         switch::Switch,
     },
-    prelude::FluentBuilder as _,
-    px,
 };
+use lumakit_gpui::providers as ui;
 use thinkrail_routing::models_url;
 use thinkrail_ui::{
-    ThinkrailTheme,
     components::{IconButton, label},
     metrics::{space, text},
 };
 
-use super::{ProvidersPage, error_text};
-use crate::strings::settings_providers as s;
+use super::{ProvidersPage, error_text, theme};
+use crate::{state::run, strings::settings_providers as s};
 
 mod key;
 
 impl ProvidersPage {
     pub(super) fn render_detail(&self, cx: &mut Context<Self>) -> AnyElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let (Some(provider), Some(draft)) = (self.provider().cloned(), self.draft.as_ref()) else {
-            let message = if self.loaded {
-                (s::EMPTY, s::EMPTY_HINT)
-            } else {
-                (s::LOADING, "")
-            };
-            return v_flex()
-                .flex_1()
-                .items_center()
-                .py(space::S40)
-                .gap(space::S4)
-                .child(label(text::TITLE_SECTION, message.0))
-                .child(label(text::METADATA, message.1).text_color(r.text_subtle))
-                .into_any_element();
+            return lumakit_design::components::settings::placeholder(
+                if self.loaded { s::EMPTY } else { s::LOADING },
+                if self.loaded { s::EMPTY_HINT } else { "" },
+                &r,
+            );
         };
-        let enabled = draft.enabled;
         let failed = self.failed.clone().map(|error| {
             h_flex()
                 .gap(space::S8)
@@ -58,57 +47,72 @@ impl ProvidersPage {
                         .label(s::RETRY)
                         .on_click(cx.listener(|this, _, _, cx| this.commit(cx))),
                 )
+                .into_any_element()
         });
-        v_flex()
-            .flex_1()
-            .min_w(px(0.))
-            .gap(space::S16)
-            .child(
-                h_flex()
-                    .gap(space::S8)
-                    .child(label(text::HEADING_SM, draft.name.clone()).truncate())
-                    .child(
-                        IconButton::new("provider-settings", IconName::Settings2)
-                            .tooltip(s::SETTINGS)
-                            .on_click(cx.listener({
-                                let p = provider.clone();
-                                move |this, _, window, cx| {
-                                    this.open_name_dialog(Some(p.clone()), window, cx)
-                                }
-                            })),
-                    )
-                    .child(gpui_kit::div().flex_1())
-                    .child(
-                        Switch::new("provider-enabled")
-                            .checked(enabled)
-                            .color(r.feedback_success)
-                            .on_click(cx.listener(|this, value: &bool, _, cx| {
-                                let value = *value;
-                                this.edit(cx, |d| d.enabled = value)
-                            })),
-                    ),
+        let settings = IconButton::new("provider-settings", IconName::Settings2)
+            .tooltip(s::SETTINGS)
+            .on_click(cx.listener({
+                let p = provider.clone();
+                move |this, _, window, cx| this.open_name_dialog(Some(p.clone()), window, cx)
+            }));
+        let enabled = Switch::new("provider-enabled")
+            .checked(provider.input.enabled)
+            .color(r.feedback_success)
+            .on_click(cx.listener(|this, value: &bool, _, cx| this.set_enabled(*value, cx)));
+        ui::detail(
+            ui::detail_header(
+                draft.name.clone(),
+                settings.into_any_element(),
+                enabled.into_any_element(),
             )
-            .children(failed)
-            .child(self.render_key(&provider, cx))
-            .child(
-                v_flex()
-                    .gap(space::S4)
-                    .child(label(text::TITLE_COMPACT, s::KEY_STRATEGY).text_color(r.text_muted))
-                    .child(label(text::UI, s::KEY_STRATEGY_ROUND_ROBIN))
-                    .child(
-                        label(text::METADATA, s::KEY_STRATEGY_ROUND_ROBIN_DESC)
-                            .text_color(r.text_subtle),
-                    ),
+            .into_any_element(),
+            failed,
+            self.render_key(&provider, cx),
+            ui::strategy(
+                s::KEY_STRATEGY_ROUND_ROBIN,
+                s::KEY_STRATEGY_ROUND_ROBIN_DESC,
+                &r,
             )
-            .child(self.render_url(cx))
-            .child(self.render_models(cx))
-            .into_any_element()
+            .into_any_element(),
+            self.render_url(cx),
+            self.render_models(cx),
+        )
+        .into_any_element()
     }
-}
 
-impl ProvidersPage {
+    pub(super) fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+        let service = self.service(cx);
+        let target = id.clone();
+        run(
+            cx,
+            move || {
+                let provider = service.provider(&id)?;
+                let mut input = provider.input;
+                input.enabled = enabled;
+                service.update(&id, provider.revision, input)
+            },
+            move |this, result, cx| {
+                match result {
+                    Ok(provider) => {
+                        if this.selected.as_ref() == Some(&target)
+                            && let Some(draft) = &mut this.draft
+                        {
+                            draft.enabled = provider.input.enabled;
+                        }
+                        this.store_snapshot(provider, cx);
+                    }
+                    Err(error) => this.report(&error, cx),
+                }
+                cx.notify();
+            },
+        );
+    }
+
     fn render_url(&self, cx: &mut Context<Self>) -> AnyElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let Some(draft) = self.draft.as_ref() else {
             return gpui_kit::div().into_any_element();
         };
@@ -147,6 +151,7 @@ impl ProvidersPage {
                         )
                     })
                 })
+                .into_any_element()
         });
         let url = self.line_url();
         let hint = if self.url_error {
@@ -159,40 +164,31 @@ impl ProvidersPage {
                     .into_any_element()
             })
         };
-        v_flex()
-            .gap(space::S6)
-            .child(
-                h_flex()
-                    .gap(space::S8)
-                    .child(label(text::TITLE_COMPACT, s::BASE_URL).text_color(r.text_muted))
-                    .when(can_add, |d| {
-                        d.child(
-                            Button::new("provider-add-line")
-                                .link()
-                                .xsmall()
-                                .label(s::ADD_LINE)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_line_dialog(None, window, cx)
-                                })),
-                        )
-                    }),
-            )
-            .children(picker)
-            .child(
-                h_flex()
-                    .gap(space::S8)
-                    .child(Input::new(&self.url).flex_1())
-                    .child(
-                        Button::new("provider-line-settings")
-                            .outline()
-                            .icon(IconName::Settings2)
-                            .tooltip(s::LINE_SETTINGS_TIP)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_line_dialog(Some(current), window, cx)
-                            })),
-                    ),
-            )
-            .children(hint)
-            .into_any_element()
+        ui::route_section(
+            can_add.then(|| {
+                Button::new("provider-add-line")
+                    .link()
+                    .xsmall()
+                    .label(s::ADD_LINE)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.open_line_dialog(None, window, cx)),
+                    )
+                    .into_any_element()
+            }),
+            picker,
+            Input::new(&self.url).into_any_element(),
+            Button::new("provider-line-settings")
+                .outline()
+                .icon(IconName::Settings2)
+                .tooltip(s::LINE_SETTINGS_TIP)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_line_dialog(Some(current), window, cx)
+                }))
+                .into_any_element(),
+            None,
+            hint,
+            &r,
+        )
+        .into_any_element()
     }
 }

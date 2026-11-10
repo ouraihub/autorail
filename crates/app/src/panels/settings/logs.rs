@@ -1,6 +1,7 @@
 //! 后台日志 (native-multi-agent 06 §5, after AutoNote `LogSettings` / `LogPanel`): the 显示后台日志
 //! switch and level, and — while shown and this page is open — the newest log lines, refreshed
-//! every 2 s, filterable by `op{id=…`, `chat=…` or module, copyable as raw lines.
+//! every 2 s, narrowed by 只看问题, event, layer and free text (TraceId, op, chat or module),
+//! copyable as raw lines.
 //!
 //! The reads here bypass `state::run` on purpose: polling must not write an `op` line every 2 s.
 
@@ -24,7 +25,7 @@ use gpui_kit::{
 use thinkrail_core::{AppPrefs, Error, LogLevel};
 use thinkrail_observability::LogEntry;
 use thinkrail_ui::{
-    Roles, ThinkrailTheme,
+    ThinkrailTheme,
     components::{Segment, label},
     metrics::{radius, space, text},
 };
@@ -42,7 +43,7 @@ pub struct LogsPage {
     state: Entity<AppState>,
     prefs: Option<AppPrefs>,
     entries: Vec<LogEntry>,
-    only_problems: bool,
+    narrow: Narrow,
     filter: Entity<InputState>,
     read_error: Option<String>,
     copied: bool,
@@ -65,7 +66,7 @@ impl LogsPage {
             state,
             prefs: None,
             entries: Vec::new(),
-            only_problems: false,
+            narrow: Narrow::default(),
             filter,
             read_error: None,
             copied: false,
@@ -181,19 +182,17 @@ impl LogsPage {
         );
     }
 
-    /// Newest first, after 只看问题 and the filter text.
+    /// Newest first, after the event / layer / 只看问题 choices and the filter text.
     fn visible(&self, cx: &Context<Self>) -> Vec<&LogEntry> {
         let query = self.filter.read(cx).value().trim().to_owned();
         self.entries
             .iter()
             .rev()
-            .filter(|e| !self.only_problems || e.level == "ERROR" || e.level == "WARN")
-            .filter(|e| query.is_empty() || e.raw.contains(&query))
+            .filter(|e| self.narrow.keeps(e, &query))
             .collect()
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {
-        // Oldest first, as in the file, so a model reads the chain in order.
         let mut lines: Vec<&str> = self
             .visible(cx)
             .into_iter()
@@ -204,57 +203,26 @@ impl LogsPage {
         self.copied = true;
         cx.notify();
     }
+
+    /// A TraceId tag selects its whole chain; the same tag again clears the filter.
+    fn filter_trace(&mut self, trace_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if self.filter.read(cx).value().trim() == trace_id {
+            String::new()
+        } else {
+            trace_id.to_owned()
+        };
+        self.filter
+            .update(cx, |input, cx| input.set_value(next, window, cx));
+        cx.notify();
+    }
 }
 
-fn row(entry: &LogEntry, r: &Roles) -> impl IntoElement + use<> {
-    let color = match entry.level.as_str() {
-        "ERROR" => r.feedback_error,
-        "WARN" => r.feedback_warning,
-        _ => r.text_default,
-    };
-    // `2026-11-01T15:26:55.669+08:00` → `15:26:55`.
-    let time = entry.time.get(11..19).unwrap_or("—").to_owned();
-    let target = entry
-        .target
-        .rsplit("::")
-        .next()
-        .unwrap_or_default()
-        .to_owned();
-    h_flex()
-        .gap(space::S8)
-        .items_start()
-        .px(space::S8)
-        .py(space::S2)
-        .rounded(radius::SM)
-        .hover(|d| d.bg(r.control_bg_hovered))
-        .child(
-            label(text::CODE_SMALL, time)
-                .text_color(r.text_subtle)
-                .flex_none(),
-        )
-        .child(
-            label(text::CODE_SMALL, entry.level.clone())
-                .text_color(color)
-                .w(px(40.))
-                .flex_none(),
-        )
-        .children((!entry.spans.is_empty()).then(|| {
-            label(text::CODE_SMALL, entry.spans.clone())
-                .text_color(r.primary)
-                .flex_none()
-        }))
-        .child(
-            label(text::CODE_SMALL, target)
-                .text_color(r.text_muted)
-                .flex_none(),
-        )
-        .child(
-            label(text::CODE_SMALL, entry.message.clone())
-                .text_color(color)
-                .flex_1()
-                .min_w_0(),
-        )
-}
+mod filter;
+mod menus;
+mod row;
+
+use filter::Narrow;
+use row::row;
 
 impl Render for LogsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -266,12 +234,17 @@ impl Render for LogsPage {
         let visible = self.visible(cx);
         let empty = if self.entries.is_empty() {
             s::EMPTY
-        } else if self.only_problems {
+        } else if self.narrow
+            == (Narrow {
+                only_problems: true,
+                ..Narrow::default()
+            })
+        {
             s::NO_PROBLEMS
         } else {
             s::NO_MATCHES
         };
-        let rows: Vec<_> = visible.iter().map(|e| row(e, &r)).collect();
+        let rows: Vec<_> = visible.iter().map(|e| row(e, &r, cx)).collect();
         let count = visible.len();
         let setting = |title: &'static str, hint: &'static str, control: gpui_kit::AnyElement| {
             h_flex()
@@ -350,10 +323,10 @@ impl Render for LogsPage {
                                 )
                                 .child(
                                     Switch::new("logs-problems")
-                                        .checked(self.only_problems)
+                                        .checked(self.narrow.only_problems)
                                         .label(s::ONLY_PROBLEMS)
                                         .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                            this.only_problems = *checked;
+                                            this.narrow.only_problems = *checked;
                                             cx.notify();
                                         })),
                                 )
@@ -384,7 +357,19 @@ impl Render for LogsPage {
                                         })),
                                 ),
                         )
-                        .child(Input::new(&self.filter).small())
+                        .child(
+                            h_flex()
+                                .gap(space::S8)
+                                .items_center()
+                                .child(self.event_menu(cx))
+                                .child(self.layer_menu(cx))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&self.filter).small()),
+                                ),
+                        )
                         .when(self.copied, |d| {
                             d.child(label(text::METADATA, s::COPIED).text_color(r.feedback_success))
                         })

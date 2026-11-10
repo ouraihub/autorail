@@ -6,7 +6,7 @@
 //! through (agent-settings 08 §5.5). A cancelled request gets no reply.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
     sync::{Arc, Mutex, PoisonError},
     thread,
@@ -14,6 +14,7 @@ use std::{
 
 use serde_json::{Value, json};
 use thinkrail_core::{HostToolResult, HostToolSpec};
+use thinkrail_observability::{TraceContext, operation};
 
 use crate::bridge::{self, BridgeClient};
 
@@ -184,8 +185,12 @@ pub(crate) fn serve<W: Write + Send + 'static>(
     output: W,
     backend: Arc<dyn Backend>,
 ) -> std::io::Result<()> {
+    // One root per MCP connection; it ends when the input closes and every call has returned.
+    let (trace, session) = TraceContext::root("mcp.session", "host_tools");
+    let session_span = session.span().clone();
+    let _session = session_span.enter();
     let output = Arc::new(Mutex::new(output));
-    let running: Arc<Mutex<HashSet<String>>> = Arc::default();
+    let running: Arc<Mutex<HashMap<String, tracing::Span>>> = Arc::default();
     let cancelled: Arc<Mutex<HashSet<String>>> = Arc::default();
     let mut workers = Vec::new();
     let write = |output: &Mutex<W>, value: &Value| -> std::io::Result<()> {
@@ -201,11 +206,14 @@ pub(crate) fn serve<W: Write + Send + 'static>(
             Frame::Ignore => {}
             Frame::Cancelled(id) => {
                 let key = id.to_string();
-                if running
+                let call_span = running
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .contains(&key)
-                {
+                    .get(&key)
+                    .cloned();
+                if let Some(span) = call_span {
+                    let _entered = span.enter();
+                    tracing::debug!("mcp.call.cancel_requested");
                     cancelled
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -219,10 +227,14 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                 arguments,
             } => {
                 let key = id.to_string();
+                let span = tracing::info_span!(parent: &session_span, "mcp.call",
+     component = "host_tools");
                 running
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(key.clone());
+                    .insert(key.clone(), span.clone());
+                let trace = trace.clone();
+                let dispatch = tracing::dispatcher::get_default(Clone::clone);
                 let (backend, output, running, cancelled) = (
                     backend.clone(),
                     output.clone(),
@@ -233,7 +245,10 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                     thread::Builder::new()
                         .name("mcp-host-call".into())
                         .spawn(move || {
-                            let response = call_reply(&id, backend.call(&name, arguments));
+                            let _dispatch = tracing::dispatcher::set_default(&dispatch);
+                            let _entered = span.enter();
+                            let call = operation(&trace, "mcp.call", "host_tools");
+                            let reply = backend.call(&name, arguments);
                             running
                                 .lock()
                                 .unwrap_or_else(PoisonError::into_inner)
@@ -242,6 +257,17 @@ pub(crate) fn serve<W: Write + Send + 'static>(
                                 .lock()
                                 .unwrap_or_else(PoisonError::into_inner)
                                 .remove(&key);
+                            // Backend errors are bridge/transport strings without a stable code.
+                            match (&reply, withdrawn) {
+                                (_, true) => call.cancel("engine_withdrew"),
+                                (Ok(result), false) if result.is_error => {
+                                    call.fail("host_tool_error")
+                                }
+                                (Ok(_), false) => call.finish("SUCCESS"),
+                                (Err(_), false) => call.fail("MCP_BRIDGE_FAILED"),
+                            }
+                            let response = call_reply(&id, reply);
+                            tracing::debug!(cancelled = withdrawn, "mcp.call.returned");
                             if !withdrawn {
                                 let mut out = output.lock().unwrap_or_else(PoisonError::into_inner);
                                 if let Err(error) = bridge::write_line(&mut *out, &response) {
@@ -257,6 +283,7 @@ pub(crate) fn serve<W: Write + Send + 'static>(
     for worker in workers {
         let _ = worker.join();
     }
+    session.finish("CLOSED");
     Ok(())
 }
 

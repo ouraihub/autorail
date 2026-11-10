@@ -3,7 +3,7 @@
 use gpui_kit::{
     AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
     assets::IconName,
-    base::{h_flex, v_flex},
+    base::h_flex,
     component::{
         Icon, Sizable as _, WindowExt as _,
         button::Button,
@@ -15,13 +15,13 @@ use gpui_kit::{
 };
 use thinkrail_core::{Access, Endpoint, LINE_PROTOCOLS, Protocol, Provider, ProviderInput};
 use thinkrail_ui::{
-    ThinkrailTheme,
     components::{Segment, label},
-    metrics::{space, text},
+    metrics::text,
 };
 
-use super::{ProvidersPage, error_text, field, open_form, valid_url};
+use super::{ProvidersPage, error_text, open_form, theme, valid_url};
 use crate::{state::run, strings::settings_providers as s};
+use lumakit_gpui::providers as ui;
 
 mod line;
 
@@ -68,11 +68,12 @@ struct NameForm {
     protocol: Protocol,
     access: Access,
     error: Option<String>,
+    saving: bool,
 }
 
 impl Render for NameForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let r = ThinkrailTheme::global(cx).roles;
+        let r = theme::roles(cx);
         let creating = self.provider.is_none();
         let protocol = protocol_menu(
             "new-protocol",
@@ -82,17 +83,13 @@ impl Render for NameForm {
             |form: &mut NameForm, p| form.protocol = p,
         );
         let access = usize::from(self.access == Access::Gateway);
-        v_flex()
-            .gap(space::S12)
-            .child(field(s::NAME, Input::new(&self.name), cx))
+        ui::form_fields([])
+            .child(ui::field(s::NAME, Input::new(&self.name), &r))
             .when(creating, |d| {
-                d.child(field(s::PROTOCOL, protocol, cx)).child(field(
-                    s::BASE_URL,
-                    Input::new(&self.url),
-                    cx,
-                ))
+                d.child(ui::field(s::PROTOCOL, protocol, &r))
+                    .child(ui::field(s::BASE_URL, Input::new(&self.url), &r))
             })
-            .child(field(
+            .child(ui::field(
                 s::ACCESS,
                 Segment::new("provider-access", [s::DIRECT, s::GATEWAY], access).on_select(
                     cx.listener(|this, index: &usize, _, cx| {
@@ -104,7 +101,7 @@ impl Render for NameForm {
                         cx.notify();
                     }),
                 ),
-                cx,
+                &r,
             ))
             .child(label(text::METADATA, s::GATEWAY_HELP).text_color(r.text_subtle))
             .children(error_text(self.error.clone(), cx))
@@ -129,6 +126,7 @@ impl ProvidersPage {
             protocol: Protocol::OpenaiChat,
             access,
             error: None,
+            saving: false,
             provider,
         });
         let page = cx.entity();
@@ -144,7 +142,10 @@ impl ProvidersPage {
             px(440.),
             form,
             s::CONFIRM,
-            move |form, _, cx| {
+            move |form, window, cx| {
+                if form.saving {
+                    return false;
+                }
                 let name = form.name.read(cx).value().trim().to_owned();
                 if name.is_empty() {
                     form.error = Some(s::NAME_REQUIRED.into());
@@ -152,14 +153,27 @@ impl ProvidersPage {
                     return false;
                 }
                 let access = form.access;
-                if form.provider.is_some() {
-                    page.update(cx, |this, cx| {
-                        this.edit(cx, |d| {
-                            d.name = name;
-                            d.access = access;
-                        })
-                    });
-                    return true;
+                if let Some(provider) = &form.provider {
+                    let id = provider.id.clone();
+                    form.saving = true;
+                    super::forms::save(
+                        page.clone(),
+                        window,
+                        cx,
+                        move |service| {
+                            let provider = service.provider(&id)?;
+                            let mut input = provider.input;
+                            input.name = name;
+                            input.access = access;
+                            service.update(&id, provider.revision, input)
+                        },
+                        false,
+                        |form, error| {
+                            form.saving = false;
+                            form.error = Some(error);
+                        },
+                    );
+                    return false;
                 }
                 let url = form.url.read(cx).value().trim().to_owned();
                 if !valid_url(&url) {
@@ -180,22 +194,19 @@ impl ProvidersPage {
                     enabled: true,
                     models: Vec::new(),
                 };
-                page.update(cx, |this, cx| {
-                    let service = this.service(cx);
-                    run(
-                        cx,
-                        move || service.create(input),
-                        |this, result, cx| match result {
-                            Ok(provider) => {
-                                let id = provider.id.clone();
-                                this.stored(provider, cx);
-                                this.select(id, cx);
-                            }
-                            Err(error) => this.report(&error, cx),
-                        },
-                    );
-                });
-                true
+                form.saving = true;
+                super::forms::save(
+                    page.clone(),
+                    window,
+                    cx,
+                    move |service| service.create(input),
+                    true,
+                    |form, error| {
+                        form.saving = false;
+                        form.error = Some(error);
+                    },
+                );
+                false
             },
         );
     }

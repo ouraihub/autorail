@@ -8,19 +8,19 @@ use tracing::{debug, warn};
 use crate::services::Services;
 
 /// Runs blocking service work on the background executor and hands the result back to the view.
-/// The view decides what a late result means (e.g. by comparing the workspace it was issued for).
-///
-/// Each call is one `op{id at}` span (native-multi-agent 06 §2): the job, the completion and
-/// everything they log carry it, and the span closes with `op done ms=… ok=…`. `at` is the
-/// caller's source line.
+/// Each call is one `ui.background` root: ENTRY when issued, one terminal after the view applied
+/// the result (EXIT, or ERROR with the stable code). The job and the completion run inside the
+/// root span, so their lines carry the same TraceId; `at` keeps the caller location. While `done`
+/// runs, [`AppState::report`] attaches that TraceId to the notice it shows.
 #[track_caller]
 pub fn run<V: 'static, T: Send + 'static>(
     cx: &mut Context<V>,
     job: impl FnOnce() -> Result<T> + Send + 'static,
     done: impl FnOnce(&mut V, Result<T>, &mut Context<V>) + 'static,
 ) {
-    let span = thinkrail_observability::op(std::panic::Location::caller());
-    let started = std::time::Instant::now();
+    let caller = std::panic::Location::caller();
+    let (trace, root) = thinkrail_observability::TraceContext::root("ui.background", "ui");
+    let span = root.span().clone();
     let job_span = span.clone();
     let task = cx
         .background_executor()
@@ -28,20 +28,49 @@ pub fn run<V: 'static, T: Send + 'static>(
     cx.spawn(async move |this, cx| {
         let result = task.await;
         let _entered = span.enter();
-        let ok = result.is_ok();
+        let code = result.as_ref().err().map(ErrorCode::code);
+        let _current = CurrentTrace::set(trace.trace_id());
         if this.update(cx, |view, cx| done(view, result, cx)).is_err() {
-            debug!("view closed before its background job finished");
+            debug!(at = %caller, "view closed before background job finished");
         }
-        thinkrail_observability::finish(started, ok);
+        match code {
+            None => root.finish("SUCCESS"),
+            Some(code) => root.fail(code),
+        }
     })
     .detach();
 }
 
-/// A user-facing failure: the stable code plus the human message (04 §2).
+thread_local! {
+    static CURRENT_TRACE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The TraceId of the `run` completion on this (UI) thread; restored when dropped.
+struct CurrentTrace(Option<String>);
+
+impl CurrentTrace {
+    fn set(trace_id: &str) -> Self {
+        Self(CURRENT_TRACE.with(|c| c.replace(Some(trace_id.to_owned()))))
+    }
+
+    fn get() -> Option<String> {
+        CURRENT_TRACE.with(|c| c.borrow().clone())
+    }
+}
+
+impl Drop for CurrentTrace {
+    fn drop(&mut self) {
+        CURRENT_TRACE.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+/// A user-facing failure: the stable code, the human message (04 §2) and, when it came from a
+/// background job, the TraceId that finds its log lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
     pub code: &'static str,
     pub message: String,
+    pub trace_id: Option<String>,
 }
 
 impl Notice {
@@ -49,6 +78,7 @@ impl Notice {
         Self {
             code: error.code(),
             message: error.to_string(),
+            trace_id: CurrentTrace::get(),
         }
     }
 }
@@ -255,3 +285,6 @@ impl AppState {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

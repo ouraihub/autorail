@@ -153,6 +153,9 @@ pub struct ModelInfo {
 pub struct SessionError {
     pub code: String,
     pub message: String,
+    /// Actual diagnostic chain identity; older serialized engine errors may omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
 }
 
 /// The authoritative state of one chat. `revision` increases on every change so a late snapshot

@@ -1166,7 +1166,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.3",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
@@ -1943,6 +1943,12 @@ name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
+
+[[package]]
+name = "fallible-streaming-iterator"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fastbloom"
@@ -3547,6 +3553,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
+dependencies = [
+ "hashbrown 0.17.1",
+]
+
+[[package]]
 name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4391,6 +4406,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsqlite3-sys"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+dependencies = [
+ "cc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4521,17 +4547,67 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumakit-design"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "serde",
+ "serde_json",
+ "tracing",
+ "ttf-parser",
+]
+
+[[package]]
+name = "lumakit-gpui"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "gpui-kit",
+ "lumakit-design",
+]
+
+[[package]]
 name = "lumakit-model-picker"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=7c46b2b9fb21c9d0d8889775d599a5d10d6499d5#7c46b2b9fb21c9d0d8889775d599a5d10d6499d5"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "gpui-kit",
 ]
 
 [[package]]
+name = "lumakit-observability"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "lumakit-support",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "lumakit-support"
+version = "0.1.0"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
+dependencies = [
+ "getrandom 0.3.4",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
 name = "lumakit-usage-status"
 version = "0.1.0"
-source = "git+https://github.com/ouraihub/LumaKit.git?rev=7c46b2b9fb21c9d0d8889775d599a5d10d6499d5#7c46b2b9fb21c9d0d8889775d599a5d10d6499d5"
+source = "git+https://github.com/ouraihub/LumaKit.git?rev=f263608cdc5efcb107ab7d3d060a9caba85d0afa#f263608cdc5efcb107ab7d3d060a9caba85d0afa"
 dependencies = [
  "gpui-kit",
 ]
@@ -6774,6 +6850,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsqlite-vfs"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
+dependencies = [
+ "hashbrown 0.16.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rusqlite"
+version = "0.40.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+dependencies = [
+ "bitflags 2.13.2",
+ "fallible-iterator",
+ "fallible-streaming-iterator",
+ "hashlink",
+ "libsqlite3-sys",
+ "smallvec",
+ "sqlite-wasm-rs",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7599,6 +7700,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlite-wasm-rs"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
+dependencies = [
+ "cc",
+ "js-sys",
+ "rsqlite-vfs",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7912,7 +8025,9 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "thinkrail-core",
+ "thinkrail-observability",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -7938,6 +8053,7 @@ dependencies = [
  "serde_yaml_ng",
  "tempfile",
  "thinkrail-core",
+ "thinkrail-observability",
  "thinkrail-plan-review",
  "tracing",
  "uuid",
@@ -7950,6 +8066,8 @@ dependencies = [
  "anyhow",
  "async-channel",
  "gpui-kit",
+ "lumakit-design",
+ "lumakit-gpui",
  "lumakit-model-picker",
  "lumakit-usage-status",
  "serde_json",
@@ -7975,6 +8093,7 @@ name = "thinkrail-observability"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "lumakit-observability",
  "tempfile",
  "thinkrail-core",
  "time",
@@ -8988,6 +9107,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
