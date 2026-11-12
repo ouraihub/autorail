@@ -31,13 +31,13 @@ thinkrail-agents = { path = "crates/agents" }
 thinkrail-host-tools = { path = "crates/host-tools" }
 thinkrail-observability = { path = "crates/observability" }
 thinkrail-ui = { path = "crates/ui" }
-gpui-kit = { version = "=0.9.0", features = ["gpui-fast"] }
+gpui-kit = { version = "=0.9.1", features = ["gpui-fast"] }
 # Shared desktop components; pinned to a pushed LumaKit commit so CI and other machines resolve it.
-lumakit-observability = { git = "https://github.com/ouraihub/LumaKit.git", rev = "f263608cdc5efcb107ab7d3d060a9caba85d0afa" }
-lumakit-model-picker = { git = "https://github.com/ouraihub/LumaKit.git", rev = "f263608cdc5efcb107ab7d3d060a9caba85d0afa" }
-lumakit-usage-status = { git = "https://github.com/ouraihub/LumaKit.git", rev = "f263608cdc5efcb107ab7d3d060a9caba85d0afa" }
-lumakit-gpui = { git = "https://github.com/ouraihub/LumaKit.git", rev = "f263608cdc5efcb107ab7d3d060a9caba85d0afa", default-features = false }
-lumakit-design = { git = "https://github.com/ouraihub/LumaKit.git", rev = "f263608cdc5efcb107ab7d3d060a9caba85d0afa" }
+lumakit-observability = { git = "https://github.com/ouraihub/LumaKit.git", rev = "6a63d7e5ef27f6cf21cab87c186f7b81c36d66f4" }
+lumakit-model-picker = { git = "https://github.com/ouraihub/LumaKit.git", rev = "6a63d7e5ef27f6cf21cab87c186f7b81c36d66f4" }
+lumakit-usage-status = { git = "https://github.com/ouraihub/LumaKit.git", rev = "6a63d7e5ef27f6cf21cab87c186f7b81c36d66f4" }
+lumakit-gpui = { git = "https://github.com/ouraihub/LumaKit.git", rev = "6a63d7e5ef27f6cf21cab87c186f7b81c36d66f4", default-features = false }
+lumakit-design = { git = "https://github.com/ouraihub/LumaKit.git", rev = "6a63d7e5ef27f6cf21cab87c186f7b81c36d66f4" }
 anyhow = "=1.0.104"
 async-channel = "=2.5.0"
 base64 = "=0.23.1"
