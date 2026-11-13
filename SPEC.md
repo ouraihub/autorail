@@ -87,7 +87,7 @@ Settings are global across engines; effective MCP configuration is project-scope
 
 Source application services are ported only when used by a reachable feature. No browser application, legacy desktop carrier, website or unrelated publishing pipeline is copied into this project. Migration is based on observable behavior, not retained file count.
 
-Direct dependencies use exact latest non-yanked stable releases where compatible; pre-release versions and Git snapshots are not silently substituted. The one first-party exception is LumaKit, pinned by full commit `rev` to its GitHub repository and never to a local path. Rust is pinned to 1.99.1, GPUI Kit to the crates.io 0.9.0 release with GPUI Fast, and the dependency graph is committed in Cargo.lock. Upgrades require a Windows native-window smoke and exercised protocol behavior, not only dependency resolution.
+Direct dependencies use exact latest non-yanked stable releases where compatible; pre-release versions and Git snapshots are not silently substituted. The one first-party exception is LumaKit, pinned by full commit `rev` to its GitHub repository and never to a local path. Rust is pinned to 1.99.1, GPUI Kit to the crates.io 0.9.1 release with GPUI Fast, and the dependency graph is committed in Cargo.lock. Upgrades require a Windows native-window smoke and exercised protocol behavior, not only dependency resolution.
 
 ## Verification
 
