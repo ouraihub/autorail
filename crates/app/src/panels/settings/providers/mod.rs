@@ -52,6 +52,8 @@ pub struct ProvidersPage {
     sync_inputs: bool,
     url_error: bool,
     key_saving: bool,
+    check_after_key_save: bool,
+    check_generation: u64,
     key_generation: u64,
     reset_key: bool,
     key_input: Entity<InputState>,
@@ -72,7 +74,7 @@ impl ProvidersPage {
         let url = cx.new(|cx| InputState::new(window, cx).placeholder(s::URL_PLACEHOLDER));
         let key_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder(s::KEY_PLACEHOLDER)
+                .placeholder(s::FIRST_KEY_PLACEHOLDER)
                 .masked(true)
         });
         let models = models::ModelView::new(window, cx);
@@ -132,6 +134,8 @@ impl ProvidersPage {
             dirty: false,
             failed: None,
             key_saving: false,
+            check_after_key_save: false,
+            check_generation: 0,
             key_generation: 0,
             reset_key: false,
             checking: false,
@@ -210,6 +214,8 @@ impl ProvidersPage {
 
     fn select(&mut self, id: ProviderId, cx: &mut Context<Self>) {
         self.key_generation = self.key_generation.wrapping_add(1);
+        self.check_after_key_save = false;
+        self.invalidate_checks();
         self.reset_key = true;
         self.selected = Some(id.clone());
         self.draft = None;
@@ -226,6 +232,8 @@ impl ProvidersPage {
     }
     pub(crate) fn clear_sensitive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.key_generation = self.key_generation.wrapping_add(1);
+        self.check_after_key_save = false;
+        self.invalidate_checks();
         self.key_input
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.revealed = None;
@@ -244,6 +252,13 @@ impl ProvidersPage {
 
     /// Publishes a saved snapshot without replacing a form's pending draft.
     fn store_snapshot(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        if self.selected.as_ref() == Some(&provider.id)
+            && self
+                .provider()
+                .is_none_or(|old| old.revision != provider.revision)
+        {
+            self.invalidate_checks();
+        }
         match self.providers.iter_mut().find(|p| p.id == provider.id) {
             Some(slot) => *slot = provider,
             None => self.providers.push(provider),
@@ -251,8 +266,15 @@ impl ProvidersPage {
         self.state.update(cx, |_, cx| cx.emit(AppEvent::Routing));
     }
 
+    fn invalidate_checks(&mut self) {
+        self.check_generation = self.check_generation.wrapping_add(1);
+        self.checking = false;
+        self.checks = None;
+    }
+
     /// Saves `draft`. Edits made while a save runs are saved right after it.
     fn commit(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_checks();
         self.dirty = true;
         self.failed = None;
         if !self.saving {

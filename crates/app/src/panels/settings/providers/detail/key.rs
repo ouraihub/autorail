@@ -79,8 +79,8 @@ impl ProvidersPage {
             Button::new("provider-check")
                 .outline()
                 .label(if self.checking { s::CHECKING } else { s::CHECK })
-                .disabled(self.checking || !saved || self.key_saving)
-                .on_click(cx.listener(|this, _, _, cx| this.check(cx)))
+                .disabled(self.checking || !saved)
+                .on_click(cx.listener(|this, _, window, cx| this.check(window, cx)))
                 .into_any_element(),
             self.render_checks(provider, cx),
             &r,
@@ -224,6 +224,7 @@ impl ProvidersPage {
             },
             move |this, result, cx| {
                 this.key_saving = false;
+                let check_after_save = std::mem::take(&mut this.check_after_key_save);
                 match result {
                     Ok(provider) => {
                         if this.selected.as_ref() == Some(&target)
@@ -240,6 +241,9 @@ impl ProvidersPage {
                             }
                         }
                         this.stored(provider, cx);
+                        if check_after_save && this.selected.as_ref() == Some(&target) {
+                            this.check_saved(cx);
+                        }
                     }
                     Err(error) => this.report(&error, cx),
                 }
@@ -248,8 +252,30 @@ impl ProvidersPage {
         );
     }
 
-    /// "检测": lists the current line's models once per enabled key; with no key, once without one.
-    fn check(&mut self, cx: &mut Context<Self>) {
+    /// Persist pending input before probing, including a save already started by blur.
+    pub(in crate::panels::settings::providers) fn check(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.checking {
+            return;
+        }
+        if self.key_saving {
+            self.check_after_key_save = true;
+            return;
+        }
+        if self.provider().is_some_and(|p| p.keys.is_empty())
+            && !self.key_input.read(cx).value().trim().is_empty()
+        {
+            self.check_after_key_save = true;
+            self.add_first_key(window, cx);
+            return;
+        }
+        self.check_saved(cx);
+    }
+
+    fn check_saved(&mut self, cx: &mut Context<Self>) {
         let Some(provider) = self.provider().cloned() else {
             return;
         };
@@ -267,6 +293,7 @@ impl ProvidersPage {
         let probe = self.state.read(cx).services.probe.clone();
         let line = self.line;
         let selected = self.selected.clone();
+        let generation = self.check_generation;
         run(
             cx,
             move || {
@@ -299,7 +326,10 @@ impl ProvidersPage {
                 }])
             },
             move |this, result, cx| {
-                if this.selected != selected {
+                if this.selected != selected
+                    || this.line != line
+                    || this.check_generation != generation
+                {
                     return;
                 }
                 this.checking = false;

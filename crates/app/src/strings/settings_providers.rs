@@ -39,6 +39,7 @@ pub const SAVE_FAILED: &str = "保存失败，修改已保留。";
 pub const API_KEY: &str = "API 密钥";
 pub const GET_KEY: &str = "获取密钥";
 pub const KEY_PLACEHOLDER: &str = "输入新的 API 密钥（留空不修改）";
+pub const FIRST_KEY_PLACEHOLDER: &str = "输入 API 密钥，按 Enter 保存或直接检测";
 pub const KEYS_MANAGE: &str = "API 密钥管理";
 pub const KEYS_DESC: &str = "管理当前服务商的多个 API 密钥，按顺序轮流使用。";
 pub const KEYS_ADD: &str = "添加 API 密钥";

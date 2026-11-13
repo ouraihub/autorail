@@ -148,3 +148,11 @@ CI run `42750421487` / job `129617640445` 的真实失败是 `real_process_reade
 整改代码 `0de6d2c` 已推送 main；`package-exe.bat` 已重建原发布目录与 ZIP，包内 EXE/发布 EXE SHA-256 一致：`ea77957c9530eeabb14d1a39b3c187068dc96e9e171115835cd58a43691f6fbc`。release 实窗同步打开 picker，选中模型后重启并再次选择原服务商，`audit-model-safe` 仍在模型列表；截图 `release-sync-success.png`、`release-sync-model-added.png`、`release-restart-selected-provider.png`（同上隔离目录）。保存证据为应用自身重启读取及真实服务持久化回归。
 
 GitHub 新运行 [42756799363](https://github.com/ouraihub/autorail/actions/runs/42756799363) 在 `0de6d2c` 的 Format、Clippy、Test 全部成功，rust job 129632937278 用时4分55秒；原失败运行保留历史，不重跑旧提交。现有 action 的 Node 20 弃用提示为非失败注解，本轮未无关升级 action。
+
+## 2026-11-13 首个密钥粘贴后直接检测
+
+首个密钥的 Enter/失焦保存与“检测”串联在后台完成：检测等待保存成功，保存失败保留输入且不发探测请求；密钥写入后的 provider revision 使旧检测结果失效。输入提示明确支持直接检测，不在 UI 线程同步写数据库。
+
+验证均经 `scripts/msvc/cargo-msvc.bat`：格式化、`test -p thinkrail-native panels::settings::providers -- --test-threads=1`（9 项通过）、`clippy -p thinkrail-native --all-targets -- -D warnings` 通过。新增回归使用真实隔离存储和本地 HTTP，覆盖检测先触发、失焦保存先触发、删除后重新粘贴，以及保存失败保留输入。未运行全 workspace 测试。
+
+`scripts/msvc/package-exe.bat` 已更新 `dist/thinkrail-native/thinkrail-native.exe` 与 `dist/thinkrail-native-x64.zip`。Release 实窗使用独立 `--data-dir` 和本地回环服务，粘贴测试密钥后直接检测，数据库只保存一次，服务确认收到认证头，界面显示“连接正常 · 可用 1 个模型”。未读取真实密钥或修改用户数据库。截图：`C:/Users/Administrator/AppData/Local/Temp/thinkrail-key-check-ivwiu0he/04-paste-direct-check.png`。
