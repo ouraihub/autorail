@@ -111,6 +111,18 @@ impl Probe {
             "{}{path}",
             url::base_url(&target.endpoint.base_url, protocol)
         );
+        let method = if body.is_some() { "POST" } else { "GET" };
+        let timeout_ms = u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX);
+        let started = Instant::now();
+        tracing::debug!(
+            protocol = ?protocol,
+            method,
+            path,
+            timeout_ms,
+            has_key = target.key.is_some(),
+            extra_headers = target.headers.len(),
+            "routing.probe.request"
+        );
         let client = &runtime.client;
         let mut request = match &body {
             Some(body) => client.post(&address).json(body),
@@ -130,9 +142,45 @@ impl Probe {
             request = request.header(header.name.as_str(), header.value.as_str());
         }
         runtime.tokio.block_on(async {
-            let response = request.send().await.map_err(|e| classify(&e))?;
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    let classified = classify(&error);
+                    tracing::warn!(
+                        stage = "send",
+                        code = thinkrail_core::ErrorCode::code(&classified),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "routing.probe.failed"
+                    );
+                    return Err(classified);
+                }
+            };
             let status = response.status().as_u16();
-            let body = response.text().await.map_err(|e| classify(&e))?;
+            tracing::debug!(
+                status,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "routing.probe.response"
+            );
+            let body = match response.text().await {
+                Ok(body) => body,
+                Err(error) => {
+                    let classified = classify(&error);
+                    tracing::warn!(
+                        stage = "read",
+                        status,
+                        code = thinkrail_core::ErrorCode::code(&classified),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "routing.probe.failed"
+                    );
+                    return Err(classified);
+                }
+            };
+            tracing::debug!(
+                status,
+                body_bytes = body.len(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "routing.probe.body_read"
+            );
             Ok(Reply { status, body })
         })
     }
