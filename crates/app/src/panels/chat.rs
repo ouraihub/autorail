@@ -169,7 +169,7 @@ impl ChatPanel {
     ) -> Self {
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .rows(3)
+                .auto_grow(3, 8)
                 .submit_on_enter(true)
                 .placeholder(s::PLACEHOLDER)
         });

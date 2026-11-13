@@ -194,6 +194,7 @@ impl ChatPanel {
         // `relative` anchors the `/` menu, which sits above this box over the transcript.
         div()
             .relative()
+            .flex_shrink_0()
             .p(size::CHAT_GUTTER)
             .border_t_1()
             .border_color(r.border_muted)
