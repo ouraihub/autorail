@@ -52,7 +52,7 @@ fn seeding_creates_each_preset_once_as_a_disabled_template() {
         assert_eq!(
             provider.input.endpoints,
             [Endpoint {
-                protocol: preset.protocol,
+                protocol: preset.protocol.into(),
                 base_url: preset.base_url.into()
             }]
         );

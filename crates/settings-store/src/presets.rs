@@ -13,10 +13,10 @@ fn input(preset: &ProviderPreset) -> ProviderInput {
     ProviderInput {
         name: preset.name.to_owned(),
         endpoints: vec![Endpoint {
-            protocol: preset.protocol,
+            protocol: preset.protocol.into(),
             base_url: preset.base_url.to_owned(),
         }],
-        default_protocol: preset.protocol,
+        default_protocol: preset.protocol.into(),
         headers: Vec::new(),
         access: Access::Direct,
         enabled: false,

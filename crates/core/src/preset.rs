@@ -1,45 +1,19 @@
 //! Built-in provider presets: public, non-secret templates the host seeds as disabled providers
-//! (agent-settings 04 §7.6). Mirrors Aether `packages/presets/src/china.ts`.
+//! (agent-settings 04 §7.6).
+//!
+//! The table itself lives in `lumakit_support::presets` so every LumaKit host shares one copy;
+//! this module only maps its protocol onto [`Protocol`].
 
 use crate::Protocol;
+use lumakit_support::presets::PresetProtocol;
+pub use lumakit_support::presets::{PROVIDER_PRESETS, ProviderPreset, provider_preset};
 
-/// One preset. It carries no key, no models and no enabled state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderPreset {
-    /// Stable identity stored in `providers.preset_id`; never shown.
-    pub id: &'static str,
-    pub name: &'static str,
-    pub base_url: &'static str,
-    pub protocol: Protocol,
-    /// Where the user signs up for a key; always `https://`.
-    pub api_key_url: &'static str,
-}
-
-pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
-    ProviderPreset {
-        id: "qiniu",
-        name: "七牛云",
-        base_url: "https://api.qnaigc.com",
-        protocol: Protocol::OpenaiChat,
-        api_key_url: "https://s.qiniu.com/BfyeU3",
-    },
-    ProviderPreset {
-        id: "siliconflow",
-        name: "硅基流动",
-        base_url: "https://api.siliconflow.cn/v1",
-        protocol: Protocol::OpenaiChat,
-        api_key_url: "https://cloud.siliconflow.cn/i/ieP7r6Bx",
-    },
-    ProviderPreset {
-        id: "fenno",
-        name: "Fenno",
-        base_url: "https://api.fenno.ai/v1",
-        protocol: Protocol::OpenaiChat,
-        api_key_url: "https://api.fenno.ai/s/vWbM",
-    },
-];
-
-/// The preset with `id`, if it is still built in.
-pub fn provider_preset(id: &str) -> Option<&'static ProviderPreset> {
-    PROVIDER_PRESETS.iter().find(|preset| preset.id == id)
+impl From<PresetProtocol> for Protocol {
+    fn from(protocol: PresetProtocol) -> Self {
+        match protocol {
+            PresetProtocol::OpenaiChat => Self::OpenaiChat,
+            PresetProtocol::OpenaiResponses => Self::OpenaiResponses,
+            PresetProtocol::AnthropicMessages => Self::AnthropicMessages,
+        }
+    }
 }
