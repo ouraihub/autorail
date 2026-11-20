@@ -145,6 +145,19 @@ fn main() {
                 ..TitleBar::window_options()
             };
             let opened = gpui_kit::open_window(options, cx, move |window, cx| {
+                // A system close (title-bar X, Alt+F4, taskbar) must not fall through to
+                // DefWindowProc: Windows would destroy the HWND before GPUI drops the window,
+                // whose teardown then calls Win32 on a dead handle. Closing the last window quits
+                // instead (as `LastWindowClosed` would): GPUI drops windows after its message loop
+                // ends, so the hide and its deactivation never reach a removed window.
+                window.on_window_should_close(cx, |window, cx| {
+                    if cx.windows().len() > 1 {
+                        window.remove_window();
+                    } else {
+                        cx.quit();
+                    }
+                    false
+                });
                 cx.new(|cx| workbench::Workbench::new(services, channels, window, cx))
             });
             if opened.is_err() {
