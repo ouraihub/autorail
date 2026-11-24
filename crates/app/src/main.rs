@@ -137,7 +137,7 @@ fn main() {
             // The workbench top bar is the title bar (no system caption); the title stays for the
             // taskbar and Alt+Tab.
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1440.), px(900.)), cx)),
+                window_bounds: Some(WindowBounds::centered(None, size(px(1440.), px(900.)), cx)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(strings::shell::WINDOW_TITLE.into()),
                     ..TitleBar::title_bar_options()
